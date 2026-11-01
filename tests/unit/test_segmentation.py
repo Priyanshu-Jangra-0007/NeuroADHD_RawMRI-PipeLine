@@ -147,9 +147,9 @@ class TestSegmentation(unittest.TestCase):
 
         prob_maps = segment_t1w_tissue(brain_img, mask_img, n_classes=3, beta=0.1, max_iter=20)
 
-        # Generate eroded masks
+        # Generate eroded masks with mandatory reference T1w image
         masks = create_eroded_tissue_masks(
-            prob_maps, wm_threshold=0.80, csf_threshold=0.80, erosion_voxels=1
+            prob_maps, reference_t1w_img=brain_img, wm_threshold=0.80, csf_threshold=0.80, erosion_voxels=1
         )
 
         self.assertIn("mask_wm_eroded", masks)
@@ -172,31 +172,126 @@ class TestSegmentation(unittest.TestCase):
         self.assertEqual(val_res["status"], "VALIDATED")
         self.assertEqual(val_res["overlap_voxel_count"], 0)
 
+    def test_segmentation_dice_overlap_against_ground_truth(self):
+        """Evaluate synthetic segmentation accuracy using Dice coefficient against known ground truth.
+
+        Note: Synthetic segmentation Dice scores establish algorithmic implementation correctness
+        and numerical convergence on controlled mathematical phantoms; they do NOT establish
+        biological or anatomical segmentation accuracy on real human in-vivo MRI scans.
+        """
+        brain_data = (self.head * self.brain_mask).astype(np.float32)
+        brain_img = nib.Nifti1Image(brain_data, self.affine)
+        mask_img = nib.Nifti1Image(self.brain_mask.astype(np.int32), self.affine)
+
+        res = segment_t1w_tissue(brain_img, mask_img, n_classes=3, beta=0.1, max_iter=20)
+        seg = np.asanyarray(res["segmentation"].dataobj)
+
+        def dice(pred: np.ndarray, gt: np.ndarray) -> float:
+            inter = np.count_nonzero(pred & gt)
+            total = np.count_nonzero(pred) + np.count_nonzero(gt)
+            return float(2.0 * inter / total) if total > 0 else 1.0
+
+        # Discrete labels: 1=CSF, 2=GM, 3=WM
+        dice_csf = dice(seg == 1, self.csf_region)
+        dice_gm = dice(seg == 2, self.gm_region)
+        dice_wm = dice(seg == 3, self.wm_region)
+
+        # On known spherical ground-truth geometry, segmentation must achieve high fidelity (> 0.90)
+        self.assertGreater(dice_csf, 0.90, f"CSF Dice {dice_csf:.3f} below 0.90")
+        self.assertGreater(dice_gm, 0.90, f"GM Dice {dice_gm:.3f} below 0.90")
+        self.assertGreater(dice_wm, 0.90, f"WM Dice {dice_wm:.3f} below 0.90")
+
+    def test_one_voxel_erosion_behavior_and_mutual_exclusivity(self):
+        """Test expected 1-voxel 3D erosion behavior: shrinkage, boundary removal, and mutual exclusivity."""
+        from scipy.ndimage import generate_binary_structure, binary_erosion
+
+        # Create synthetic probability maps with well-separated solid tissue cores
+        prob_wm = np.zeros((30, 30, 30), dtype=np.float32)
+        prob_wm[10:20, 10:20, 10:20] = 0.99  # Solid 10x10x10 cube
+
+        prob_csf = np.zeros((30, 30, 30), dtype=np.float32)
+        prob_csf[2:8, 2:8, 2:8] = 0.99       # Solid 6x6x6 cube
+
+        ref_img = nib.Nifti1Image(np.zeros((30, 30, 30), dtype=np.float32), self.affine)
+        prob_maps = {
+            "prob_wm": nib.Nifti1Image(prob_wm, self.affine),
+            "prob_csf": nib.Nifti1Image(prob_csf, self.affine),
+        }
+
+        masks = create_eroded_tissue_masks(
+            prob_maps, reference_t1w_img=ref_img, wm_threshold=0.96, csf_threshold=0.96, erosion_voxels=1
+        )
+
+        raw_wm = np.asanyarray(masks["mask_wm_raw"].dataobj) > 0
+        eroded_wm = np.asanyarray(masks["mask_wm_eroded"].dataobj) > 0
+        raw_csf = np.asanyarray(masks["mask_csf_raw"].dataobj) > 0
+        eroded_csf = np.asanyarray(masks["mask_csf_eroded"].dataobj) > 0
+
+        # 1. Volume shrinkage
+        self.assertLess(np.count_nonzero(eroded_wm), np.count_nonzero(raw_wm))
+        self.assertGreater(np.count_nonzero(eroded_wm), 0)
+        self.assertLess(np.count_nonzero(eroded_csf), np.count_nonzero(raw_csf))
+        self.assertGreater(np.count_nonzero(eroded_csf), 0)
+
+        # 2. Strict containment: all eroded voxels must lie strictly within the raw mask
+        self.assertTrue(np.all(raw_wm[eroded_wm]))
+        self.assertTrue(np.all(raw_csf[eroded_csf]))
+
+        # 3. Exterior boundary removal: 1-voxel 6-connectivity erosion removes exterior surface
+        struct_6 = generate_binary_structure(3, 1)
+        expected_eroded_wm = binary_erosion(raw_wm, structure=struct_6, iterations=1)
+        expected_eroded_csf = binary_erosion(raw_csf, structure=struct_6, iterations=1)
+        np.testing.assert_array_equal(eroded_wm, expected_eroded_wm)
+        np.testing.assert_array_equal(eroded_csf, expected_eroded_csf)
+
+        # 4. Mutual exclusivity
+        overlap = np.count_nonzero(eroded_wm & eroded_csf)
+        self.assertEqual(overlap, 0, "Eroded WM and CSF masks must be strictly mutually exclusive")
+
     def test_correct_bias_field_full_resolution_anatomical_memory(self):
-        """Full anatomical volume (176 x 256 x 256) must correct rapidly within 2.5 GB ceiling."""
-        shape = (176, 256, 256)
-        cz, cy, cx = 88, 128, 128
-        zz, yy, xx = np.ogrid[:176, :256, :256]
-        dist_sq = ((zz - cz) / 60.0) ** 2 + ((yy - cy) / 90.0) ** 2 + ((xx - cx) / 90.0) ** 2
-        brain_mask = dist_sq <= 1.0
+        """Full anatomical volume (176 x 256 x 256) must correct rapidly within 2.5 GB ceiling.
 
-        grad_3d = np.broadcast_to((1.0 + 0.3 * (xx / 256.0)).astype(np.float32), shape)
-        brain_data = np.zeros(shape, dtype=np.float32)
-        brain_data[brain_mask] = (100.0 * grad_3d)[brain_mask]
+        Validates reliable peak RSS (high-water mark) memory usage using an isolated process
+        to avoid pollution from sequential test executions.
+        """
+        import subprocess
+        import sys
 
-        brain_img = nib.Nifti1Image(brain_data, np.eye(4))
-        mask_img = nib.Nifti1Image(brain_mask.astype(np.int32), np.eye(4))
+        code = """
+import numpy as np
+import nibabel as nib
+from src.preprocessing.segmentation import correct_bias_field
+from src.preprocessing.registration import check_process_memory_gb
 
-        corr_img, bias_img = correct_bias_field(brain_img, mask_img, order=2)
+shape = (176, 256, 256)
+cz, cy, cx = 88, 128, 128
+zz, yy, xx = np.ogrid[:176, :256, :256]
+dist_sq = ((zz - cz) / 60.0) ** 2 + ((yy - cy) / 90.0) ** 2 + ((xx - cx) / 90.0) ** 2
+brain_mask = dist_sq <= 1.0
 
-        # Output shape matches
-        self.assertEqual(corr_img.shape, shape)
-        self.assertEqual(bias_img.shape, shape)
+grad_3d = np.broadcast_to((1.0 + 0.3 * (xx / 256.0)).astype(np.float32), shape)
+brain_data = np.zeros(shape, dtype=np.float32)
+brain_data[brain_mask] = (100.0 * grad_3d)[brain_mask]
 
-        # Memory stays well below 2.5 GB ceiling
-        from src.preprocessing.registration import check_process_memory_gb
-        mem = check_process_memory_gb()
-        self.assertLess(mem, 2.5, f"Peak memory {mem:.2f} GB exceeded 2.5 GB ceiling")
+brain_img = nib.Nifti1Image(brain_data, np.eye(4))
+mask_img = nib.Nifti1Image(brain_mask.astype(np.int32), np.eye(4))
+
+corr_img, bias_img = correct_bias_field(brain_img, mask_img, order=2)
+peak_rss_gb = check_process_memory_gb()
+
+print(f"SHAPE:{corr_img.shape}")
+print(f"PEAK_RSS_GB:{peak_rss_gb:.4f}")
+"""
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        lines = proc.stdout.strip().split("\n")
+        shape_line = [line for line in lines if line.startswith("SHAPE:")][0]
+        peak_line = [line for line in lines if line.startswith("PEAK_RSS_GB:")][0]
+
+        self.assertEqual(shape_line, "SHAPE:(176, 256, 256)")
+        peak_mem = float(peak_line.split(":")[1])
+        # Peak memory must remain well beneath the 2.5 GB ceiling (typically ~0.67 GB)
+        self.assertLess(peak_mem, 2.5, f"Peak RSS {peak_mem:.2f} GB exceeded 2.5 GB ceiling")
+        self.assertGreater(peak_mem, 0.1, "Sanity check: Peak RSS should be non-trivial")
 
     def test_validate_tissue_masks_fails_on_empty(self):
         empty_mask = nib.Nifti1Image(np.zeros((30, 30, 30), dtype=np.int32), self.affine)
@@ -249,26 +344,40 @@ class TestSegmentation(unittest.TestCase):
         self.assertEqual(res["csf_voxel_count"], 125)
         self.assertEqual(res["overlap_voxel_count"], 0)
 
+    def test_create_eroded_tissue_masks_rejects_missing_reference_t1w(self):
+        """create_eroded_tissue_masks must reject missing or None reference_t1w_img."""
+        prob_wm = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
+        prob_csf = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
+        with self.assertRaises(ValueError) as ctx:
+            create_eroded_tissue_masks({"prob_wm": prob_wm, "prob_csf": prob_csf}, reference_t1w_img=None)
+        self.assertIn("reference_t1w_img (nib.Nifti1Image) is mandatory", str(ctx.exception))
+
     def test_create_eroded_tissue_masks_rejects_missing_keys(self):
         """create_eroded_tissue_masks must reject dictionaries missing prob_wm or prob_csf."""
+        ref_t1w = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
         with self.assertRaises(ValueError) as ctx:
-            create_eroded_tissue_masks({"prob_wm": nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)})
+            create_eroded_tissue_masks(
+                {"prob_wm": nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)},
+                reference_t1w_img=ref_t1w,
+            )
         self.assertIn("must contain 'prob_wm' and 'prob_csf'", str(ctx.exception))
 
     def test_create_eroded_tissue_masks_rejects_shape_mismatch_between_wm_and_csf(self):
         """create_eroded_tissue_masks must reject shape mismatch between prob_wm and prob_csf."""
         prob_wm = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
         prob_csf = nib.Nifti1Image(np.zeros((10, 10, 12)), self.affine)
+        ref_t1w = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
         with self.assertRaises(ValueError) as ctx:
-            create_eroded_tissue_masks({"prob_wm": prob_wm, "prob_csf": prob_csf})
+            create_eroded_tissue_masks({"prob_wm": prob_wm, "prob_csf": prob_csf}, reference_t1w_img=ref_t1w)
         self.assertIn("shape mismatch", str(ctx.exception))
 
     def test_create_eroded_tissue_masks_rejects_affine_mismatch_between_wm_and_csf(self):
         """create_eroded_tissue_masks must reject affine mismatch between prob_wm and prob_csf."""
         prob_wm = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
         prob_csf = nib.Nifti1Image(np.zeros((10, 10, 10)), np.diag([3.0, 3.0, 3.0, 1.0]))
+        ref_t1w = nib.Nifti1Image(np.zeros((10, 10, 10)), self.affine)
         with self.assertRaises(ValueError) as ctx:
-            create_eroded_tissue_masks({"prob_wm": prob_wm, "prob_csf": prob_csf})
+            create_eroded_tissue_masks({"prob_wm": prob_wm, "prob_csf": prob_csf}, reference_t1w_img=ref_t1w)
         self.assertIn("affine mismatch", str(ctx.exception))
 
     def test_create_eroded_tissue_masks_rejects_reference_t1w_shape_mismatch(self):
@@ -314,6 +423,42 @@ class TestSegmentation(unittest.TestCase):
         self.assertIn("mask_csf_eroded", masks)
         self.assertEqual(masks["mask_wm_eroded"].shape, (20, 20, 20))
         np.testing.assert_allclose(masks["mask_wm_eroded"].affine, self.affine)
+
+    def test_production_orchestration_passes_reference_t1w_to_erosion(self):
+        """Verify that the production call sequence delivers the corrected T1w reference image to erosion."""
+        # Step 3a: Brain extraction & bias correction
+        brain_data = (self.head * self.brain_mask).astype(np.float32)
+        brain_img = nib.Nifti1Image(brain_data, self.affine)
+        mask_img = nib.Nifti1Image(self.brain_mask.astype(np.int32), self.affine)
+        t1w_corrected_img, _ = correct_bias_field(brain_img, mask_img, order=2)
+
+        # Step 3b: Tissue segmentation
+        prob_maps = segment_t1w_tissue(t1w_corrected_img, mask_img, n_classes=3, beta=0.1, max_iter=20)
+
+        # Step 3c: Production call with reference_t1w_img=t1w_corrected_img
+        masks = create_eroded_tissue_masks(
+            prob_maps,
+            reference_t1w_img=t1w_corrected_img,
+            wm_threshold=0.80,
+            csf_threshold=0.80,
+            erosion_voxels=1,
+        )
+        self.assertIn("mask_wm_eroded", masks)
+        self.assertIn("mask_csf_eroded", masks)
+        self.assertEqual(masks["mask_wm_eroded"].shape, t1w_corrected_img.shape)
+        np.testing.assert_allclose(masks["mask_wm_eroded"].affine, t1w_corrected_img.affine)
+
+        # Verifies that passing a corrupted/mismatched reference volume is rejected
+        mismatched_t1w = nib.Nifti1Image(np.zeros((30, 30, 30)), self.affine)
+        with self.assertRaises(ValueError) as ctx:
+            create_eroded_tissue_masks(
+                prob_maps,
+                reference_t1w_img=mismatched_t1w,
+                wm_threshold=0.80,
+                csf_threshold=0.80,
+                erosion_voxels=1,
+            )
+        self.assertIn("geometry mismatch", str(ctx.exception))
 
 
 if __name__ == "__main__":

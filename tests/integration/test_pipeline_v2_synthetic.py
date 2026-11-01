@@ -158,9 +158,13 @@ class TestPipelineV2SyntheticIntegration(unittest.TestCase):
         self.assertIn("prob_wm", prob_maps)
 
         # Step 6: Historical 0.96 Thresholding & Morphological Erosion
-        # Enforce production parameters without threshold dilution or artificial injection
+        # Enforce production parameters passing mandatory reference T1w volume
         tissue_masks = create_eroded_tissue_masks(
-            prob_maps, wm_threshold=0.96, csf_threshold=0.96, erosion_voxels=1
+            prob_maps,
+            reference_t1w_img=t1_corrected,
+            wm_threshold=0.96,
+            csf_threshold=0.96,
+            erosion_voxels=1,
         )
         val_res = validate_tissue_masks(tissue_masks, min_wm_voxels=50, min_csf_voxels=20)
         self.assertEqual(val_res["status"], "VALIDATED")

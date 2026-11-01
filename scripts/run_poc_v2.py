@@ -71,7 +71,7 @@ def run_poc_v2_stub():
     # t1w_brain_img, t1w_mask_img = extract_anatomical_brain(t1w_img)
     # t1w_corrected_img, bias_img = correct_bias_field(t1w_brain_img, t1w_mask_img)
     # prob_maps = segment_t1w_tissue(t1w_corrected_img, t1w_mask_img)
-    # eroded_masks = create_eroded_tissue_masks(prob_maps, wm_threshold=0.96, csf_threshold=0.96)
+    # eroded_masks = create_eroded_tissue_masks(prob_maps, reference_t1w_img=t1w_corrected_img, wm_threshold=0.96, csf_threshold=0.96)
     # validate_tissue_masks(eroded_masks)
 
     # Step 4: EPI -> T1w rigid coregistration

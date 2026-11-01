@@ -101,6 +101,37 @@ class TestConnectivityAndParcellation(unittest.TestCase):
 
         self.assertEqual(signals.shape, (55, 200))
 
+    def test_extract_cc200_timeseries_shape_mismatch_raises_valueerror(self):
+        """extract_cc200_timeseries must raise ValueError on spatial dimension mismatch."""
+        atlas_data = np.zeros((20, 20, 20), dtype=np.int32)
+        atlas_data[5:15, 5:15, 5:15] = np.random.randint(1, 201, (10, 10, 10))
+        # Ensure all 200 labels are present for validation
+        atlas_data.flat[:200] = np.arange(1, 201)
+        atlas_img = nib.Nifti1Image(atlas_data, np.eye(4))
+
+        # BOLD with mismatched shape (24, 20, 20) instead of (20, 20, 20)
+        bold_data = np.random.normal(100.0, 5.0, (24, 20, 20, 55)).astype(np.float32)
+        bold_img = nib.Nifti1Image(bold_data, np.eye(4))
+
+        with self.assertRaises(ValueError) as ctx:
+            extract_cc200_timeseries(bold_img, atlas_img)
+        self.assertIn("Spatial dimension mismatch", str(ctx.exception))
+
+    def test_extract_cc200_timeseries_affine_mismatch_raises_valueerror(self):
+        """extract_cc200_timeseries must raise ValueError on affine grid mismatch."""
+        atlas_data = np.zeros((20, 20, 20), dtype=np.int32)
+        atlas_data.flat[:200] = np.arange(1, 201)
+        atlas_img = nib.Nifti1Image(atlas_data, np.eye(4))
+
+        # BOLD with matching shape (20, 20, 20) but mismatched affine
+        bold_data = np.random.normal(100.0, 5.0, (20, 20, 20, 55)).astype(np.float32)
+        mismatched_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+        bold_img = nib.Nifti1Image(bold_data, mismatched_affine)
+
+        with self.assertRaises(ValueError) as ctx:
+            extract_cc200_timeseries(bold_img, atlas_img)
+        self.assertIn("Affine mismatch", str(ctx.exception))
+
     def test_actual_cc200_atlas_extraction_and_feature_contract(self):
         """Audit real project CC200 atlas file and verify downstream feature extraction contract."""
         atlas_path = Path("data/atlases/cc200_roi_atlas.nii.gz")

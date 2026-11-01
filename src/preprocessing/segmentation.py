@@ -304,7 +304,7 @@ def segment_t1w_tissue(
 
 def create_eroded_tissue_masks(
     prob_maps: Dict[str, nib.Nifti1Image],
-    reference_t1w_img: Optional[nib.Nifti1Image] = None,
+    reference_t1w_img: nib.Nifti1Image,
     wm_threshold: float = 0.96,
     csf_threshold: float = 0.96,
     erosion_voxels: int = 1,
@@ -317,16 +317,17 @@ def create_eroded_tissue_masks(
     - 1-voxel 3D binary erosion to eliminate partial volume averaging with gray matter.
 
     Validates tissue geometry before erosion:
+    - Confirms mandatory reference T1w image is provided as nib.Nifti1Image.
     - Confirms required probability maps ('prob_wm', 'prob_csf') are present.
     - Confirms WM and CSF probability maps share identical spatial dimensions and grid affines.
-    - Confirms probability maps match the reference T1w volume geometry if provided.
+    - Confirms probability maps match the reference T1w volume geometry.
 
     Parameters
     ----------
     prob_maps : Dict[str, nib.Nifti1Image]
         Dictionary of probability maps from `segment_t1w_tissue`.
-    reference_t1w_img : Optional[nib.Nifti1Image]
-        Optional reference T1w anatomical image to verify spatial grid alignment.
+    reference_t1w_img : nib.Nifti1Image
+        Mandatory reference T1w anatomical image to verify spatial grid alignment.
     wm_threshold : float
         Probability threshold for White Matter (default: 0.96).
     csf_threshold : float
@@ -339,10 +340,10 @@ def create_eroded_tissue_masks(
     Dict[str, nib.Nifti1Image]
         Dictionary containing raw and eroded binary masks for WM and CSF.
     """
-    # Handle backward compatibility if threshold was passed as second positional argument
-    if isinstance(reference_t1w_img, (float, int)):
-        wm_threshold = float(reference_t1w_img)
-        reference_t1w_img = None
+    if reference_t1w_img is None or not isinstance(reference_t1w_img, nib.Nifti1Image):
+        raise ValueError(
+            "reference_t1w_img (nib.Nifti1Image) is mandatory to validate anatomical tissue geometry."
+        )
 
     if "prob_wm" not in prob_maps or "prob_csf" not in prob_maps:
         raise ValueError("prob_maps dictionary must contain 'prob_wm' and 'prob_csf' probability maps")
@@ -361,18 +362,17 @@ def create_eroded_tissue_masks(
             "Tissue probability map affine mismatch: prob_wm affine does not match prob_csf affine"
         )
 
-    # Verify against reference T1w image geometry if provided
-    if reference_t1w_img is not None:
-        ref_shape = reference_t1w_img.shape[:3]
-        if wm_prob_img.shape[:3] != ref_shape:
-            raise ValueError(
-                f"Tissue probability map geometry mismatch: prob_wm shape {wm_prob_img.shape[:3]} "
-                f"does not match T1w reference shape {ref_shape}"
-            )
-        if not np.allclose(wm_prob_img.affine, reference_t1w_img.affine, atol=1e-4):
-            raise ValueError(
-                "Tissue probability map affine mismatch: prob_wm affine does not match T1w reference affine"
-            )
+    # Verify against mandatory reference T1w image geometry
+    ref_shape = reference_t1w_img.shape[:3]
+    if wm_prob_img.shape[:3] != ref_shape:
+        raise ValueError(
+            f"Tissue probability map geometry mismatch: prob_wm shape {wm_prob_img.shape[:3]} "
+            f"does not match T1w reference shape {ref_shape}"
+        )
+    if not np.allclose(wm_prob_img.affine, reference_t1w_img.affine, atol=1e-4):
+        raise ValueError(
+            "Tissue probability map affine mismatch: prob_wm affine does not match T1w reference affine"
+        )
 
     prob_wm = np.asanyarray(wm_prob_img.dataobj, dtype=np.float32)
     prob_csf = np.asanyarray(csf_prob_img.dataobj, dtype=np.float32)

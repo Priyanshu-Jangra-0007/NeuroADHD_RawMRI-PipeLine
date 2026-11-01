@@ -1,20 +1,24 @@
 # Core scientific computing & matrix operations
-numpy>=1.24.0,<2.0.0
-scipy>=1.10.0,<2.0.0
-pandas>=2.0.0,<3.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
 
-# Neuroimaging data I/O and parcellation (lightweight I/O)
-nibabel>=5.1.0,<6.0.0
-nilearn>=0.10.0,<1.0.0
+# Neuroimaging registration, parcellation & I/O
+nibabel>=5.1.0
+nilearn>=0.10.0
+dipy>=1.10.0
 
-# Machine learning runtime & artifact serialization (matching existing environment)
-scikit-learn>=1.3.0,<1.4.0
-joblib>=1.3.0,<2.0.0
+# Visualization & visual QC contour overlays
+matplotlib>=3.7.0
+
+# Machine learning runtime & statistical modeling
+scikit-learn>=1.3.0
+joblib>=1.3.0
 
 # Validation, configuration & schema enforcement
-jsonschema>=4.18.0,<5.0.0
-pydantic>=2.0.0,<3.0.0
+jsonschema>=4.18.0
+pydantic>=2.0.0
 
 # Testing & quality assurance
-pytest>=7.4.0,<9.0.0
-pytest-cov>=4.1.0,<6.0.0
+pytest>=7.4.0
+pytest-cov>=4.1.0

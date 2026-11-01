@@ -29,12 +29,27 @@ def extract_cc200_timeseries(
         - Formatted DataFrame matching roi_CC200.csv (200 rows x (T+1) columns).
         - NumPy array of shape (T, 200) containing time series.
     """
+    # Validate spatial dimensions and affine alignment between cleaned BOLD and CC200 atlas
+    bold_shape = cleaned_bold_img.shape[:3]
+    atlas_shape = atlas_img.shape[:3]
+    if bold_shape != atlas_shape:
+        raise ValueError(
+            f"Spatial dimension mismatch between cleaned BOLD {bold_shape} and CC200 atlas {atlas_shape}"
+        )
+    if not np.allclose(cleaned_bold_img.affine, atlas_img.affine, atol=1e-4):
+        raise ValueError(
+            "Affine mismatch between cleaned BOLD image and CC200 atlas. "
+            "Cleaned BOLD data must be resampled to the exact CC200 reference grid before extraction."
+        )
+
     # Use nilearn NiftiLabelsMasker for spatial mean extraction per label
+    # Setting resampling_target=None ensures unexpected geometry mismatches raise an error
+    # instead of silently triggering internal interpolation
     masker = NiftiLabelsMasker(
         labels_img=atlas_img,
         standardize=None,
         detrend=False,
-        resampling_target="labels",
+        resampling_target=None,
         verbose=0,
     )
 
