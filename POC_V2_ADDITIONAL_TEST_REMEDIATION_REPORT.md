@@ -223,3 +223,4 @@ TOTAL                                 711     89    87%
 - **No Claim of Full Historical C-PAC Equivalence**: While PoC V2 matches the core algorithmic intent (aCompCor 5+5, Friston-24, Butterworth bandpass, CC200 parcellation, Fisher-z connectivity), differences in registration engines (DIPY SyN vs. ANTs/FSL) mean that numerical feature values on real subjects will not be bit-for-bit identical to C-PAC outputs.
 - **Real Scans Remain Prohibited**: No real subject scans (`sub-2344857`, Peking_2, or ADHD-200) were processed during this remediation.
 - **Controlled Review Recommendation**: The pipeline is ready for a **single-scan dry run** on one training-cohort participant, subject to mandatory visual review of registration, tissue mask, and parcellation QC overlays before running any batch processing.
+
