@@ -52,8 +52,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Salt used for local HMAC integrity verification of synthetic manifests
-INTEGRITY_SALT = os.environ.get("NEUROADHD_INTEGRITY_SALT", "NEUROADHD_SYNTHETIC_POC_V2_INTEGRITY_ANCHOR")
+# Dedicated environment variable for HMAC integrity key
+HMAC_KEY_ENV_VAR = "NEUROADHD_HMAC_KEY"
 
 from src.features.connectivity import compute_connectivity_vector, get_feature_names
 from src.parcellation.extractor import (
@@ -105,10 +105,88 @@ def compute_sha256(file_path: Union[str, Path]) -> str:
     return hasher.hexdigest()
 
 
-def compute_manifest_hmac(files_entry: Dict[str, Dict[str, Any]], salt: str = INTEGRITY_SALT) -> str:
-    """Compute HMAC-SHA256 integrity token over synthetic file entries."""
-    payload = "|".join(f"{k}:{files_entry[k].get('sha256')}" for k in sorted(files_entry.keys()))
-    return hmac.new(salt.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+def get_integrity_key() -> str:
+    """Retrieve the mandatory HMAC integrity key from the dedicated environment variable.
+
+    Fails closed with a clear safety violation error if the key is missing or empty.
+    Never exposes or logs key values.
+    """
+    key = os.environ.get(HMAC_KEY_ENV_VAR) or os.environ.get("NEUROADHD_INTEGRITY_KEY")
+    if not key or not key.strip():
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Mandatory HMAC integrity key not set in environment variable '{HMAC_KEY_ENV_VAR}'. "
+            "Synthetic input verification cannot proceed and must fail closed."
+        )
+    return key.strip()
+
+
+def build_canonical_manifest_payload(
+    manifest_magic: str,
+    subject_id: str,
+    files_entry: Dict[str, Dict[str, Any]],
+) -> bytes:
+    """Construct deterministic canonical JSON serialization for HMAC computation.
+
+    Protects:
+    - manifest_magic
+    - subject_id
+    - all five input entries (bold_nii, bold_json, t1w_nii, mni_template, cc200_atlas)
+    - each entry's filename, resolved canonical path, and sha256 digest
+    """
+    required_entries = ["bold_nii", "bold_json", "t1w_nii", "mni_template", "cc200_atlas"]
+    canonical_files: Dict[str, Dict[str, str]] = {}
+    for k in sorted(required_entries):
+        entry = files_entry.get(k, {})
+        raw_res = entry.get("resolved_path", "")
+        res_path_str = str(Path(raw_res).resolve()) if raw_res else ""
+        canonical_files[k] = {
+            "filename": str(entry.get("filename", "")),
+            "resolved_path": res_path_str,
+            "sha256": str(entry.get("sha256", "")),
+        }
+
+    payload = {
+        "files": canonical_files,
+        "manifest_magic": str(manifest_magic),
+        "subject_id": str(subject_id),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def compute_manifest_hmac(
+    manifest_magic: Union[str, Dict[str, Any]],
+    subject_id: Optional[str] = None,
+    files_entry: Optional[Dict[str, Dict[str, Any]]] = None,
+    key: Optional[str] = None,
+) -> str:
+    """Compute HMAC-SHA256 integrity token over synthetic manifest canonical payload.
+
+    Note on Threat Model & Authenticity:
+    ------------------------------------
+    This manifest HMAC is an internal integrity mechanism protecting against accidental
+    modification, file swapping, and path misconfiguration during development and testing.
+    It does not claim to be a public-key digital signature or proof of clinical-data origin.
+    """
+    if key is None:
+        key = get_integrity_key()
+
+    if isinstance(manifest_magic, dict):
+        manifest_dict = manifest_magic
+        if "files" in manifest_dict:
+            magic = manifest_dict.get("manifest_magic", "NEUROADHD_SYNTHETIC_DATASET_V2")
+            sub_id = manifest_dict.get("subject_id", subject_id or "")
+            files = manifest_dict.get("files", {})
+        else:
+            magic = "NEUROADHD_SYNTHETIC_DATASET_V2"
+            sub_id = subject_id or ""
+            files = manifest_dict
+    else:
+        magic = str(manifest_magic)
+        sub_id = str(subject_id or "")
+        files = files_entry if files_entry is not None else {}
+
+    payload_bytes = build_canonical_manifest_payload(magic, sub_id, files)
+    return hmac.new(key.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
 
 def check_safety_guards(
@@ -189,10 +267,12 @@ def check_safety_guards(
                     "Symlinks are strictly prohibited for pipeline inputs."
                 )
 
-    # 4. Fail closed if primary paths are missing
-    if bold_path is None or t1w_path is None:
+    # 4. Fail closed if any of the five primary inputs is missing
+    missing_inputs = [k for k, p in all_inputs.items() if p is None]
+    if missing_inputs:
         raise RuntimeError(
-            "SAFETY VIOLATION: bold_path and t1w_path must both be provided for verification."
+            f"SAFETY VIOLATION: Missing required input(s): {', '.join(missing_inputs)}. "
+            "All five inputs (bold_nii, bold_json, t1w_nii, mni_template, cc200_atlas) must be provided."
         )
 
     bold_p = Path(bold_path)
@@ -208,7 +288,8 @@ def check_safety_guards(
         p_cand = Path(manifest_path)
         if p_cand.is_symlink():
             raise RuntimeError(
-                f"SAFETY VIOLATION: Symlink substitution detected at manifest path '{p_cand}'."
+                f"SAFETY VIOLATION: Symlink substitution detected at manifest path '{p_cand}'. "
+                "Symlinks are strictly prohibited."
             )
         if p_cand.is_file():
             found_manifest = p_cand
@@ -225,7 +306,8 @@ def check_safety_guards(
             if cand.is_file():
                 if cand.is_symlink():
                     raise RuntimeError(
-                        f"SAFETY VIOLATION: Symlink substitution detected at '{cand}'."
+                        f"SAFETY VIOLATION: Symlink substitution detected at '{cand}'. "
+                        "Symlinks are strictly prohibited."
                     )
                 found_manifest = cand
                 break
@@ -266,42 +348,80 @@ def check_safety_guards(
                 "All five inputs must be registered in the manifest."
             )
 
-    # Verify integrity HMAC if present in manifest
-    if "integrity_hmac" in manifest_dict:
-        expected_hmac = compute_manifest_hmac(files_entry)
-        if manifest_dict["integrity_hmac"] != expected_hmac:
-            raise RuntimeError(
-                "SAFETY VIOLATION: Synthetic manifest integrity token mismatch. "
-                "The manifest has been fabricated or altered."
-            )
+    # Mandatory HMAC verification
+    if "integrity_hmac" not in manifest_dict:
+        raise RuntimeError(
+            "SAFETY VIOLATION: Synthetic manifest missing mandatory 'integrity_hmac' token. "
+            "Execution cannot be authenticated and must fail closed."
+        )
+    token = manifest_dict.get("integrity_hmac")
+    if not isinstance(token, str) or not token.strip():
+        raise RuntimeError(
+            "SAFETY VIOLATION: Synthetic manifest 'integrity_hmac' token is empty or malformed."
+        )
+    token = token.strip()
+    if len(token) != 64 or not all(c in "0123456789abcdefABCDEF" for c in token):
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Synthetic manifest 'integrity_hmac' token '{token}' is malformed (must be 64-character hex)."
+        )
+
+    expected_hmac = compute_manifest_hmac(
+        manifest_magic=manifest_dict["manifest_magic"],
+        subject_id=subject_id,
+        files_entry=files_entry,
+    )
+    if not hmac.compare_digest(token.lower(), expected_hmac.lower()):
+        raise RuntimeError(
+            "SAFETY VIOLATION: Synthetic manifest integrity token mismatch. "
+            "The manifest has been fabricated, altered, or signed with an unauthorized key."
+        )
 
     # Verify each provided input against its manifest entry
     verified_hashes: Dict[str, str] = {}
     for input_key, input_path in all_inputs.items():
-        if input_path is not None:
-            p = Path(input_path).resolve()
-            if not p.is_file():
-                raise RuntimeError(f"SAFETY VIOLATION: Input file '{p}' not found on disk.")
+        actual_path = Path(input_path)
+        if actual_path.is_symlink():
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Symlink substitution detected at '{input_path}'. "
+                "Symlinks are strictly prohibited for pipeline inputs."
+            )
+        if not actual_path.is_file():
+            raise RuntimeError(f"SAFETY VIOLATION: Input file '{actual_path}' not found on disk.")
 
-            entry = files_entry[input_key]
+        actual_resolved = actual_path.resolve()
+        entry = files_entry[input_key]
 
-            # Verify resolved path or filename matches to prevent file swapping/substitution
-            manifest_res_path = entry.get("resolved_path")
-            if manifest_res_path and str(p) != manifest_res_path and p.name != entry.get("filename"):
-                raise RuntimeError(
-                    f"SAFETY VIOLATION: Input '{input_key}' resolved path '{p}' does not match manifest entry "
-                    f"'{manifest_res_path}'. Input file swapping/substitution detected."
-                )
+        # Strict canonical path equality requirement (reject filename-only matching)
+        manifest_res_raw = entry.get("resolved_path")
+        if not manifest_res_raw:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Synthetic manifest entry '{input_key}' missing 'resolved_path'."
+            )
+        manifest_resolved = Path(manifest_res_raw).resolve()
 
-            # Compute and verify SHA-256 hash
-            actual_sha256 = compute_sha256(p)
-            expected_sha256 = entry.get("sha256")
-            if actual_sha256 != expected_sha256:
-                raise RuntimeError(
-                    f"SAFETY VIOLATION: Input '{input_key}' ({p.name}) SHA-256 mismatch against synthetic manifest. "
-                    f"Expected {expected_sha256}, got {actual_sha256}."
-                )
-            verified_hashes[input_key] = actual_sha256
+        if actual_resolved != manifest_resolved:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Input '{input_key}' canonical path '{actual_resolved}' does not match "
+                f"manifest path '{manifest_resolved}'. Path mismatch or substitution detected."
+            )
+
+        # Exact filename match
+        expected_filename = entry.get("filename")
+        if not expected_filename or actual_resolved.name != expected_filename:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Input '{input_key}' filename '{actual_resolved.name}' does not match "
+                f"manifest filename '{expected_filename}'. Filename mismatch detected."
+            )
+
+        # Compute and verify SHA-256 hash
+        actual_sha256 = compute_sha256(actual_resolved)
+        expected_sha256 = entry.get("sha256")
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Input '{input_key}' ({actual_resolved.name}) SHA-256 mismatch against synthetic manifest. "
+                f"Expected {expected_sha256}, got {actual_sha256}."
+            )
+        verified_hashes[input_key] = actual_sha256
 
     return {
         "status": "VERIFIED_SYNTHETIC",
@@ -437,7 +557,11 @@ def generate_synthetic_phantom_session(
         },
     }
 
-    integrity_token = compute_manifest_hmac(files_dict)
+    integrity_token = compute_manifest_hmac(
+        manifest_magic="NEUROADHD_SYNTHETIC_DATASET_V2",
+        subject_id=subject_id,
+        files_entry=files_dict,
+    )
 
     # Write synthetic integrity manifest
     manifest_data = {

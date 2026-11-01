@@ -10,6 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      NEUROADHD_HMAC_KEY: "ci_test_synthetic_integrity_key_phase_a11_non_secret"
 
     steps:
     - name: Checkout repository

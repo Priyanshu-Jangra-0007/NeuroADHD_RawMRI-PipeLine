@@ -7,6 +7,7 @@ validates against the provenance schema, and blocks real subject processing.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,7 @@ from src.features.connectivity import get_feature_names
 
 class TestRunnerPoCV2Synthetic(unittest.TestCase):
     def setUp(self):
+        os.environ["NEUROADHD_HMAC_KEY"] = "test_synthetic_integrity_key_phase_a11_internal"
         np.random.seed(42)
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.work_dir = Path(self.tmp_dir.name)
@@ -223,8 +225,11 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             check_safety_guards(
                 "sub-synthetic-tamp",
-                tampered_session["bold_nii"],
-                tampered_session["t1w_nii"],
+                bold_path=tampered_session["bold_nii"],
+                t1w_path=tampered_session["t1w_nii"],
+                bold_json_path=tampered_session["bold_json"],
+                template_path=tampered_session["mni_template"],
+                atlas_path=tampered_session["cc200_atlas"],
                 manifest_path=tampered_session["synthetic_manifest"],
             )
         self.assertIn("SHA-256 mismatch against synthetic manifest", str(ctx.exception))
@@ -239,8 +244,11 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             check_safety_guards(
                 "sub-synthetic-nometa",
-                clean_session["bold_nii"],
-                clean_session["t1w_nii"],
+                bold_path=clean_session["bold_nii"],
+                t1w_path=clean_session["t1w_nii"],
+                bold_json_path=clean_session["bold_json"],
+                template_path=clean_session["mni_template"],
+                atlas_path=clean_session["cc200_atlas"],
             )
         self.assertIn("Synthetic origin manifest 'synthetic_manifest.json' not found", str(ctx.exception))
 
@@ -249,8 +257,11 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             check_safety_guards(
                 self.subject_id,
-                self.synth_paths["bold_nii"],
-                self.synth_paths["t1w_nii"],
+                bold_path=self.synth_paths["bold_nii"],
+                t1w_path=self.synth_paths["t1w_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
                 allow_real_scans=True,
             )
         self.assertIn("allow_real_scans=True' is prohibited", str(ctx.exception))
@@ -262,6 +273,9 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
                 "sub-synthetic001",
                 bold_path="/down/outputs/adhd200/sub-01_bold.nii.gz",
                 t1w_path=self.synth_paths["t1w_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
             )
         self.assertIn("SAFETY VIOLATION", str(ctx.exception))
 
@@ -278,7 +292,7 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         with open(fail_paths["synthetic_manifest"], "r", encoding="utf-8") as mf:
             m_dict = json.load(mf)
         m_dict["files"]["bold_json"]["sha256"] = compute_sha256(fail_paths["bold_json"])
-        m_dict["integrity_hmac"] = compute_manifest_hmac(m_dict["files"])
+        m_dict["integrity_hmac"] = compute_manifest_hmac(m_dict)
         with open(fail_paths["synthetic_manifest"], "w", encoding="utf-8") as mf:
             json.dump(m_dict, mf, indent=2)
 
@@ -365,7 +379,7 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
             m_data = json.load(f)
         del m_data["files"]["cc200_atlas"]
-        m_data["integrity_hmac"] = compute_manifest_hmac(m_data["files"])
+        m_data["integrity_hmac"] = compute_manifest_hmac(m_data)
         incomplete_manifest = self.work_dir / "incomplete_manifest.json"
         with open(incomplete_manifest, "w", encoding="utf-8") as f:
             json.dump(m_data, f, indent=2)
@@ -394,7 +408,7 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
                 atlas_path=self.synth_paths["cc200_atlas"],
                 manifest_path=self.synth_paths["synthetic_manifest"],
             )
-        self.assertIn("file swapping/substitution detected", str(ctx.exception))
+        self.assertIn("does not match manifest path", str(ctx.exception))
 
     def test_runner_safety_guard_blocks_symlink_inputs(self):
         """Symlink substitutions must be rejected unconditionally."""
@@ -483,6 +497,143 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         self.assertGreaterEqual(len(failed_dirs), 1)
         # No successful run directory
         self.assertEqual(len(list((self.output_dir / self.subject_id).glob("run_*"))), 0)
+
+    def test_runner_safety_guard_blocks_missing_hmac_token(self):
+        """Manifest missing mandatory 'integrity_hmac' token must fail closed."""
+        with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
+            m_data = json.load(f)
+        del m_data["integrity_hmac"]
+        no_hmac_manifest = self.work_dir / "no_hmac_manifest.json"
+        with open(no_hmac_manifest, "w", encoding="utf-8") as f:
+            json.dump(m_data, f, indent=2)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                self.synth_paths["bold_nii"],
+                self.synth_paths["t1w_nii"],
+                self.synth_paths["bold_json"],
+                self.synth_paths["mni_template"],
+                self.synth_paths["cc200_atlas"],
+                manifest_path=no_hmac_manifest,
+            )
+        self.assertIn("missing mandatory 'integrity_hmac' token", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_empty_or_malformed_hmac_token(self):
+        """Manifest with empty or malformed non-hex HMAC token must fail closed."""
+        with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
+            m_data = json.load(f)
+
+        for bad_token in ["", "   ", "not_a_hex_token", "1234"]:
+            m_data["integrity_hmac"] = bad_token
+            bad_manifest = self.work_dir / f"bad_hmac_{len(bad_token)}.json"
+            with open(bad_manifest, "w", encoding="utf-8") as f:
+                json.dump(m_data, f, indent=2)
+
+            with self.assertRaises(RuntimeError) as ctx:
+                check_safety_guards(
+                    self.subject_id,
+                    self.synth_paths["bold_nii"],
+                    self.synth_paths["t1w_nii"],
+                    self.synth_paths["bold_json"],
+                    self.synth_paths["mni_template"],
+                    self.synth_paths["cc200_atlas"],
+                    manifest_path=bad_manifest,
+                )
+            msg = str(ctx.exception).lower()
+            self.assertTrue("empty" in msg or "malformed" in msg)
+
+    def test_runner_safety_guard_blocks_modified_manifest_filename(self):
+        """Manifest with modified filename in files registration must fail validation."""
+        with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
+            m_data = json.load(f)
+        m_data["files"]["bold_nii"]["filename"] = "altered_filename.nii.gz"
+        m_data["integrity_hmac"] = compute_manifest_hmac(m_data)
+        mod_filename_manifest = self.work_dir / "mod_filename_manifest.json"
+        with open(mod_filename_manifest, "w", encoding="utf-8") as f:
+            json.dump(m_data, f, indent=2)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                self.synth_paths["bold_nii"],
+                self.synth_paths["t1w_nii"],
+                self.synth_paths["bold_json"],
+                self.synth_paths["mni_template"],
+                self.synth_paths["cc200_atlas"],
+                manifest_path=mod_filename_manifest,
+            )
+        self.assertIn("Filename mismatch detected", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_modified_resolved_path_with_same_basename(self):
+        """Input with matching basename located in an unauthorized directory must be rejected."""
+        unauth_dir = self.work_dir / "unauthorized_location"
+        unauth_dir.mkdir(parents=True, exist_ok=True)
+        spoofed_bold = unauth_dir / self.synth_paths["bold_nii"].name
+        spoofed_bold.write_bytes(self.synth_paths["bold_nii"].read_bytes())
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                bold_path=spoofed_bold,
+                t1w_path=self.synth_paths["t1w_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                manifest_path=self.synth_paths["synthetic_manifest"],
+            )
+        self.assertIn("does not match manifest path", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_symlink_manifest(self):
+        """Synthetic manifest accessed via symlink must be rejected."""
+        symlink_manifest = self.work_dir / "symlink_manifest.json"
+        if symlink_manifest.exists():
+            symlink_manifest.unlink()
+        symlink_manifest.symlink_to(self.synth_paths["synthetic_manifest"])
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                bold_path=self.synth_paths["bold_nii"],
+                t1w_path=self.synth_paths["t1w_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                manifest_path=symlink_manifest,
+            )
+        self.assertIn("Symlink substitution detected", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_missing_integrity_key(self):
+        """Pipeline must fail closed if HMAC integrity key environment variable is not set."""
+        import unittest.mock as mock
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                check_safety_guards(
+                    self.subject_id,
+                    bold_path=self.synth_paths["bold_nii"],
+                    t1w_path=self.synth_paths["t1w_nii"],
+                    bold_json_path=self.synth_paths["bold_json"],
+                    template_path=self.synth_paths["mni_template"],
+                    atlas_path=self.synth_paths["cc200_atlas"],
+                    manifest_path=self.synth_paths["synthetic_manifest"],
+                )
+            self.assertIn("Mandatory HMAC integrity key not set in environment variable", str(ctx.exception))
+
+    def test_runner_safety_guard_accepts_valid_synthetic_manifest(self):
+        """Genuine synthetic session with valid manifest and HMAC must pass verification."""
+        res = check_safety_guards(
+            self.subject_id,
+            bold_path=self.synth_paths["bold_nii"],
+            t1w_path=self.synth_paths["t1w_nii"],
+            bold_json_path=self.synth_paths["bold_json"],
+            template_path=self.synth_paths["mni_template"],
+            atlas_path=self.synth_paths["cc200_atlas"],
+            manifest_path=self.synth_paths["synthetic_manifest"],
+        )
+        self.assertEqual(res["status"], "VERIFIED_SYNTHETIC")
+        self.assertEqual(len(res["verified_hashes"]), 5)
+        for k in ["bold_nii", "bold_json", "t1w_nii", "mni_template", "cc200_atlas"]:
+            self.assertIn(k, res["verified_hashes"])
 
 
 if __name__ == "__main__":
