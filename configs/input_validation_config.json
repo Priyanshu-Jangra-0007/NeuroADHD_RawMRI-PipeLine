@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NeuroADHD Raw Input Validation Configuration",
+  "version": "1.0.0",
+  "bids_validation_rules": {
+    "required_files": {
+      "bold_image": {
+        "pattern": "^sub-[a-zA-Z0-9]+(?:_ses-[a-zA-Z0-9]+)?_task-rest(?:_run-[0-9]+)?_bold\\.nii(?:\\.gz)?$",
+        "required": true,
+        "description": "4D functional resting-state BOLD scan"
+      },
+      "bold_json": {
+        "pattern": "^sub-[a-zA-Z0-9]+(?:_ses-[a-zA-Z0-9]+)?_task-rest(?:_run-[0-9]+)?_bold\\.json$",
+        "required": true,
+        "description": "BIDS JSON sidecar containing RepetitionTime and acquisition metadata"
+      },
+      "t1w_image": {
+        "pattern": "^sub-[a-zA-Z0-9]+(?:_ses-[a-zA-Z0-9]+)?(?:_run-[0-9]+)?_T1w\\.nii(?:\\.gz)?$",
+        "required": false,
+        "description": "High-resolution anatomical T1-weighted image for anatomical coregistration"
+      }
+    },
+    "bold_image_constraints": {
+      "dimensions": 4,
+      "min_timepoints": 50,
+      "max_timepoints": 1000,
+      "min_spatial_voxels_per_dim": [32, 32, 15],
+      "check_finite_floats": true,
+      "check_non_empty_mask": true
+    },
+    "bold_json_constraints": {
+      "required_keys": [
+        "RepetitionTime",
+        "TaskName"
+      ],
+      "task_name_expected": "rest",
+      "repetition_time_range_seconds": [0.5, 5.0]
+    }
+  },
+  "roi_timeseries_validation_rules": {
+    "expected_rows": 200,
+    "first_column_header": "node/volume",
+    "roi_id_range": [1, 200],
+    "strictly_ordered_roi_ids": true,
+    "min_timepoints": 50,
+    "allow_nan_or_inf": false,
+    "allow_constant_signals": false,
+    "constant_signal_check_ddof": 0,
+    "evidence": "Enforced by NeuroADHD/src/features/extract_cc200_connectivity.py:L26-L50"
+  },
+  "connectivity_vector_validation_rules": {
+    "expected_feature_count": 19900,
+    "boundary_clipping_epsilon": 1e-7,
+    "allow_nan_or_inf": false,
+    "exact_order": "lexicographic upper triangle k=1: ROI_001__ROI_002 to ROI_199__ROI_200",
+    "evidence": "Enforced by NeuroADHD/src/features/extract_cc200_connectivity.py:L57-L70"
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "pipeline_name": "NeuroADHD_RawMRI_Pipeline_V2",
+  "version": "0.2.0-poc-v2-specification",
+  "status": "IMPLEMENTED_V2_SPECIFICATION",
+  "host_environment": {
+    "target_os": "macOS Darwin (Apple Silicon ARM64 / M2)",
+    "physical_ram_gb": 8.0,
+    "peak_memory_limit_gb": 2.5
+  },
+  "target_model_compatibility": {
+    "atlas": "Craddock 200 (CC200)",
+    "expected_rois": 200,
+    "feature_dimensions": 19900,
+    "selected_features": 100,
+    "reference_training_cohort": "ADHD-200 (153 curated subjects)"
+  },
+  "raw_input_specification": {
+    "format": "BIDS",
+    "required_modalities": [
+      "bold",
+      "bold_json"
+    ],
+    "optional_modalities": [
+      "T1w"
+    ],
+    "task_name": "rest",
+    "minimum_timepoints": 50,
+    "repetition_time_range_seconds": [0.5, 5.0]
+  },
+  "spatial_preprocessing": {
+    "standard_space": {
+      "template": "MNI152_T1_3mm",
+      "voxel_resolution_mm": [3.0, 3.0, 3.0],
+      "dimensions": [63, 75, 61]
+    },
+    "functional_reference": {
+      "type": "temporal_mean",
+      "realigned": true
+    },
+    "coregistration": {
+      "tool": "DIPY imaffine.AffineRegistration",
+      "model": "RigidTransform3D (6 DOF)",
+      "metric": "MutualInformationMetric (nbins=32, sampling_proportion=0.30)",
+      "levels": [40, 20, 10]
+    },
+    "normalization": {
+      "affine_stage": {
+        "model": "AffineTransform3D (12 DOF)",
+        "metric": "MutualInformationMetric (nbins=32, sampling_proportion=0.25)",
+        "levels": [40, 20, 10]
+      },
+      "nonlinear_stage": {
+        "model": "SymmetricDiffeomorphicRegistration (SyN)",
+        "metric": "CCMetric (radius=3)",
+        "step_length": 0.25,
+        "levels": [10, 5]
+      }
+    },
+    "resampling": {
+      "approach": "Composed single-step pullback reslicing",
+      "mapping_composition": "M_epi_to_t1w @ M_t1w_to_mni @ Phi_t1w_to_mni",
+      "interpolation_functional": "linear",
+      "interpolation_labels": "nearest"
+    }
+  },
+  "anatomical_segmentation": {
+    "skull_stripping": {
+      "tool": "DIPY median_otsu",
+      "median_radius": 4,
+      "numpass": 4
+    },
+    "bias_correction": {
+      "model": "3D Legendre polynomial (order=3) on log intensities",
+      "geometric_mean_normalized": true
+    },
+    "tissue_classification": {
+      "tool": "DIPY TissueClassifierHMRF",
+      "n_classes": 3,
+      "classes": ["CSF", "GM", "WM"],
+      "beta": 0.1,
+      "max_iter": 30
+    },
+    "thresholds_and_erosion": {
+      "wm_probability_threshold": 0.96,
+      "csf_probability_threshold": 0.96,
+      "morphological_erosion_voxels": 1,
+      "structuring_element": "3D 6-connectivity cross"
+    }
+  },
+  "nuisance_model": {
+    "total_regressors": 31,
+    "motion_regressors": {
+      "model": "Friston 24 (R, R^2, R_{t-1}, R_{t-1}^2)",
+      "count": 24
+    },
+    "compcor": {
+      "method": "anatomical CompCor (aCompCor)",
+      "source_masks": "Eroded anatomical WM (p>=0.96) and CSF (p>=0.96)",
+      "components": 5,
+      "variance_standardization": true
+    },
+    "trends": {
+      "linear": true,
+      "quadratic": true
+    },
+    "global_signal_regression": {
+      "status": "VERIFIED_OFF",
+      "enabled": false
+    },
+    "mean_tissue_signal_regression": {
+      "status": "VERIFIED_OFF",
+      "enabled": false
+    },
+    "bandpass_filtering": {
+      "low_cutoff_hz": 0.01,
+      "high_cutoff_hz": 0.10,
+      "simultaneous_with_regression": true,
+      "standardize_residuals": false
+    }
+  },
+  "parcellation_and_features": {
+    "atlas_file": "data/atlases/cc200_roi_atlas.nii.gz",
+    "atlas_labels": "data/atlases/CC200_ROI_labels.csv",
+    "rois_expected": 200,
+    "connectivity_edges": 19900,
+    "fisher_epsilon": 1e-7,
+    "output_csv": "roi_CC200.csv"
+  }
+}

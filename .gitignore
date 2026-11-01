@@ -1,0 +1,90 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test & Coverage artifacts
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+reports/review_bundle/
+
+# Large neuroimaging data files & raw scans
+*.nii
+*.nii.gz
+*.dcm
+*.IMA
+*.1D
+*.mat
+data/raw/
+data/derivatives/
+raw_data/
+derivatives/
+work_dir/
+scratch/
+tmp/
+temp/
+
+# Whitelist project reference atlas required for parcellation & automated tests
+!data/
+!data/atlases/
+!data/atlases/*
+!data/atlases/*.nii.gz
+
+# Preprocessing outputs & heavy intermediates
+outputs/
+working/
+intermediate/
+*.h5
+*.hdf5
+*.joblib
+*.pkl
+*.pklz
+
+# Logs & provenance containing local paths or subject IDs
+logs/*.log
+logs/execution_traces/
+!logs/.gitkeep
+
+# Sensitive test fixtures
+tests/fixtures/*.nii*
+tests/fixtures/temp/
