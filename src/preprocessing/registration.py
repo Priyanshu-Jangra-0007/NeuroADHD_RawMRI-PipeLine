@@ -455,6 +455,9 @@ def resample_mask_to_target(
 ) -> nib.Nifti1Image:
     """Resample 3D binary or discrete label mask using nearest-neighbor interpolation.
 
+    Strictly validates the input mask's 3D dimensions and affine against the transformation's
+    source domain before warping, rejecting shape, translation, scaling, or orientation mismatches.
+
     Note on Anatomical Tissue Masks vs Functional Masks:
     ---------------------------------------------------
     - For anatomical tissue masks (eroded WM and CSF masks, which originate in structural T1w space),
@@ -479,6 +482,75 @@ def resample_mask_to_target(
     nib.Nifti1Image
         Resampled 3D mask image with discrete values preserved and exact target affine.
     """
+    if mask_3d.ndim != 3:
+        raise ValueError(f"Expected 3D mask image, got {mask_3d.ndim}D image of shape {mask_3d.shape}")
+
+    # Extract source domain shape and affine from transform_map
+    if isinstance(transform_map, DiffeomorphicMap):
+        dom_shape = transform_map.domain_shape
+        dom_affine = transform_map.domain_grid2world
+        codom_shape = transform_map.codomain_shape
+    elif isinstance(transform_map, AffineMap):
+        dom_shape = getattr(transform_map, "codomain_shape", None) or getattr(transform_map, "domain_shape", None)
+        dom_affine = getattr(transform_map, "codomain_grid2world", None) or getattr(transform_map, "domain_grid2world", None)
+        codom_shape = getattr(transform_map, "domain_shape", None)
+    else:
+        dom_shape = getattr(transform_map, "domain_shape", None) or getattr(transform_map, "codomain_shape", None)
+        dom_affine = getattr(transform_map, "domain_grid2world", None) or getattr(transform_map, "codomain_grid2world", None)
+        codom_shape = getattr(transform_map, "codomain_shape", None)
+
+    if dom_shape is None or dom_affine is None:
+        raise ValueError(
+            "Transformation map lacks source domain geometry specification "
+            "(domain_shape or domain_grid2world is None). Cannot validate input mask spatial alignment."
+        )
+
+    dom_shape = tuple(dom_shape[:3])
+    mask_shape = tuple(mask_3d.shape[:3])
+
+    # 1. Spatial Dimension Validation
+    if mask_shape != dom_shape:
+        raise ValueError(
+            f"Spatial dimension mismatch: mask shape {mask_shape} does not match transformation source domain shape {dom_shape}. "
+            "Anatomical T1w masks must use T1w-to-MNI transform (syn_mapping), not composed EPI-to-MNI transform."
+        )
+
+    # 2. Affine Translation / Origin Validation
+    mask_origin = np.asarray(mask_3d.affine[:3, 3], dtype=np.float64)
+    dom_origin = np.asarray(dom_affine[:3, 3], dtype=np.float64)
+    if not np.allclose(mask_origin, dom_origin, atol=1e-3):
+        raise ValueError(
+            f"Translation offset mismatch: mask origin {mask_origin.tolist()} differs from transformation source origin {dom_origin.tolist()}."
+        )
+
+    # 3. Voxel-Size Scaling Validation
+    mask_vox = np.linalg.norm(mask_3d.affine[:3, :3], axis=0)
+    dom_vox = np.linalg.norm(dom_affine[:3, :3], axis=0)
+    if not np.allclose(mask_vox, dom_vox, atol=1e-3):
+        raise ValueError(
+            f"Voxel-size scaling mismatch: mask voxel size {mask_vox.tolist()} differs from transformation source voxel size {dom_vox.tolist()}."
+        )
+
+    # 4. Oblique Orientation / Rotation Validation
+    mask_rot = mask_3d.affine[:3, :3] / mask_vox
+    dom_rot = dom_affine[:3, :3] / dom_vox
+    if not np.allclose(mask_rot, dom_rot, atol=1e-3):
+        raise ValueError(
+            "Oblique orientation / rotation mismatch between mask affine and transformation source affine."
+        )
+
+    # 5. Full Affine Matrix Validation
+    if not np.allclose(mask_3d.affine, dom_affine, atol=1e-3):
+        raise ValueError(
+            "Affine matrix mismatch between mask and transformation source domain."
+        )
+
+    # 6. Target Grid Codomain Validation (if available)
+    if codom_shape is not None and tuple(codom_shape[:3]) != tuple(target_shape[:3]):
+        raise ValueError(
+            f"Target shape mismatch: requested target shape {target_shape} does not match map codomain shape {tuple(codom_shape[:3])}."
+        )
+
     mask_data = np.asanyarray(mask_3d.dataobj, dtype=np.float32)
     if isinstance(transform_map, DiffeomorphicMap):
         warped_mask = transform_map.transform(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import tempfile
 import unittest
 import nibabel as nib
 import numpy as np
@@ -14,7 +15,13 @@ from src.features.connectivity import (
     compute_connectivity_vector,
     get_feature_names,
 )
-from src.parcellation.extractor import extract_cc200_timeseries
+from src.parcellation.extractor import (
+    CANONICAL_CC200_AFFINE,
+    CANONICAL_CC200_SHA256,
+    CANONICAL_CC200_SHAPE,
+    extract_cc200_timeseries,
+    verify_canonical_cc200_atlas,
+)
 
 
 class TestConnectivityAndParcellation(unittest.TestCase):
@@ -193,6 +200,30 @@ class TestConnectivityAndParcellation(unittest.TestCase):
         # Verify exact lexicographical edge ordering
         expected_names = get_feature_names()
         self.assertEqual(edge_names, expected_names)
+
+
+    def test_verify_canonical_cc200_atlas_success(self):
+        """Canonical CC200 atlas file must pass complete verification."""
+        atlas_path = Path("data/atlases/cc200_roi_atlas.nii.gz")
+        res = verify_canonical_cc200_atlas(atlas_path)
+        self.assertTrue(res["verified"])
+        self.assertEqual(res["sha256"], CANONICAL_CC200_SHA256)
+        self.assertEqual(res["shape"], CANONICAL_CC200_SHAPE)
+        self.assertEqual(res["n_rois"], 200)
+
+    def test_verify_canonical_cc200_atlas_missing_file_raises_filenotfound(self):
+        """Missing file must raise FileNotFoundError."""
+        with self.assertRaises(FileNotFoundError):
+            verify_canonical_cc200_atlas(Path("data/atlases/non_existent_atlas.nii.gz"))
+
+    def test_verify_canonical_cc200_atlas_corrupt_checksum_raises_valueerror(self):
+        """Modified or unauthorized file must raise ValueError on SHA-256 mismatch."""
+        with tempfile.NamedTemporaryFile(suffix=".nii.gz") as tf:
+            # Write arbitrary content
+            Path(tf.name).write_bytes(b"dummy corrupt nifti header")
+            with self.assertRaises(ValueError) as ctx:
+                verify_canonical_cc200_atlas(tf.name)
+            self.assertIn("SHA-256 mismatch", str(ctx.exception))
 
 
 if __name__ == "__main__":

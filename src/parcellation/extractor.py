@@ -1,13 +1,115 @@
 """Craddock 200 (CC200) ROI time series extraction and validation."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Tuple, Union
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
 from nilearn.maskers import NiftiLabelsMasker
+
+# Canonical CC200 reference constants
+CANONICAL_CC200_SHA256 = "9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650"
+CANONICAL_CC200_SHAPE = (63, 75, 61)
+CANONICAL_CC200_ZOOMS = (3.0, 3.0, 3.0)
+CANONICAL_CC200_AFFINE = np.array(
+    [
+        [-3.0, 0.0, 0.0, 93.0],
+        [0.0, 3.0, 0.0, -129.0],
+        [0.0, 0.0, 3.0, -72.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
+
+
+def verify_canonical_cc200_atlas(
+    atlas_path: Union[str, Path],
+) -> Dict[str, Any]:
+    """Perform rigorous identity and geometric verification of the CC200 atlas file.
+
+    Validates:
+    - File existence.
+    - Exact SHA-256 cryptographic hash (9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650).
+    - Exact 3D grid dimensions (63, 75, 61).
+    - Voxel zooms (3.0, 3.0, 3.0) mm.
+    - Reference affine matrix.
+    - Exactly 200 non-zero contiguous integer labels 1..200.
+
+    Parameters
+    ----------
+    atlas_path : Union[str, Path]
+        Path to the CC200 NIfTI atlas file.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Metadata dictionary confirming atlas verification with details.
+
+    Raises
+    ------
+    FileNotFoundError
+        If atlas file is missing.
+    ValueError
+        If any checksum, geometry, affine, or label requirement is violated.
+    """
+    path = Path(atlas_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Canonical CC200 atlas file not found at: {path}")
+
+    # 1. Cryptographic SHA-256 Checksum Verification
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            hasher.update(chunk)
+    actual_sha256 = hasher.hexdigest()
+
+    if actual_sha256 != CANONICAL_CC200_SHA256:
+        raise ValueError(
+            f"CC200 atlas SHA-256 mismatch: expected {CANONICAL_CC200_SHA256}, got {actual_sha256}. "
+            "Atlas file integrity verification failed; file is corrupt or unauthorized."
+        )
+
+    # 2. Geometric Verification
+    atlas_img = nib.load(str(path))
+    if atlas_img.shape[:3] != CANONICAL_CC200_SHAPE:
+        raise ValueError(
+            f"CC200 atlas shape mismatch: expected {CANONICAL_CC200_SHAPE}, got {atlas_img.shape[:3]}."
+        )
+
+    zooms = tuple(np.round(atlas_img.header.get_zooms()[:3], 1))
+    if zooms != CANONICAL_CC200_ZOOMS:
+        raise ValueError(
+            f"CC200 atlas voxel zoom mismatch: expected {CANONICAL_CC200_ZOOMS}, got {zooms}."
+        )
+
+    if not np.allclose(atlas_img.affine, CANONICAL_CC200_AFFINE, atol=1e-3):
+        raise ValueError(
+            f"CC200 atlas affine mismatch. Expected:\n{CANONICAL_CC200_AFFINE}\nGot:\n{atlas_img.affine}"
+        )
+
+    # 3. Label Completeness Verification
+    atlas_data = np.asanyarray(atlas_img.dataobj, dtype=np.int32)
+    unique_labels = np.unique(atlas_data[atlas_data > 0])
+    if len(unique_labels) != 200:
+        raise ValueError(
+            f"CC200 atlas must contain exactly 200 non-zero ROIs, found {len(unique_labels)}."
+        )
+    if not np.array_equal(unique_labels, np.arange(1, 201)):
+        raise ValueError(
+            "CC200 atlas labels are not contiguous integers from 1 to 200."
+        )
+
+    return {
+        "verified": True,
+        "sha256": actual_sha256,
+        "shape": atlas_img.shape[:3],
+        "zooms": zooms,
+        "n_rois": 200,
+        "atlas_path": str(path.resolve()),
+    }
 
 
 def extract_cc200_timeseries(

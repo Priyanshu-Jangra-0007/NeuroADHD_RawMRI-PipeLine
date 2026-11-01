@@ -157,3 +157,4 @@ print(f"ROI CSV: {results['artifacts']['roi_csv']}")
 - Output artifacts strictly match the contracts required by the frozen NeuroADHD downstream model.
 - Real participant data remains guarded and disabled by default.
 - The pipeline is prepared for an authorized single-subject dry run on developmental training data.
+

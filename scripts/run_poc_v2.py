@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 import os
 import platform
@@ -51,7 +52,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.connectivity import compute_connectivity_vector, get_feature_names
-from src.parcellation.extractor import extract_cc200_timeseries
+from src.parcellation.extractor import (
+    CANONICAL_CC200_AFFINE,
+    CANONICAL_CC200_SHAPE,
+    extract_cc200_timeseries,
+    verify_canonical_cc200_atlas,
+)
 from src.preprocessing.motion import build_friston_24_regressors, realign_4d_bold
 from src.preprocessing.nuisance import (
     build_confound_matrix,
@@ -83,35 +89,161 @@ from src.preprocessing.segmentation import (
 from src.validation.bids_validator import BIDSInputValidator
 
 
+def compute_sha256(file_path: Union[str, Path]) -> str:
+    """Compute hex SHA-256 digest of a file on disk."""
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"File not found for checksum calculation: {path}")
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def check_safety_guards(
     subject_id: str,
     bold_path: Optional[Union[str, Path]] = None,
     t1w_path: Optional[Union[str, Path]] = None,
     allow_real_scans: bool = False,
-) -> None:
-    """Enforce strict safety restrictions preventing raw ADHD-200 participant processing."""
-    sub_lower = str(subject_id).lower()
-    for kw in ["2344857", "peking"]:
+    manifest_path: Optional[Union[str, Path]] = None,
+) -> Dict[str, Any]:
+    """Enforce strict safety restrictions preventing raw clinical participant processing.
+
+    In Phase A, execution on real MRI scans is prohibited. The pipeline fails closed
+    by default. Execution requires cryptographic proof of synthetic origin via a validated
+    synthetic manifest with matching SHA-256 hashes.
+    """
+    # 1. Reject explicit bypass attempts
+    if allow_real_scans:
+        raise RuntimeError(
+            "SAFETY VIOLATION: Execution on real MRI scans is strictly disabled by Phase A safety policy. "
+            "'allow_real_scans=True' is prohibited and will not bypass safety guards."
+        )
+
+    # 2. Block known real participant and cohort identifiers
+    sub_lower = str(subject_id).strip().lower()
+    blocked_keywords = [
+        "2344857",
+        "peking",
+        "kki",
+        "nyu",
+        "adhd200",
+        "adhd-200",
+        "control",
+        "abide",
+        "fcon",
+        "neuromark",
+        "sub-001",
+        "sub-control",
+        "sub-adhd",
+    ]
+    for kw in blocked_keywords:
         if kw in sub_lower:
             raise RuntimeError(
                 f"SAFETY VIOLATION: Execution on subject '{subject_id}' is strictly blocked. "
-                "Processing real ADHD-200 / Peking_2 data is prohibited until code review is approved."
+                "Processing real ADHD-200 or clinical participant data is prohibited."
             )
 
+    # 3. Block raw data paths referencing known clinical directories
     for p in [bold_path, t1w_path]:
         if p is not None:
             p_str = str(p).lower()
-            if "down/outputs/adhd200" in p_str or "sub-2344857" in p_str:
-                raise RuntimeError(
-                    f"SAFETY VIOLATION: Attempted to process real raw data at '{p}'. "
-                    "Processing of raw ADHD-200 data remains disabled."
-                )
+            for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200"]:
+                if kw in p_str:
+                    raise RuntimeError(
+                        f"SAFETY VIOLATION: Attempted to process real raw data at '{p}'. "
+                        "Processing raw clinical data remains prohibited."
+                    )
 
-    if not allow_real_scans and "synthetic" not in sub_lower:
+    # 4. Fail closed if paths are missing
+    if bold_path is None or t1w_path is None:
         raise RuntimeError(
-            f"SAFETY VIOLATION: Subject '{subject_id}' does not indicate synthetic mode. "
-            "Pipeline is currently restricted to synthetic-only verification."
+            "SAFETY VIOLATION: bold_path and t1w_path must both be provided for verification."
         )
+
+    bold_p = Path(bold_path)
+    t1w_p = Path(t1w_path)
+    if not bold_p.is_file():
+        raise RuntimeError(f"SAFETY VIOLATION: Input BOLD file not found at '{bold_p}'.")
+    if not t1w_p.is_file():
+        raise RuntimeError(f"SAFETY VIOLATION: Input T1w file not found at '{t1w_p}'.")
+
+    # 5. Locate and verify cryptographic synthetic manifest
+    found_manifest: Optional[Path] = None
+    if manifest_path is not None:
+        p_cand = Path(manifest_path)
+        if p_cand.is_file():
+            found_manifest = p_cand
+    else:
+        # Search candidate directories around input files
+        search_dirs = [
+            bold_p.parent,
+            bold_p.parent.parent,
+            t1w_p.parent,
+            t1w_p.parent.parent,
+        ]
+        for d in search_dirs:
+            cand = d / "synthetic_manifest.json"
+            if cand.is_file():
+                found_manifest = cand
+                break
+
+    if found_manifest is None:
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Synthetic origin manifest 'synthetic_manifest.json' not found for subject '{subject_id}'. "
+            "Arbitrary, unauthenticated, or real NIfTI files are strictly blocked from execution."
+        )
+
+    try:
+        with open(found_manifest, "r", encoding="utf-8") as f:
+            manifest_dict = json.load(f)
+    except Exception as exc:
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Failed to parse synthetic manifest at '{found_manifest}': {exc}"
+        ) from exc
+
+    if manifest_dict.get("manifest_magic") != "NEUROADHD_SYNTHETIC_DATASET_V2":
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Invalid synthetic manifest magic marker in '{found_manifest}'."
+        )
+
+    if manifest_dict.get("subject_id") != subject_id:
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Synthetic manifest subject_id '{manifest_dict.get('subject_id')}' "
+            f"does not match requested subject_id '{subject_id}'."
+        )
+
+    # Verify input file hashes against manifest
+    files_entry = manifest_dict.get("files", {})
+    if "bold_nii" not in files_entry or "t1w_nii" not in files_entry:
+        raise RuntimeError(
+            "SAFETY VIOLATION: Synthetic manifest missing required 'bold_nii' or 't1w_nii' entries."
+        )
+
+    actual_bold_sha256 = compute_sha256(bold_p)
+    expected_bold_sha256 = files_entry["bold_nii"].get("sha256")
+    if actual_bold_sha256 != expected_bold_sha256:
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Input BOLD file '{bold_p}' SHA-256 mismatch against synthetic manifest. "
+            f"Expected {expected_bold_sha256}, got {actual_bold_sha256}."
+        )
+
+    actual_t1w_sha256 = compute_sha256(t1w_p)
+    expected_t1w_sha256 = files_entry["t1w_nii"].get("sha256")
+    if actual_t1w_sha256 != expected_t1w_sha256:
+        raise RuntimeError(
+            f"SAFETY VIOLATION: Input T1w file '{t1w_p}' SHA-256 mismatch against synthetic manifest. "
+            f"Expected {expected_t1w_sha256}, got {actual_t1w_sha256}."
+        )
+
+    return {
+        "status": "VERIFIED_SYNTHETIC",
+        "manifest_path": str(found_manifest),
+        "subject_id": subject_id,
+        "bold_sha256": actual_bold_sha256,
+        "t1w_sha256": actual_t1w_sha256,
+    }
 
 
 def generate_synthetic_phantom_session(
@@ -206,12 +338,47 @@ def generate_synthetic_phantom_session(
     atlas_path = template_dir / "cc200_synthetic_atlas.nii.gz"
     nib.save(nib.Nifti1Image(atlas_data, target_affine), str(atlas_path))
 
+    # Write cryptographic synthetic manifest
+    manifest_data = {
+        "manifest_magic": "NEUROADHD_SYNTHETIC_DATASET_V2",
+        "schema_version": "2.0.0",
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "subject_id": subject_id,
+        "session_id": session_id,
+        "files": {
+            "bold_nii": {
+                "rel_path": str(bold_nii_path.relative_to(session_dir)),
+                "sha256": compute_sha256(bold_nii_path),
+            },
+            "bold_json": {
+                "rel_path": str(sidecar_path.relative_to(session_dir)),
+                "sha256": compute_sha256(sidecar_path),
+            },
+            "t1w_nii": {
+                "rel_path": str(t1_nii_path.relative_to(session_dir)),
+                "sha256": compute_sha256(t1_nii_path),
+            },
+            "mni_template": {
+                "rel_path": str(mni_path.name),
+                "sha256": compute_sha256(mni_path),
+            },
+            "cc200_atlas": {
+                "rel_path": str(atlas_path.name),
+                "sha256": compute_sha256(atlas_path),
+            },
+        },
+    }
+    manifest_path = session_dir / "synthetic_manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest_data, f, indent=2)
+
     return {
         "bold_nii": bold_nii_path,
         "bold_json": sidecar_path,
         "t1w_nii": t1_nii_path,
         "mni_template": mni_path,
         "cc200_atlas": atlas_path,
+        "synthetic_manifest": manifest_path,
     }
 
 
@@ -226,13 +393,20 @@ def run_poc_v2_pipeline(
     session_id: str = "ses-1",
     max_memory_gb: float = 2.5,
     allow_real_scans: bool = False,
+    manifest_path: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
     start_time = time.time()
     start_rss = check_process_memory_gb()
 
-    # Safety Enforcement
-    check_safety_guards(subject_id, bold_path, t1w_path, allow_real_scans=allow_real_scans)
+    # Safety Enforcement - fail closed
+    check_safety_guards(
+        subject_id=subject_id,
+        bold_path=bold_path,
+        t1w_path=t1w_path,
+        allow_real_scans=allow_real_scans,
+        manifest_path=manifest_path,
+    )
 
     run_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     sub_out_dir = output_dir / subject_id / f"run_{run_tag}"
@@ -258,6 +432,12 @@ def run_poc_v2_pipeline(
         tr = bids_meta["repetition_time"]
         print(f"  -> RepetitionTime: {tr:.3f}s | Task: {bids_meta['task_name']} [PASSED]")
 
+        # Canonical atlas verification if authentic atlas is provided
+        if "cc200_roi_atlas" in str(atlas_path):
+            print("  -> Verifying authentic CC200 canonical atlas identity...")
+            verify_canonical_cc200_atlas(atlas_path)
+            print("  -> CC200 canonical atlas verified [PASSED]")
+
         # Load NIfTI volumes
         bold_img = nib.load(str(bold_path))
         t1w_img = nib.load(str(t1w_path))
@@ -267,6 +447,8 @@ def run_poc_v2_pipeline(
         t_vol = bold_img.shape[3] if bold_img.ndim == 4 else 0
         if t_vol < 50:
             raise ValueError(f"Insufficient BOLD timepoints: {t_vol} (minimum 50 required)")
+
+        epi_shape = bold_img.shape[:3]
 
         # -------------------------------------------------------------
         # Stage 2: 3D Rigid Motion Realignment (DIPY) -> Motion + FD
@@ -544,7 +726,7 @@ def run_poc_v2_pipeline(
         # Stage 19: Schema-Compliant Provenance JSON Generation
         # -------------------------------------------------------------
         current_stage = "Stage 19: Provenance Reporting"
-        print("\n[Stage 19/19] Generating provenance metadata...")
+        print("\n[Stage 19/19] Generating provenance metadata and validating schema...")
         runtime_sec = float(time.time() - start_time)
         peak_rss = check_process_memory_gb()
 
@@ -552,6 +734,88 @@ def run_poc_v2_pipeline(
         import nilearn
         import scipy
         import sklearn
+        import jsonschema
+
+        # 1. Compute Cryptographic Checksums for Output Artifacts
+        output_checksums: Dict[str, str] = {
+            "roi_csv": compute_sha256(roi_csv_path),
+            "features_csv": compute_sha256(feat_csv_path),
+            "features_npy": compute_sha256(feat_npy_path),
+            "motion_tsv": compute_sha256(motion_txt_path),
+            "fd_tsv": compute_sha256(fd_1d_path),
+            "confounds_tsv": compute_sha256(confounds_path),
+            "confound_report_json": compute_sha256(confound_report_path),
+            "qc_coreg_png": compute_sha256(qc_coreg_path),
+            "qc_norm_png": compute_sha256(qc_norm_path),
+            "qc_tissue_png": compute_sha256(qc_tissue_path),
+            "qc_parcellation_png": compute_sha256(qc_parcellation_path),
+        }
+
+        # 2. Measurable Assertions for Validation Gates
+        n_rois = int(signals.shape[1])
+        constant_rois = int(np.count_nonzero(np.std(signals, axis=0, ddof=0) == 0.0))
+
+        gate1_passed = bool(peak_rss <= max_memory_gb)
+        gate2_passed = bool(tr > 0.0 and t_vol >= 50 and all(d > 0 for d in epi_shape))
+        gate3_passed = bool(len(target_shape) == 3 and all(d > 0 for d in target_shape))
+        affine_aligned = bool(np.allclose(resampled_bold.affine, target_affine, atol=1e-4))
+        gate4_passed = bool(resampled_bold.shape[:3] == target_shape and affine_aligned)
+        gate5_passed = bool(n_rois == 200 and constant_rois == 0)
+        gate6_passed = bool(
+            len(z_vector) == 19900
+            and np.all(np.isfinite(z_vector))
+            and (edge_names == get_feature_names())
+        )
+
+        validation_gates = {
+            "gate1_resources": {
+                "status": "PASSED" if gate1_passed else "FAILED",
+                "peak_rss_gb": round(peak_rss, 4),
+                "memory_ceiling_gb": float(max_memory_gb),
+                "runtime_seconds": round(runtime_sec, 2),
+            },
+            "gate2_bids_input": {
+                "status": "PASSED" if gate2_passed else "FAILED",
+                "tr_seconds": float(tr),
+                "t_vol": int(t_vol),
+            },
+            "gate3_atlas_grid": {
+                "status": "PASSED" if gate3_passed else "FAILED",
+                "atlas_shape": [int(x) for x in target_shape],
+            },
+            "gate4_spatial_alignment": {
+                "status": "PASSED" if gate4_passed else "FAILED",
+                "resampled_shape": [int(x) for x in resampled_bold.shape],
+            },
+            "gate5_roi_coverage": {
+                "status": "PASSED" if gate5_passed else "FAILED",
+                "n_rois": int(n_rois),
+                "zero_variance_rois": int(constant_rois),
+            },
+            "gate6_feature_schema_conformance": {
+                "status": "PASSED" if gate6_passed else "FAILED",
+                "n_features": int(len(z_vector)),
+                "finite_features": bool(np.all(np.isfinite(z_vector))),
+                "edge_names_ordered": bool(edge_names == get_feature_names()),
+                "historical_concordance_assessed": False,
+                "historical_concordance_status": "NOT_ASSESSED",
+            },
+        }
+
+        output_artifacts_dict = {
+            "roi_csv": str(roi_csv_path.name),
+            "features_csv": str(feat_csv_path.name),
+            "features_npy": str(feat_npy_path.name),
+            "motion_tsv": str(motion_txt_path.name),
+            "fd_tsv": str(fd_1d_path.name),
+            "confounds_tsv": str(confounds_path.name),
+            "confound_report_json": str(confound_report_path.name),
+            "qc_coreg_png": str(qc_coreg_path.name),
+            "qc_norm_png": str(qc_norm_path.name),
+            "qc_tissue_png": str(qc_tissue_path.name),
+            "qc_parcellation_png": str(qc_parcellation_path.name),
+            "provenance_json": "provenance.json",
+        }
 
         provenance_dict: Dict[str, Any] = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -573,28 +837,46 @@ def run_poc_v2_pipeline(
                 "peak_memory_ceiling_gb": float(max_memory_gb),
                 "runtime_seconds": round(runtime_sec, 2),
             },
-            "validation_gates": {
-                "gate1_resources": {"status": "PASSED", "peak_rss_gb": round(peak_rss, 4)},
-                "gate2_bids_input": {"status": "PASSED", "tr": tr, "t_vol": t_vol},
-                "gate3_atlas_grid": {"status": "PASSED", "atlas_shape": list(target_shape)},
-                "gate4_spatial_alignment": {"status": "PASSED", "resampled_shape": list(resampled_bold.shape)},
-                "gate5_roi_coverage": {"status": "PASSED", "n_rois": 200},
-                "gate6_feature_concordance": {"status": "PASSED", "n_features": 19900},
-            },
-            "output_artifacts": {
-                "roi_csv": str(roi_csv_path.name),
-                "motion_txt": str(motion_txt_path.name),
-                "fd_1d": str(fd_1d_path.name),
-                "confounds_tsv": str(confounds_path.name),
-                "qc_coreg_png": str(qc_coreg_path.name),
-                "qc_norm_png": str(qc_norm_path.name),
-                "qc_parcellation_png": str(qc_parcellation_path.name),
-            },
+            "validation_gates": validation_gates,
+            "output_artifacts": output_artifacts_dict,
+            "output_checksums": output_checksums,
         }
+
+        # 3. Schema Validation using jsonschema
+        schema_path = PROJECT_ROOT / "configs" / "provenance_schema.json"
+        if schema_path.is_file():
+            with open(schema_path, "r", encoding="utf-8") as sf:
+                prov_schema = json.load(sf)
+            try:
+                jsonschema.validate(instance=provenance_dict, schema=prov_schema)
+                print("  -> Provenance validated against configs/provenance_schema.json [PASSED]")
+            except jsonschema.ValidationError as s_err:
+                raise ValueError(f"Provenance schema validation failed: {s_err.message}") from s_err
 
         provenance_path = sub_out_dir / "provenance.json"
         with open(provenance_path, "w", encoding="utf-8") as f:
             json.dump(provenance_dict, f, indent=2)
+
+        # 4. Generate Output Manifest covering all 12 files including provenance.json
+        output_manifest = {
+            "subject_id": subject_id,
+            "timestamp_utc": provenance_dict["timestamp_utc"],
+            "artifacts": {
+                key: {
+                    "filename": fname,
+                    "sha256": compute_sha256(sub_out_dir / fname),
+                }
+                for key, fname in output_artifacts_dict.items()
+            },
+        }
+        manifest_out_path = sub_out_dir / "output_manifest.json"
+        with open(manifest_out_path, "w", encoding="utf-8") as mf:
+            json.dump(output_manifest, mf, indent=2)
+
+        # 5. Check validation gate failures
+        for gate_name, gate_info in validation_gates.items():
+            if gate_info["status"] == "FAILED":
+                raise RuntimeError(f"Pipeline validation failed at gate '{gate_name}': {gate_info}")
 
         # Cleanup scratch directory
         shutil.rmtree(scratch_dir, ignore_errors=True)
@@ -612,19 +894,22 @@ def run_poc_v2_pipeline(
             "output_dir": sub_out_dir,
             "runtime_seconds": runtime_sec,
             "peak_rss_gb": peak_rss,
+            "manifest_path": manifest_out_path,
             "artifacts": {
                 "roi_csv": roi_csv_path,
-                "features_npy": feat_npy_path,
                 "features_csv": feat_csv_path,
+                "features_npy": feat_npy_path,
                 "motion_tsv": motion_txt_path,
                 "fd_tsv": fd_1d_path,
                 "confounds_tsv": confounds_path,
+                "confound_report_json": confound_report_path,
                 "qc_coreg_png": qc_coreg_path,
                 "qc_norm_png": qc_norm_path,
                 "qc_tissue_png": qc_tissue_path,
                 "qc_parcellation_png": qc_parcellation_path,
                 "provenance_json": provenance_path,
             },
+            "provenance": provenance_dict,
         }
 
     except Exception as exc:
@@ -699,6 +984,12 @@ def main():
 
     args = parser.parse_args()
 
+    if args.allow_real_scans:
+        raise RuntimeError(
+            "SAFETY VIOLATION: Execution on real MRI scans is strictly disabled by Phase A safety policy. "
+            "--allow-real-scans is not permitted."
+        )
+
     if args.mode == "synthetic":
         print(f"[Synthetic Generation] Building synthetic BIDS session for {args.subject_id}...")
         phantom_scratch = args.output_dir / "synthetic_inputs"
@@ -721,7 +1012,8 @@ def main():
             subject_id=args.subject_id,
             session_id=args.session_id,
             max_memory_gb=args.max_memory_gb,
-            allow_real_scans=args.allow_real_scans,
+            allow_real_scans=False,
+            manifest_path=synthetic_paths.get("synthetic_manifest"),
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:

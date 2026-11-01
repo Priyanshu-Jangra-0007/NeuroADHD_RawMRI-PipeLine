@@ -11,7 +11,8 @@
     "software_versions",
     "hardware_execution",
     "validation_gates",
-    "output_artifacts"
+    "output_artifacts",
+    "output_checksums"
   ],
   "properties": {
     "timestamp_utc": {
@@ -59,38 +60,147 @@
         "gate3_atlas_grid",
         "gate4_spatial_alignment",
         "gate5_roi_coverage",
-        "gate6_feature_concordance"
+        "gate6_feature_schema_conformance"
       ],
       "properties": {
-        "gate1_resources": { "type": "object" },
-        "gate2_bids_input": { "type": "object" },
-        "gate3_atlas_grid": { "type": "object" },
-        "gate4_spatial_alignment": { "type": "object" },
-        "gate5_roi_coverage": { "type": "object" },
-        "gate6_feature_concordance": { "type": "object" }
+        "gate1_resources": {
+          "type": "object",
+          "required": ["status", "peak_rss_gb", "memory_ceiling_gb", "runtime_seconds"],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "peak_rss_gb": { "type": "number" },
+            "memory_ceiling_gb": { "type": "number" },
+            "runtime_seconds": { "type": "number" }
+          }
+        },
+        "gate2_bids_input": {
+          "type": "object",
+          "required": ["status", "tr_seconds", "t_vol"],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "tr_seconds": { "type": "number" },
+            "t_vol": { "type": "integer" }
+          }
+        },
+        "gate3_atlas_grid": {
+          "type": "object",
+          "required": ["status", "atlas_shape"],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "atlas_shape": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        },
+        "gate4_spatial_alignment": {
+          "type": "object",
+          "required": ["status", "resampled_shape"],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "resampled_shape": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          }
+        },
+        "gate5_roi_coverage": {
+          "type": "object",
+          "required": ["status", "n_rois", "zero_variance_rois"],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "n_rois": { "type": "integer" },
+            "zero_variance_rois": { "type": "integer" }
+          }
+        },
+        "gate6_feature_schema_conformance": {
+          "type": "object",
+          "required": [
+            "status",
+            "n_features",
+            "finite_features",
+            "edge_names_ordered",
+            "historical_concordance_assessed",
+            "historical_concordance_status"
+          ],
+          "properties": {
+            "status": { "type": "string", "enum": ["PASSED", "FAILED", "NOT_ASSESSED"] },
+            "n_features": { "type": "integer" },
+            "finite_features": { "type": "boolean" },
+            "edge_names_ordered": { "type": "boolean" },
+            "historical_concordance_assessed": { "type": "boolean" },
+            "historical_concordance_status": {
+              "type": "string",
+              "enum": ["PASSED", "FAILED", "NOT_ASSESSED"]
+            }
+          }
+        }
       }
     },
     "output_artifacts": {
       "type": "object",
       "required": [
         "roi_csv",
-        "motion_txt",
-        "fd_1d",
+        "features_csv",
+        "features_npy",
+        "motion_tsv",
+        "fd_tsv",
         "confounds_tsv",
+        "confound_report_json",
         "qc_coreg_png",
         "qc_norm_png",
-        "qc_parcellation_png"
+        "qc_tissue_png",
+        "qc_parcellation_png",
+        "provenance_json"
       ],
       "properties": {
         "roi_csv": { "type": "string" },
-        "motion_txt": { "type": "string" },
-        "fd_1d": { "type": "string" },
+        "features_csv": { "type": "string" },
+        "features_npy": { "type": "string" },
+        "motion_tsv": { "type": "string" },
+        "fd_tsv": { "type": "string" },
         "confounds_tsv": { "type": "string" },
+        "confound_report_json": { "type": "string" },
         "qc_coreg_png": { "type": "string" },
         "qc_norm_png": { "type": "string" },
-        "qc_parcellation_png": { "type": "string" }
+        "qc_tissue_png": { "type": "string" },
+        "qc_parcellation_png": { "type": "string" },
+        "provenance_json": { "type": "string" }
+      }
+    },
+    "output_checksums": {
+      "type": "object",
+      "required": [
+        "roi_csv",
+        "features_csv",
+        "features_npy",
+        "motion_tsv",
+        "fd_tsv",
+        "confounds_tsv",
+        "confound_report_json",
+        "qc_coreg_png",
+        "qc_norm_png",
+        "qc_tissue_png",
+        "qc_parcellation_png"
+      ],
+      "properties": {
+        "roi_csv": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "features_csv": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "features_npy": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "motion_tsv": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "fd_tsv": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "confounds_tsv": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "confound_report_json": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "qc_coreg_png": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "qc_norm_png": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "qc_tissue_png": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "qc_parcellation_png": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "provenance_json": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     }
   }
 }
-

@@ -135,7 +135,14 @@ class TestRegistration(unittest.TestCase):
         mask_img = nib.Nifti1Image(labels_3d, np.eye(4))
 
         # Identity diffeomorphic map
-        dmap = DiffeomorphicMap(3, disp_shape=(20, 20, 20))
+        dmap = DiffeomorphicMap(
+            3,
+            disp_shape=(20, 20, 20),
+            domain_shape=(20, 20, 20),
+            domain_grid2world=np.eye(4),
+            codomain_shape=(20, 20, 20),
+            codomain_grid2world=np.eye(4),
+        )
         dmap.forward = np.zeros((20, 20, 20, 3), dtype=np.float32)
         dmap.backward = np.zeros((20, 20, 20, 3), dtype=np.float32)
 
@@ -288,10 +295,10 @@ class TestRegistration(unittest.TestCase):
             3,
             disp_shape=target_shape,
             disp_grid2world=target_affine,
-            domain_shape=target_shape,
-            domain_grid2world=target_affine,
-            codomain_shape=source_shape,
-            codomain_grid2world=source_affine,
+            domain_shape=source_shape,
+            domain_grid2world=source_affine,
+            codomain_shape=target_shape,
+            codomain_grid2world=target_affine,
         )
         dmap.forward = np.zeros((*target_shape, 3), dtype=np.float32)
         dmap.backward = np.zeros((*source_shape, 3), dtype=np.float32)
@@ -379,10 +386,10 @@ class TestRegistration(unittest.TestCase):
             3,
             disp_shape=target_shape,
             disp_grid2world=target_affine,
-            domain_shape=target_shape,
-            domain_grid2world=target_affine,
-            codomain_shape=source_shape,
-            codomain_grid2world=source_affine,
+            domain_shape=source_shape,
+            domain_grid2world=source_affine,
+            codomain_shape=target_shape,
+            codomain_grid2world=target_affine,
         )
         dmap.forward = np.zeros((*target_shape, 3), dtype=np.float32)
         dmap.backward = np.zeros((*source_shape, 3), dtype=np.float32)
@@ -854,6 +861,110 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(inv_warped.shape, source_shape)
         self.assertEqual(warped.shape, target_shape)
 
+
+
+class TestTissueMaskSpatialGeometry(unittest.TestCase):
+    """Rigorous unit tests for tissue mask spatial geometry enforcement."""
+
+    def setUp(self):
+        self.t1_shape = (40, 40, 40)
+        self.t1_affine = np.diag([2.0, 2.0, 2.0, 1.0])
+        self.epi_shape = (30, 30, 20)
+        self.epi_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+        self.target_shape = (30, 30, 20)
+        self.target_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+
+        # Valid T1w tissue mask
+        mask_data = np.zeros(self.t1_shape, dtype=np.int32)
+        mask_data[10:30, 10:30, 10:30] = 1
+        self.t1_mask = nib.Nifti1Image(mask_data, self.t1_affine)
+
+        # Valid SyN map for T1w -> MNI
+        self.syn_map = DiffeomorphicMap(
+            3,
+            disp_shape=self.target_shape,
+            disp_grid2world=self.target_affine,
+            domain_shape=self.t1_shape,
+            domain_grid2world=self.t1_affine,
+            codomain_shape=self.target_shape,
+            codomain_grid2world=self.target_affine,
+        )
+        self.syn_map.forward = np.zeros((*self.target_shape, 3), dtype=np.float32)
+        self.syn_map.backward = np.zeros((*self.t1_shape, 3), dtype=np.float32)
+
+        # Composed map for EPI -> MNI (domain is EPI)
+        self.composed_map = DiffeomorphicMap(
+            3,
+            disp_shape=self.target_shape,
+            disp_grid2world=self.target_affine,
+            domain_shape=self.epi_shape,
+            domain_grid2world=self.epi_affine,
+            codomain_shape=self.target_shape,
+            codomain_grid2world=self.target_affine,
+        )
+        self.composed_map.forward = np.zeros((*self.target_shape, 3), dtype=np.float32)
+        self.composed_map.backward = np.zeros((*self.epi_shape, 3), dtype=np.float32)
+
+    def test_mask_resample_dimension_mismatch_raises_valueerror(self):
+        """resample_mask_to_target must raise ValueError if mask shape does not match map domain shape."""
+        mismatched_data = np.zeros((35, 40, 40), dtype=np.int32)
+        mismatched_mask = nib.Nifti1Image(mismatched_data, self.t1_affine)
+
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(mismatched_mask, self.syn_map, self.target_shape, self.target_affine)
+        self.assertIn("Spatial dimension mismatch", str(ctx.exception))
+
+    def test_mask_resample_translation_offset_mismatch_raises_valueerror(self):
+        """resample_mask_to_target must raise ValueError on origin translation offset discrepancy."""
+        shifted_affine = self.t1_affine.copy()
+        shifted_affine[0, 3] = 25.0  # Shift X origin by 25 mm
+        shifted_mask = nib.Nifti1Image(np.zeros(self.t1_shape, dtype=np.int32), shifted_affine)
+
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(shifted_mask, self.syn_map, self.target_shape, self.target_affine)
+        self.assertIn("Translation offset mismatch", str(ctx.exception))
+
+    def test_mask_resample_voxel_size_scaling_mismatch_raises_valueerror(self):
+        """resample_mask_to_target must raise ValueError on voxel-size scaling discrepancy."""
+        scaled_affine = np.diag([2.5, 2.0, 2.0, 1.0])  # X voxel is 2.5 mm instead of 2.0 mm
+        scaled_mask = nib.Nifti1Image(np.zeros(self.t1_shape, dtype=np.int32), scaled_affine)
+
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(scaled_mask, self.syn_map, self.target_shape, self.target_affine)
+        self.assertIn("Voxel-size scaling mismatch", str(ctx.exception))
+
+    def test_mask_resample_orientation_mismatch_raises_valueerror(self):
+        """resample_mask_to_target must raise ValueError on oblique rotation discrepancy."""
+        theta = np.deg2rad(15.0)
+        c, s = np.cos(theta), np.sin(theta)
+        rot = np.array([[c, -s, 0, 0], [s, c, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        rotated_affine = rot @ self.t1_affine
+        rotated_mask = nib.Nifti1Image(np.zeros(self.t1_shape, dtype=np.int32), rotated_affine)
+
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(rotated_mask, self.syn_map, self.target_shape, self.target_affine)
+        self.assertIn("orientation", str(ctx.exception).lower())
+
+    def test_mask_resample_composed_map_rejects_t1w_mask(self):
+        """resample_mask_to_target must reject passing T1w mask to composed EPI-to-MNI map."""
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(self.t1_mask, self.composed_map, self.target_shape, self.target_affine)
+        self.assertIn("Anatomical T1w masks must use T1w-to-MNI transform", str(ctx.exception))
+
+    def test_mask_resample_missing_domain_geometry_raises_valueerror(self):
+        """resample_mask_to_target must raise ValueError if map lacks domain geometry."""
+        empty_map = DiffeomorphicMap(3, disp_shape=(20, 20, 20))
+        with self.assertRaises(ValueError) as ctx:
+            resample_mask_to_target(self.t1_mask, empty_map, self.target_shape, self.target_affine)
+        self.assertIn("lacks source domain geometry", str(ctx.exception))
+
+    def test_mask_resample_syn_map_accepts_matching_t1w_mask(self):
+        """resample_mask_to_target succeeds and preserves nearest-neighbor labels when geometry matches."""
+        resampled = resample_mask_to_target(self.t1_mask, self.syn_map, self.target_shape, self.target_affine)
+        self.assertEqual(resampled.shape, self.target_shape)
+        np.testing.assert_allclose(resampled.affine, self.target_affine, atol=1e-4)
+        unique_vals = np.unique(np.asanyarray(resampled.dataobj))
+        self.assertTrue(set(unique_vals).issubset({0, 1}))
 
 
 if __name__ == "__main__":
