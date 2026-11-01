@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -50,6 +51,9 @@ from dipy.align.imaffine import AffineMap
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Salt used for local HMAC integrity verification of synthetic manifests
+INTEGRITY_SALT = os.environ.get("NEUROADHD_INTEGRITY_SALT", "NEUROADHD_SYNTHETIC_POC_V2_INTEGRITY_ANCHOR")
 
 from src.features.connectivity import compute_connectivity_vector, get_feature_names
 from src.parcellation.extractor import (
@@ -101,18 +105,33 @@ def compute_sha256(file_path: Union[str, Path]) -> str:
     return hasher.hexdigest()
 
 
+def compute_manifest_hmac(files_entry: Dict[str, Dict[str, Any]], salt: str = INTEGRITY_SALT) -> str:
+    """Compute HMAC-SHA256 integrity token over synthetic file entries."""
+    payload = "|".join(f"{k}:{files_entry[k].get('sha256')}" for k in sorted(files_entry.keys()))
+    return hmac.new(salt.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def check_safety_guards(
     subject_id: str,
     bold_path: Optional[Union[str, Path]] = None,
     t1w_path: Optional[Union[str, Path]] = None,
+    bold_json_path: Optional[Union[str, Path]] = None,
+    template_path: Optional[Union[str, Path]] = None,
+    atlas_path: Optional[Union[str, Path]] = None,
     allow_real_scans: bool = False,
     manifest_path: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Enforce strict safety restrictions preventing raw clinical participant processing.
 
     In Phase A, execution on real MRI scans is prohibited. The pipeline fails closed
-    by default. Execution requires cryptographic proof of synthetic origin via a validated
-    synthetic manifest with matching SHA-256 hashes.
+    by default. Execution requires verified synthetic origin via an authenticated
+    synthetic integrity manifest with matching SHA-256 hashes across all 5 inputs.
+
+    Note on Threat Model:
+    ---------------------
+    This manifest is an internal integrity mechanism protecting against accidental
+    modification, file swapping, and path misconfiguration during development and testing.
+    It does not claim public-key digital signature authentication.
     """
     # 1. Reject explicit bypass attempts
     if allow_real_scans:
@@ -145,18 +164,32 @@ def check_safety_guards(
                 "Processing real ADHD-200 or clinical participant data is prohibited."
             )
 
-    # 3. Block raw data paths referencing known clinical directories
-    for p in [bold_path, t1w_path]:
-        if p is not None:
-            p_str = str(p).lower()
+    # 3. Block raw data paths referencing known clinical directories and reject symlinks
+    all_inputs = {
+        "bold_nii": bold_path,
+        "t1w_nii": t1w_path,
+        "bold_json": bold_json_path,
+        "mni_template": template_path,
+        "cc200_atlas": atlas_path,
+    }
+    for key, p_val in all_inputs.items():
+        if p_val is not None:
+            p_str = str(p_val).lower()
             for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200"]:
                 if kw in p_str:
                     raise RuntimeError(
-                        f"SAFETY VIOLATION: Attempted to process real raw data at '{p}'. "
+                        f"SAFETY VIOLATION: Attempted to process real raw data at '{p_val}'. "
                         "Processing raw clinical data remains prohibited."
                     )
+            # Strict symlink prohibition
+            raw_p = Path(p_val)
+            if raw_p.is_symlink():
+                raise RuntimeError(
+                    f"SAFETY VIOLATION: Symlink substitution detected at '{p_val}'. "
+                    "Symlinks are strictly prohibited for pipeline inputs."
+                )
 
-    # 4. Fail closed if paths are missing
+    # 4. Fail closed if primary paths are missing
     if bold_path is None or t1w_path is None:
         raise RuntimeError(
             "SAFETY VIOLATION: bold_path and t1w_path must both be provided for verification."
@@ -169,10 +202,14 @@ def check_safety_guards(
     if not t1w_p.is_file():
         raise RuntimeError(f"SAFETY VIOLATION: Input T1w file not found at '{t1w_p}'.")
 
-    # 5. Locate and verify cryptographic synthetic manifest
+    # 5. Locate and verify synthetic integrity manifest
     found_manifest: Optional[Path] = None
     if manifest_path is not None:
         p_cand = Path(manifest_path)
+        if p_cand.is_symlink():
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Symlink substitution detected at manifest path '{p_cand}'."
+            )
         if p_cand.is_file():
             found_manifest = p_cand
     else:
@@ -186,6 +223,10 @@ def check_safety_guards(
         for d in search_dirs:
             cand = d / "synthetic_manifest.json"
             if cand.is_file():
+                if cand.is_symlink():
+                    raise RuntimeError(
+                        f"SAFETY VIOLATION: Symlink substitution detected at '{cand}'."
+                    )
                 found_manifest = cand
                 break
 
@@ -214,35 +255,59 @@ def check_safety_guards(
             f"does not match requested subject_id '{subject_id}'."
         )
 
-    # Verify input file hashes against manifest
     files_entry = manifest_dict.get("files", {})
-    if "bold_nii" not in files_entry or "t1w_nii" not in files_entry:
-        raise RuntimeError(
-            "SAFETY VIOLATION: Synthetic manifest missing required 'bold_nii' or 't1w_nii' entries."
-        )
 
-    actual_bold_sha256 = compute_sha256(bold_p)
-    expected_bold_sha256 = files_entry["bold_nii"].get("sha256")
-    if actual_bold_sha256 != expected_bold_sha256:
-        raise RuntimeError(
-            f"SAFETY VIOLATION: Input BOLD file '{bold_p}' SHA-256 mismatch against synthetic manifest. "
-            f"Expected {expected_bold_sha256}, got {actual_bold_sha256}."
-        )
+    # Require all 5 inputs to be present in the manifest
+    required_entries = ["bold_nii", "bold_json", "t1w_nii", "mni_template", "cc200_atlas"]
+    for req_key in required_entries:
+        if req_key not in files_entry:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Synthetic manifest missing required entry '{req_key}'. "
+                "All five inputs must be registered in the manifest."
+            )
 
-    actual_t1w_sha256 = compute_sha256(t1w_p)
-    expected_t1w_sha256 = files_entry["t1w_nii"].get("sha256")
-    if actual_t1w_sha256 != expected_t1w_sha256:
-        raise RuntimeError(
-            f"SAFETY VIOLATION: Input T1w file '{t1w_p}' SHA-256 mismatch against synthetic manifest. "
-            f"Expected {expected_t1w_sha256}, got {actual_t1w_sha256}."
-        )
+    # Verify integrity HMAC if present in manifest
+    if "integrity_hmac" in manifest_dict:
+        expected_hmac = compute_manifest_hmac(files_entry)
+        if manifest_dict["integrity_hmac"] != expected_hmac:
+            raise RuntimeError(
+                "SAFETY VIOLATION: Synthetic manifest integrity token mismatch. "
+                "The manifest has been fabricated or altered."
+            )
+
+    # Verify each provided input against its manifest entry
+    verified_hashes: Dict[str, str] = {}
+    for input_key, input_path in all_inputs.items():
+        if input_path is not None:
+            p = Path(input_path).resolve()
+            if not p.is_file():
+                raise RuntimeError(f"SAFETY VIOLATION: Input file '{p}' not found on disk.")
+
+            entry = files_entry[input_key]
+
+            # Verify resolved path or filename matches to prevent file swapping/substitution
+            manifest_res_path = entry.get("resolved_path")
+            if manifest_res_path and str(p) != manifest_res_path and p.name != entry.get("filename"):
+                raise RuntimeError(
+                    f"SAFETY VIOLATION: Input '{input_key}' resolved path '{p}' does not match manifest entry "
+                    f"'{manifest_res_path}'. Input file swapping/substitution detected."
+                )
+
+            # Compute and verify SHA-256 hash
+            actual_sha256 = compute_sha256(p)
+            expected_sha256 = entry.get("sha256")
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError(
+                    f"SAFETY VIOLATION: Input '{input_key}' ({p.name}) SHA-256 mismatch against synthetic manifest. "
+                    f"Expected {expected_sha256}, got {actual_sha256}."
+                )
+            verified_hashes[input_key] = actual_sha256
 
     return {
         "status": "VERIFIED_SYNTHETIC",
         "manifest_path": str(found_manifest),
         "subject_id": subject_id,
-        "bold_sha256": actual_bold_sha256,
-        "t1w_sha256": actual_t1w_sha256,
+        "verified_hashes": verified_hashes,
     }
 
 
@@ -338,35 +403,53 @@ def generate_synthetic_phantom_session(
     atlas_path = template_dir / "cc200_synthetic_atlas.nii.gz"
     nib.save(nib.Nifti1Image(atlas_data, target_affine), str(atlas_path))
 
-    # Write cryptographic synthetic manifest
+    # All 5 files registered in synthetic manifest with resolved paths and hashes
+    files_dict = {
+        "bold_nii": {
+            "filename": bold_nii_path.name,
+            "rel_path": str(bold_nii_path.relative_to(session_dir)),
+            "resolved_path": str(bold_nii_path.resolve()),
+            "sha256": compute_sha256(bold_nii_path),
+        },
+        "bold_json": {
+            "filename": sidecar_path.name,
+            "rel_path": str(sidecar_path.relative_to(session_dir)),
+            "resolved_path": str(sidecar_path.resolve()),
+            "sha256": compute_sha256(sidecar_path),
+        },
+        "t1w_nii": {
+            "filename": t1_nii_path.name,
+            "rel_path": str(t1_nii_path.relative_to(session_dir)),
+            "resolved_path": str(t1_nii_path.resolve()),
+            "sha256": compute_sha256(t1_nii_path),
+        },
+        "mni_template": {
+            "filename": mni_path.name,
+            "rel_path": str(mni_path.name),
+            "resolved_path": str(mni_path.resolve()),
+            "sha256": compute_sha256(mni_path),
+        },
+        "cc200_atlas": {
+            "filename": atlas_path.name,
+            "rel_path": str(atlas_path.name),
+            "resolved_path": str(atlas_path.resolve()),
+            "sha256": compute_sha256(atlas_path),
+        },
+    }
+
+    integrity_token = compute_manifest_hmac(files_dict)
+
+    # Write synthetic integrity manifest
     manifest_data = {
         "manifest_magic": "NEUROADHD_SYNTHETIC_DATASET_V2",
+        "manifest_type": "INTEGRITY_VERIFICATION_MANIFEST",
         "schema_version": "2.0.0",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "subject_id": subject_id,
         "session_id": session_id,
-        "files": {
-            "bold_nii": {
-                "rel_path": str(bold_nii_path.relative_to(session_dir)),
-                "sha256": compute_sha256(bold_nii_path),
-            },
-            "bold_json": {
-                "rel_path": str(sidecar_path.relative_to(session_dir)),
-                "sha256": compute_sha256(sidecar_path),
-            },
-            "t1w_nii": {
-                "rel_path": str(t1_nii_path.relative_to(session_dir)),
-                "sha256": compute_sha256(t1_nii_path),
-            },
-            "mni_template": {
-                "rel_path": str(mni_path.name),
-                "sha256": compute_sha256(mni_path),
-            },
-            "cc200_atlas": {
-                "rel_path": str(atlas_path.name),
-                "sha256": compute_sha256(atlas_path),
-            },
-        },
+        "integrity_hmac": integrity_token,
+        "files": files_dict,
+        "note": "Integrity manifest protecting against accidental modification and path misconfiguration. Not a PKI digital signature.",
     }
     manifest_path = session_dir / "synthetic_manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -394,22 +477,27 @@ def run_poc_v2_pipeline(
     max_memory_gb: float = 2.5,
     allow_real_scans: bool = False,
     manifest_path: Optional[Union[str, Path]] = None,
+    atlas_mode: str = "synthetic_phantom",
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
     start_time = time.time()
     start_rss = check_process_memory_gb()
 
-    # Safety Enforcement - fail closed
+    # Safety Enforcement - fail closed across all inputs
     check_safety_guards(
         subject_id=subject_id,
         bold_path=bold_path,
         t1w_path=t1w_path,
+        bold_json_path=bold_json_path,
+        template_path=template_path,
+        atlas_path=atlas_path,
         allow_real_scans=allow_real_scans,
         manifest_path=manifest_path,
     )
 
     run_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    sub_out_dir = output_dir / subject_id / f"run_{run_tag}"
+    # Active staging directory for isolation: partial outputs will never be mistaken for successful runs
+    sub_out_dir = output_dir / subject_id / f".staging_run_{run_tag}"
     scratch_dir = sub_out_dir / "scratch"
     sub_out_dir.mkdir(parents=True, exist_ok=True)
     scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -417,7 +505,7 @@ def run_poc_v2_pipeline(
     print("=" * 75)
     print(f"NEUROADHD RAW MRI POC V2 PIPELINE EXECUTION [{subject_id}]")
     print(f"Timestamp UTC : {datetime.now(timezone.utc).isoformat()}")
-    print(f"Output Root   : {sub_out_dir}")
+    print(f"Staging Root  : {sub_out_dir}")
     print("=" * 75)
 
     current_stage = "Initialization"
@@ -432,11 +520,25 @@ def run_poc_v2_pipeline(
         tr = bids_meta["repetition_time"]
         print(f"  -> RepetitionTime: {tr:.3f}s | Task: {bids_meta['task_name']} [PASSED]")
 
-        # Canonical atlas verification if authentic atlas is provided
-        if "cc200_roi_atlas" in str(atlas_path):
-            print("  -> Verifying authentic CC200 canonical atlas identity...")
+        # Explicit atlas verification policy (no filename heuristics)
+        if atlas_mode == "canonical":
+            print(f"  -> Enforcing canonical CC200 atlas verification on {atlas_path.name} (independent of filename)...")
             verify_canonical_cc200_atlas(atlas_path)
-            print("  -> CC200 canonical atlas verified [PASSED]")
+            print("  -> Canonical CC200 atlas verified [PASSED]")
+        elif atlas_mode == "synthetic_phantom":
+            print(f"  -> Validating synthetic phantom atlas {atlas_path.name} against authenticated manifest...")
+            # Note: check_safety_guards already asserted that atlas_path matches the synthetic manifest hash & path
+            atlas_img_check = nib.load(str(atlas_path))
+            atlas_data_test = np.asanyarray(atlas_img_check.dataobj, dtype=np.int32)
+            u_rois = np.unique(atlas_data_test[atlas_data_test > 0])
+            if len(u_rois) != 200:
+                raise ValueError(
+                    f"Synthetic atlas must contain exactly 200 non-zero ROIs, found {len(u_rois)}."
+                )
+        else:
+            raise ValueError(
+                f"Invalid atlas_mode '{atlas_mode}'. Must be 'canonical' or 'synthetic_phantom'."
+            )
 
         # Load NIfTI volumes
         bold_img = nib.load(str(bold_path))
@@ -842,16 +944,20 @@ def run_poc_v2_pipeline(
             "output_checksums": output_checksums,
         }
 
-        # 3. Schema Validation using jsonschema
+        # 3. Mandatory Schema Validation using jsonschema
         schema_path = PROJECT_ROOT / "configs" / "provenance_schema.json"
-        if schema_path.is_file():
-            with open(schema_path, "r", encoding="utf-8") as sf:
-                prov_schema = json.load(sf)
-            try:
-                jsonschema.validate(instance=provenance_dict, schema=prov_schema)
-                print("  -> Provenance validated against configs/provenance_schema.json [PASSED]")
-            except jsonschema.ValidationError as s_err:
-                raise ValueError(f"Provenance schema validation failed: {s_err.message}") from s_err
+        if not schema_path.is_file():
+            raise FileNotFoundError(
+                f"CRITICAL ERROR: Mandatory provenance schema file missing at '{schema_path}'. "
+                "Execution cannot be validated and must fail."
+            )
+        with open(schema_path, "r", encoding="utf-8") as sf:
+            prov_schema = json.load(sf)
+        try:
+            jsonschema.validate(instance=provenance_dict, schema=prov_schema)
+            print("  -> Provenance validated against configs/provenance_schema.json [PASSED]")
+        except jsonschema.ValidationError as s_err:
+            raise ValueError(f"Provenance schema validation failed: {s_err.message}") from s_err
 
         provenance_path = sub_out_dir / "provenance.json"
         with open(provenance_path, "w", encoding="utf-8") as f:
@@ -859,6 +965,7 @@ def run_poc_v2_pipeline(
 
         # 4. Generate Output Manifest covering all 12 files including provenance.json
         output_manifest = {
+            "status": "SUCCESS",
             "subject_id": subject_id,
             "timestamp_utc": provenance_dict["timestamp_utc"],
             "artifacts": {
@@ -873,13 +980,39 @@ def run_poc_v2_pipeline(
         with open(manifest_out_path, "w", encoding="utf-8") as mf:
             json.dump(output_manifest, mf, indent=2)
 
-        # 5. Check validation gate failures
+        # 5. Post-write Output Checksum Integrity Verification
+        # Validate that all 12 files on disk match their hashes in output_manifest
+        for art_key, art_entry in output_manifest["artifacts"].items():
+            disk_file = sub_out_dir / art_entry["filename"]
+            disk_hash = compute_sha256(disk_file)
+            if disk_hash != art_entry["sha256"]:
+                raise RuntimeError(
+                    f"Output artifact verification failed: hash mismatch on '{art_entry['filename']}'. "
+                    "File corrupted or altered after generation."
+                )
+
+        # 6. Check validation gate failures
         for gate_name, gate_info in validation_gates.items():
-            if gate_info["status"] == "FAILED":
+            if gate_info["status"] != "PASSED":
                 raise RuntimeError(f"Pipeline validation failed at gate '{gate_name}': {gate_info}")
 
         # Cleanup scratch directory
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+        # 7. Finalize Run Directory from staging to verified successful output
+        final_out_dir = output_dir / subject_id / f"run_{run_tag}"
+        run_manifest = {
+            "status": "SUCCESS",
+            "subject_id": subject_id,
+            "timestamp_utc": provenance_dict["timestamp_utc"],
+            "runtime_seconds": runtime_sec,
+            "peak_rss_gb": peak_rss,
+        }
+        with open(sub_out_dir / "run_manifest.json", "w", encoding="utf-8") as rf:
+            json.dump(run_manifest, rf, indent=2)
+
+        sub_out_dir.rename(final_out_dir)
+        sub_out_dir = final_out_dir
 
         print("\n" + "=" * 75)
         print("PIPELINE EXECUTION COMPLETED SUCCESSFULLY")
@@ -894,20 +1027,21 @@ def run_poc_v2_pipeline(
             "output_dir": sub_out_dir,
             "runtime_seconds": runtime_sec,
             "peak_rss_gb": peak_rss,
-            "manifest_path": manifest_out_path,
+            "manifest_path": sub_out_dir / "output_manifest.json",
+            "run_manifest_path": sub_out_dir / "run_manifest.json",
             "artifacts": {
-                "roi_csv": roi_csv_path,
-                "features_csv": feat_csv_path,
-                "features_npy": feat_npy_path,
-                "motion_tsv": motion_txt_path,
-                "fd_tsv": fd_1d_path,
-                "confounds_tsv": confounds_path,
-                "confound_report_json": confound_report_path,
-                "qc_coreg_png": qc_coreg_path,
-                "qc_norm_png": qc_norm_path,
-                "qc_tissue_png": qc_tissue_path,
-                "qc_parcellation_png": qc_parcellation_path,
-                "provenance_json": provenance_path,
+                "roi_csv": sub_out_dir / "roi_CC200.csv",
+                "features_csv": sub_out_dir / "features_19900_fisher_z.csv",
+                "features_npy": sub_out_dir / "features_19900_fisher_z.npy",
+                "motion_tsv": sub_out_dir / "motion_parameters.tsv",
+                "fd_tsv": sub_out_dir / "framewise_displacement.tsv",
+                "confounds_tsv": sub_out_dir / "confounds.tsv",
+                "confound_report_json": sub_out_dir / "confound_report.json",
+                "qc_coreg_png": sub_out_dir / "qc_registration_epi_to_t1w.png",
+                "qc_norm_png": sub_out_dir / "qc_registration_t1w_to_mni.png",
+                "qc_tissue_png": sub_out_dir / "qc_tissue_masks.png",
+                "qc_parcellation_png": sub_out_dir / "qc_parcellation_cc200.png",
+                "provenance_json": sub_out_dir / "provenance.json",
             },
             "provenance": provenance_dict,
         }
@@ -922,9 +1056,24 @@ def run_poc_v2_pipeline(
             "traceback": traceback.format_exc(),
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
-        with open(sub_out_dir / "pipeline_failure_report.json", "w", encoding="utf-8") as f:
-            json.dump(failure_report, f, indent=2)
         shutil.rmtree(scratch_dir, ignore_errors=True)
+        # Record failure report and failed run manifest in staging directory
+        try:
+            with open(sub_out_dir / "pipeline_failure_report.json", "w", encoding="utf-8") as f:
+                json.dump(failure_report, f, indent=2)
+            with open(sub_out_dir / "run_manifest.json", "w", encoding="utf-8") as rf:
+                json.dump(failure_report, rf, indent=2)
+        except Exception:
+            pass
+
+        # Quarantine staging directory as failed_run_{run_tag}
+        failed_out_dir = output_dir / subject_id / f"failed_run_{run_tag}"
+        try:
+            if sub_out_dir.exists():
+                sub_out_dir.rename(failed_out_dir)
+        except Exception:
+            failed_out_dir = sub_out_dir
+
         raise exc
 
 
@@ -981,6 +1130,12 @@ def main():
         default=False,
         help="Safety override flag. Processing real participant scans remains blocked.",
     )
+    parser.add_argument(
+        "--atlas-mode",
+        choices=["synthetic_phantom", "canonical"],
+        default="synthetic_phantom",
+        help="Atlas validation policy: 'synthetic_phantom' verifies against authenticated session manifest, 'canonical' verifies canonical CC200 checksum and geometry.",
+    )
 
     args = parser.parse_args()
 
@@ -1014,6 +1169,7 @@ def main():
             max_memory_gb=args.max_memory_gb,
             allow_real_scans=False,
             manifest_path=synthetic_paths.get("synthetic_manifest"),
+            atlas_mode=args.atlas_mode,
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:

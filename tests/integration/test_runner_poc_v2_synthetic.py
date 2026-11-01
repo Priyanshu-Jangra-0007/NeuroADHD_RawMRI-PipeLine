@@ -18,6 +18,7 @@ import pandas as pd
 
 from scripts.run_poc_v2 import (
     check_safety_guards,
+    compute_manifest_hmac,
     compute_sha256,
     generate_synthetic_phantom_session,
     run_poc_v2_pipeline,
@@ -265,18 +266,26 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         self.assertIn("SAFETY VIOLATION", str(ctx.exception))
 
     def test_runner_failure_handling_and_diagnostic_report(self):
-        """Runner must handle failure gracefully, record diagnostic report, and clean scratch dir."""
+        """Runner must handle failure gracefully, record diagnostic report, quarantine failed run, and clean scratch dir."""
         fail_paths = generate_synthetic_phantom_session(
             self.work_dir / "inputs_fail", subject_id="sub-synthetic-fail"
         )
-        bad_sidecar = self.work_dir / "bad_sidecar.json"
-        with open(bad_sidecar, "w", encoding="utf-8") as f:
-            json.dump({"RepetitionTime": 99.0, "TaskName": "rest"}, f)  # Invalid TR: 99s > 5s
+        # Update bold_json with invalid TR: 99s > 5s and re-hash in manifest so safety check passes but Stage 1 fails
+        with open(fail_paths["bold_json"], "w", encoding="utf-8") as f:
+            json.dump({"RepetitionTime": 99.0, "TaskName": "rest"}, f)
+
+        # Update manifest hash & hmac for bold_json
+        with open(fail_paths["synthetic_manifest"], "r", encoding="utf-8") as mf:
+            m_dict = json.load(mf)
+        m_dict["files"]["bold_json"]["sha256"] = compute_sha256(fail_paths["bold_json"])
+        m_dict["integrity_hmac"] = compute_manifest_hmac(m_dict["files"])
+        with open(fail_paths["synthetic_manifest"], "w", encoding="utf-8") as mf:
+            json.dump(m_dict, mf, indent=2)
 
         with self.assertRaises(ValueError) as ctx:
             run_poc_v2_pipeline(
                 bold_path=fail_paths["bold_nii"],
-                bold_json_path=bad_sidecar,
+                bold_json_path=fail_paths["bold_json"],
                 t1w_path=fail_paths["t1w_nii"],
                 atlas_path=fail_paths["cc200_atlas"],
                 template_path=fail_paths["mni_template"],
@@ -287,8 +296,10 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
             )
         self.assertIn("outside valid physiological range", str(ctx.exception))
 
-        # Check failure report was generated in output directory
-        fail_dir = list((self.output_dir / "sub-synthetic-fail").glob("run_*"))[0]
+        # Check failure report was generated in quarantined failed_run_* directory
+        fail_dirs = list((self.output_dir / "sub-synthetic-fail").glob("failed_run_*"))
+        self.assertEqual(len(fail_dirs), 1)
+        fail_dir = fail_dirs[0]
         report_path = fail_dir / "pipeline_failure_report.json"
         self.assertTrue(report_path.is_file())
         with open(report_path, "r", encoding="utf-8") as f:
@@ -296,6 +307,16 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         self.assertEqual(rep["status"], "FAILED")
         self.assertEqual(rep["error_type"], "ValueError")
         self.assertIn("Stage 1: BIDS Input Validation", rep["stage"])
+
+        # Ensure run_manifest.json also has status FAILED
+        run_manifest_path = fail_dir / "run_manifest.json"
+        self.assertTrue(run_manifest_path.is_file())
+        with open(run_manifest_path, "r", encoding="utf-8") as rf:
+            rm = json.load(rf)
+        self.assertEqual(rm["status"], "FAILED")
+
+        # Ensure no successful run_* directory was created
+        self.assertEqual(len(list((self.output_dir / "sub-synthetic-fail").glob("run_*"))), 0)
 
     def test_runner_invalid_provenance_schema_raises_valueerror(self):
         """Pipeline must fail closed if provenance JSON fails jsonschema validation."""
@@ -317,6 +338,151 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         }
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(instance=invalid_prov, schema=schema_dict)
+
+    def test_runner_safety_guard_blocks_fabricated_manifest_altered_hmac(self):
+        """Fabricated manifest with altered HMAC must be blocked by safety guards."""
+        with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
+            m_data = json.load(f)
+        m_data["integrity_hmac"] = "0" * 64
+        altered_manifest = self.work_dir / "altered_manifest.json"
+        with open(altered_manifest, "w", encoding="utf-8") as f:
+            json.dump(m_data, f, indent=2)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                self.synth_paths["bold_nii"],
+                self.synth_paths["t1w_nii"],
+                self.synth_paths["bold_json"],
+                self.synth_paths["mni_template"],
+                self.synth_paths["cc200_atlas"],
+                manifest_path=altered_manifest,
+            )
+        self.assertIn("integrity token mismatch", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_missing_manifest_entry(self):
+        """Manifest missing any of the 5 required inputs must fail closed."""
+        with open(self.synth_paths["synthetic_manifest"], "r", encoding="utf-8") as f:
+            m_data = json.load(f)
+        del m_data["files"]["cc200_atlas"]
+        m_data["integrity_hmac"] = compute_manifest_hmac(m_data["files"])
+        incomplete_manifest = self.work_dir / "incomplete_manifest.json"
+        with open(incomplete_manifest, "w", encoding="utf-8") as f:
+            json.dump(m_data, f, indent=2)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                self.synth_paths["bold_nii"],
+                self.synth_paths["t1w_nii"],
+                self.synth_paths["bold_json"],
+                self.synth_paths["mni_template"],
+                self.synth_paths["cc200_atlas"],
+                manifest_path=incomplete_manifest,
+            )
+        self.assertIn("missing required entry", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_swapped_input_files(self):
+        """Swapped inputs (e.g. T1w passed as BOLD) must be rejected."""
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                bold_path=self.synth_paths["t1w_nii"],
+                t1w_path=self.synth_paths["bold_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                manifest_path=self.synth_paths["synthetic_manifest"],
+            )
+        self.assertIn("file swapping/substitution detected", str(ctx.exception))
+
+    def test_runner_safety_guard_blocks_symlink_inputs(self):
+        """Symlink substitutions must be rejected unconditionally."""
+        symlink_bold = self.work_dir / "symlink_bold.nii.gz"
+        if symlink_bold.exists():
+            symlink_bold.unlink()
+        symlink_bold.symlink_to(self.synth_paths["bold_nii"])
+
+        with self.assertRaises(RuntimeError) as ctx:
+            check_safety_guards(
+                self.subject_id,
+                bold_path=symlink_bold,
+                t1w_path=self.synth_paths["t1w_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                template_path=self.synth_paths["mni_template"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                manifest_path=self.synth_paths["synthetic_manifest"],
+            )
+        self.assertIn("Symlink substitution detected", str(ctx.exception))
+
+    def test_runner_canonical_atlas_mode_rejects_synthetic_atlas(self):
+        """In canonical atlas mode, an atlas not matching canonical CC200 checksum must be rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            run_poc_v2_pipeline(
+                bold_path=self.synth_paths["bold_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                t1w_path=self.synth_paths["t1w_nii"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                template_path=self.synth_paths["mni_template"],
+                output_dir=self.output_dir,
+                subject_id=self.subject_id,
+                session_id=self.session_id,
+                manifest_path=self.synth_paths["synthetic_manifest"],
+                atlas_mode="canonical",
+            )
+        self.assertIn("SHA-256 mismatch", str(ctx.exception))
+
+    def test_runner_missing_provenance_schema_fails_run(self):
+        """Pipeline must fail closed (raise FileNotFoundError) if provenance schema is missing."""
+        import unittest.mock as mock
+        with mock.patch("scripts.run_poc_v2.PROJECT_ROOT", self.work_dir / "fake_root"):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                run_poc_v2_pipeline(
+                    bold_path=self.synth_paths["bold_nii"],
+                    bold_json_path=self.synth_paths["bold_json"],
+                    t1w_path=self.synth_paths["t1w_nii"],
+                    atlas_path=self.synth_paths["cc200_atlas"],
+                    template_path=self.synth_paths["mni_template"],
+                    output_dir=self.output_dir,
+                    subject_id=self.subject_id,
+                    session_id=self.session_id,
+                    manifest_path=self.synth_paths["synthetic_manifest"],
+                )
+            self.assertIn("Mandatory provenance schema file missing", str(ctx.exception))
+
+    def test_runner_post_write_tampered_output_fails_verification(self):
+        """Pipeline must fail closed and quarantine staging if post-write output verification fails."""
+        import unittest.mock as mock
+        call_count = {"count": 0}
+        orig_compute_sha = compute_sha256
+
+        def mock_sha(p):
+            if "features_19900_fisher_z.csv" in str(p) and ".staging_run_" in str(p):
+                call_count["count"] += 1
+                if call_count["count"] > 2:  # step 1 & 4 use calls 1 & 2; step 5 verification is call 3
+                    return "0" * 64
+            return orig_compute_sha(p)
+
+        with mock.patch("scripts.run_poc_v2.compute_sha256", side_effect=mock_sha):
+            with self.assertRaises(RuntimeError) as ctx:
+                run_poc_v2_pipeline(
+                    bold_path=self.synth_paths["bold_nii"],
+                    bold_json_path=self.synth_paths["bold_json"],
+                    t1w_path=self.synth_paths["t1w_nii"],
+                    atlas_path=self.synth_paths["cc200_atlas"],
+                    template_path=self.synth_paths["mni_template"],
+                    output_dir=self.output_dir,
+                    subject_id=self.subject_id,
+                    session_id=self.session_id,
+                    manifest_path=self.synth_paths["synthetic_manifest"],
+                )
+            self.assertIn("Output artifact verification failed", str(ctx.exception))
+
+        # Staging directory must have been quarantined as failed_run_*
+        failed_dirs = list((self.output_dir / self.subject_id).glob("failed_run_*"))
+        self.assertGreaterEqual(len(failed_dirs), 1)
+        # No successful run directory
+        self.assertEqual(len(list((self.output_dir / self.subject_id).glob("run_*"))), 0)
 
 
 if __name__ == "__main__":

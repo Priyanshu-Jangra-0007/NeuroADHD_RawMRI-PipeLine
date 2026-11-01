@@ -225,6 +225,27 @@ class TestConnectivityAndParcellation(unittest.TestCase):
                 verify_canonical_cc200_atlas(tf.name)
             self.assertIn("SHA-256 mismatch", str(ctx.exception))
 
+    def test_verify_canonical_cc200_atlas_arbitrary_filename_success(self):
+        """Canonical CC200 atlas must be verified by cryptographic hash and geometry regardless of filename."""
+        real_atlas = Path("data/atlases/cc200_roi_atlas.nii.gz")
+        with tempfile.TemporaryDirectory() as td:
+            arbitrary_path = Path(td) / "unrelated_arbitrary_name.nii.gz"
+            arbitrary_path.write_bytes(real_atlas.read_bytes())
+            res = verify_canonical_cc200_atlas(arbitrary_path)
+            self.assertTrue(res["verified"])
+            self.assertEqual(res["sha256"], CANONICAL_CC200_SHA256)
+            self.assertEqual(res["shape"], CANONICAL_CC200_SHAPE)
+            self.assertEqual(res["n_rois"], 200)
+
+    def test_verify_canonical_cc200_atlas_wrong_atlas_with_canonical_filename_rejected(self):
+        """Atlas named 'cc200_roi_atlas.nii.gz' with non-canonical content must be rejected."""
+        with tempfile.TemporaryDirectory() as td:
+            canonical_named_bad_file = Path(td) / "cc200_roi_atlas.nii.gz"
+            canonical_named_bad_file.write_bytes(b"non-canonical fake atlas data")
+            with self.assertRaises(ValueError) as ctx:
+                verify_canonical_cc200_atlas(canonical_named_bad_file)
+            self.assertIn("SHA-256 mismatch", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
