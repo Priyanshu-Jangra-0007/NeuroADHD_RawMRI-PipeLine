@@ -27,6 +27,21 @@ if [[ -z "${NEUROADHD_HMAC_KEY:-}" ]]; then
     exit 1
 fi
 
+# Optional frozen model directory mount (read-only)
+MODEL_MOUNT_ARGS=()
+if [[ -n "${NEUROADHD_MODEL_DIR:-}" ]]; then
+    if [[ ! -d "${NEUROADHD_MODEL_DIR}" ]]; then
+        echo "ERROR: Configured NEUROADHD_MODEL_DIR does not exist or is not a directory: ${NEUROADHD_MODEL_DIR}" >&2
+        exit 1
+    fi
+    MODEL_DIR_RESOLVED="$(cd "${NEUROADHD_MODEL_DIR}" && pwd)"
+    if [[ ! -f "${MODEL_DIR_RESOLVED}/final_preprocessing_pipeline.joblib" ]] || [[ ! -f "${MODEL_DIR_RESOLVED}/final_model.joblib" ]]; then
+        echo "ERROR: NEUROADHD_MODEL_DIR missing required frozen artifacts (.joblib)" >&2
+        exit 1
+    fi
+    MODEL_MOUNT_ARGS=(-v "${MODEL_DIR_RESOLVED}:/opt/neuro_adhd/models:ro" -e NEUROADHD_MODEL_DIR="/opt/neuro_adhd/models")
+fi
+
 echo "==========================================================================="
 echo "NeuroADHD RawMRI PoC V2 — Container Deployment Runner"
 echo "==========================================================================="
@@ -35,6 +50,9 @@ echo "Memory Constraint:    2560m (Hard Ceiling: 2.5 GiB)"
 echo "Swap Constraint:      2560m (Swap Disabled/Contained)"
 echo "Host Atlas Path:      ${ATLAS_FILE}"
 echo "Host Output Path:     ${OUTPUT_DIR}"
+if [[ -n "${NEUROADHD_MODEL_DIR:-}" ]]; then
+    echo "Host Model Mount:     ${MODEL_DIR_RESOLVED} -> /opt/neuro_adhd/models:ro"
+fi
 echo "==========================================================================="
 
 # Validate canonical atlas file presence
@@ -46,12 +64,13 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-# Execute container with hard memory limit and read-only atlas mount
+# Execute container with hard memory limit and read-only atlas/model mounts
 docker run --rm \
     --name neuro_adhd_synthetic_deploy_$$ \
     --memory=2560m \
     --memory-swap=2560m \
     -e NEUROADHD_HMAC_KEY="${NEUROADHD_HMAC_KEY}" \
+    "${MODEL_MOUNT_ARGS[@]}" \
     -v "${ATLAS_DIR}:/opt/neuro_adhd/data/atlases:ro" \
     -v "${OUTPUT_DIR}:/opt/neuro_adhd/outputs:rw" \
     "${IMAGE_NAME}" \

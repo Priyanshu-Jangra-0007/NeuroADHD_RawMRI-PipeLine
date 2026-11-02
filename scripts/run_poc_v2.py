@@ -666,6 +666,7 @@ def run_poc_v2_pipeline(
     manifest_path: Optional[Union[str, Path]] = None,
     atlas_mode: str = "synthetic_phantom",
     enforce_container_memory: bool = False,
+    model_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
     start_time = time.time()
@@ -995,6 +996,21 @@ def run_poc_v2_pipeline(
         feat_df = pd.DataFrame({"feature_name": edge_names, "fisher_z": z_vector})
         feat_csv_path = sub_out_dir / "features_19900_fisher_z.csv"
         feat_df.to_csv(feat_csv_path, index=False)
+
+        # Optional Frozen Downstream ML Model Inference
+        target_model_dir = model_dir or os.environ.get("NEUROADHD_MODEL_DIR")
+        if target_model_dir:
+            print("\n[Downstream ML Integration] Verifying frozen model artifacts...")
+            from src.integration.model_verifier import (
+                run_frozen_inference,
+                verify_and_load_frozen_model,
+            )
+            frozen_pipe, frozen_clf = verify_and_load_frozen_model(target_model_dir)
+            pred_res = run_frozen_inference(z_vector, frozen_pipe, frozen_clf)
+            pred_json_path = sub_out_dir / "model_prediction.json"
+            with open(pred_json_path, "w", encoding="utf-8") as f:
+                json.dump(pred_res, f, indent=2)
+            print(f"  -> Frozen Model Prediction: {pred_res['class_label']} (ADHD: {pred_res['adhd_probability']:.4f}, Control: {pred_res['control_probability']:.4f})")
 
         # 3. Motion & Confound Reports
         motion_cols = ["trans_x_mm", "trans_y_mm", "trans_z_mm", "rot_x_deg", "rot_y_deg", "rot_z_deg"]
@@ -1367,6 +1383,12 @@ def main():
         default=False,
         help="Fail closed if operating-system cgroup memory limit is unconfigured or exceeds ceiling.",
     )
+    parser.add_argument(
+        "--model-dir",
+        type=Path,
+        default=None,
+        help="Optional directory containing frozen model artifacts (final_preprocessing_pipeline.joblib, final_model.joblib).",
+    )
 
     args = parser.parse_args()
 
@@ -1404,6 +1426,7 @@ def main():
             manifest_path=synthetic_paths.get("synthetic_manifest"),
             atlas_mode=args.atlas_mode,
             enforce_container_memory=args.enforce_container_memory,
+            model_dir=args.model_dir,
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:

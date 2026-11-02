@@ -1,9 +1,17 @@
-"""Automated unit tests for Phase A.4 downstream ML model compatibility and feature contract."""
+"""Phase A.4 / A.4.1 Model Compatibility and Frozen Artifact Verification Tests.
+
+Separates:
+1. Feature contract and ordering tests.
+2. Synthetic model-interface smoke tests using disposable fixtures.
+3. Frozen artifact discovery and integrity tests.
+4. Actual frozen artifact integration tests.
+"""
 from __future__ import annotations
 
 import itertools
 import os
 from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
@@ -19,10 +27,19 @@ from src.features.connectivity import (
     compute_connectivity_vector,
     get_feature_names,
 )
+from src.integration.model_verifier import (
+    EXPECTED_SELECTED_FEATURE_INDICES,
+    EXPECTED_STEP_NAMES,
+    FROZEN_CLASSIFIER_SHA256,
+    FROZEN_PREPROCESSING_PIPELINE_SHA256,
+    compute_file_sha256,
+    run_frozen_inference,
+    verify_and_load_frozen_model,
+)
 
 
-class TestPhaseA4ModelCompatibility(unittest.TestCase):
-    """Verify feature contract, numerical symmetry, clipping, and downstream pipeline interface."""
+class TestFeatureOrderingAndContract(unittest.TestCase):
+    """1. Feature contract and ordering tests."""
 
     def setUp(self):
         np.random.seed(42)
@@ -30,13 +47,13 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
         self.n_edges = (N_ROIS * (N_ROIS - 1)) // 2  # 19,900
         self.t_points = 60
 
-    def test_feature_contract_dimensions_and_naming(self):
+    def test_feature_names_dimensions_and_lexicographic_order(self):
         """Feature names must be exactly 19,900 and match itertools upper triangle order."""
         names = get_feature_names()
         self.assertEqual(len(names), self.n_edges)
         self.assertEqual(len(names), 19900)
 
-        # Check first and last entries
+        # Check boundary entries
         self.assertEqual(names[0], "ROI_001__ROI_002")
         self.assertEqual(names[1], "ROI_001__ROI_003")
         self.assertEqual(names[198], "ROI_001__ROI_200")
@@ -48,7 +65,7 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
         expected_names = [f"ROI_{i:03d}__ROI_{j:03d}" for i, j in expected_pairs]
         self.assertEqual(names, expected_names)
 
-    def test_feature_contract_upper_triangle_indices_order(self):
+    def test_upper_triangle_indices_order(self):
         """np.triu_indices(200, k=1) ordering must match itertools combinations row-by-row."""
         tri_i, tri_j = np.triu_indices(self.n_rois, k=1)
         self.assertEqual(len(tri_i), 19900)
@@ -56,13 +73,11 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
 
         expected_pairs = list(itertools.combinations(range(1, 201), 2))
         for idx, (i_exp, j_exp) in enumerate(expected_pairs):
-            # tri_i, tri_j are 0-indexed; expected_pairs are 1-indexed
             self.assertEqual(tri_i[idx] + 1, i_exp)
             self.assertEqual(tri_j[idx] + 1, j_exp)
 
     def test_compute_connectivity_vector_finite_and_symmetric(self):
         """Connectivity vector must be 1D (19900,), finite, and based on symmetric matrix."""
-        # Create random non-constant time series
         signals = np.random.randn(self.t_points, self.n_rois)
         z, names = compute_connectivity_vector(signals)
 
@@ -82,7 +97,7 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
 
         # Constant ROI signal (zero variance)
         signals_const = np.random.randn(self.t_points, 200)
-        signals_const[:, 5] = 1.0  # Constant column
+        signals_const[:, 5] = 1.0
         with self.assertRaises(ValueError) as ctx:
             compute_connectivity_vector(signals_const)
         self.assertIn("Constant ROI signal detected", str(ctx.exception))
@@ -95,26 +110,26 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
 
     def test_fisher_z_boundary_clipping(self):
         """Singularities at r = +/- 1.0 must be safely clipped by epsilon = 1e-7."""
-        # Create perfectly correlated signals for regions 0 and 1
         signals = np.random.randn(self.t_points, self.n_rois)
-        signals[:, 1] = signals[:, 0]  # r = +1.0 exactly
-        signals[:, 2] = -signals[:, 0]  # r = -1.0 exactly
+        signals[:, 1] = signals[:, 0]  # r = +1.0
+        signals[:, 2] = -signals[:, 0]  # r = -1.0
 
         z, _ = compute_connectivity_vector(signals)
         self.assertTrue(np.all(np.isfinite(z)))
 
-        # Edge 0 (ROI 1 to ROI 2) had r = 1.0 -> should equal arctanh(1 - 1e-7)
         expected_max_z = np.arctanh(1.0 - FISHER_EPSILON)
         self.assertAlmostEqual(z[0], expected_max_z, places=7)
 
-        # Edge 1 (ROI 1 to ROI 3) had r = -1.0 -> should equal arctanh(-1 + 1e-7)
         expected_min_z = np.arctanh(-1.0 + FISHER_EPSILON)
         self.assertAlmostEqual(z[1], expected_min_z, places=7)
 
-    def test_downstream_frozen_pipeline_architecture_compatibility(self):
-        """Simulate the 4-step downstream frozen pipeline and ensure zero-refit inference pass."""
-        # Synthesize a fitted pipeline matching the frozen architecture
-        n_train_subjects = 50
+
+class TestSyntheticModelInterfaceSmoke(unittest.TestCase):
+    """2. Synthetic model-interface smoke tests using disposable test fixtures."""
+
+    def test_synthetic_pipeline_interface_smoke_with_disposable_fixture(self):
+        """Smoke test verifying feature transformation flow using a disposable toy pipeline."""
+        n_train_subjects = 30
         X_train = np.random.randn(n_train_subjects, 19900)
         y_train = np.random.randint(0, 2, size=n_train_subjects)
 
@@ -126,15 +141,12 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
         ])
         pipeline.fit(X_train, y_train)
 
-        # Generate a test feature vector from our connectivity extractor
         test_signals = np.random.randn(60, 200)
         z, _ = compute_connectivity_vector(test_signals)
 
-        # Ingestion test: must be (1, 19900) 2D array
         X_new = z.reshape(1, -1)
         self.assertEqual(X_new.shape, (1, 19900))
 
-        # Predict without refitting
         probs = pipeline.predict_proba(X_new)[0]
         pred = pipeline.predict(X_new)[0]
 
@@ -142,42 +154,126 @@ class TestPhaseA4ModelCompatibility(unittest.TestCase):
         self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=6)
         self.assertIn(pred, [0, 1])
 
-    def test_existing_model_artifacts_inspection_if_available(self):
-        """If historical benchmark artifacts are accessible on disk, verify their SHA-256 and structure."""
-        pipe_path = Path("/Users/apple/Documents/Codex/2026-09-29/down/NeuroADHD_ModelBenchmark/results/final_locked/final_preprocessing_pipeline.joblib")
-        model_path = Path("/Users/apple/Documents/Codex/2026-09-29/down/NeuroADHD_ModelBenchmark/results/final_locked/final_model.joblib")
 
-        if pipe_path.is_file() and model_path.is_file():
-            import joblib
-            import hashlib
+class TestFrozenArtifactIntegrityAndDiscovery(unittest.TestCase):
+    """3. Frozen artifact discovery and integrity tests."""
 
-            # Verify pipeline SHA-256
-            pipe_sha = hashlib.sha256(pipe_path.read_bytes()).hexdigest()
-            self.assertEqual(pipe_sha, "228d3f0180e4855d49fd732327ab1fc4f255beb7bea43dd4fd1db3064aa86249")
+    def test_missing_model_dir_raises_filenotfound(self):
+        """Calling verify_and_load_frozen_model without NEUROADHD_MODEL_DIR fails closed."""
+        old_val = os.environ.pop("NEUROADHD_MODEL_DIR", None)
+        try:
+            with self.assertRaises(FileNotFoundError) as ctx:
+                verify_and_load_frozen_model(None)
+            self.assertIn("NEUROADHD_MODEL_DIR", str(ctx.exception))
+        finally:
+            if old_val is not None:
+                os.environ["NEUROADHD_MODEL_DIR"] = old_val
 
-            # Verify model SHA-256
-            model_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
-            self.assertEqual(model_sha, "d8eb23eb8c6d25ffc12b2bab515a2a7112daeeb0afa8f4e9eaa499dbe5b5f2ef")
+    def test_corrupted_artifact_fails_closed(self):
+        """Corrupted or modified artifact files must fail SHA-256 verification."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            pipe_file = tmp / "final_preprocessing_pipeline.joblib"
+            pipe_file.write_bytes(b"corrupted_pipeline_data")
+            model_file = tmp / "final_model.joblib"
+            model_file.write_bytes(b"corrupted_model_data")
 
-            # Load and verify structure
-            pipe = joblib.load(pipe_path)
-            model = joblib.load(model_path)
+            with self.assertRaises(ValueError) as ctx:
+                verify_and_load_frozen_model(tmp)
+            self.assertIn("SHA-256 mismatch", str(ctx.exception))
 
-            self.assertEqual(len(pipe.named_steps["imputer"].statistics_), 19900)
-            self.assertEqual(len(pipe.named_steps["scaler"].mean_), 19900)
-            self.assertEqual(pipe.named_steps["select"].k, 100)
-            self.assertEqual(model.n_estimators, 50)
-            self.assertEqual(model.max_depth, 3)
+    def test_symlink_artifact_fails_closed(self):
+        """Symlinks are strictly prohibited for model directories and artifacts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            real_file = tmp / "real.joblib"
+            real_file.write_bytes(b"some content")
+            sym_dir = tmp / "symlink_dir"
+            sym_dir.symlink_to(tmp, target_is_directory=True)
 
-            # Test synthetic feature vector pass
-            z, _ = compute_connectivity_vector(np.random.randn(60, 200))
-            X_selected = pipe.transform(z.reshape(1, -1))
-            self.assertEqual(X_selected.shape, (1, 100))
-            probs = model.predict_proba(X_selected)[0]
-            self.assertEqual(len(probs), 2)
-            self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=5)
+            with self.assertRaises(RuntimeError) as ctx:
+                verify_and_load_frozen_model(sym_dir)
+            self.assertIn("Symlink substitution detected", str(ctx.exception))
+
+    def test_frozen_artifact_checksums_and_architecture(self):
+        """Verify actual frozen artifact SHA-256 hashes and architecture if NEUROADHD_MODEL_DIR is set."""
+        model_dir = os.environ.get("NEUROADHD_MODEL_DIR")
+        if not model_dir or not (Path(model_dir) / "final_model.joblib").is_file():
+            self.skipTest(
+                "NEUROADHD_MODEL_DIR is not set or artifacts are unavailable. "
+                "Frozen artifact checksum and architectural verification was not performed."
+            )
+
+        pipeline, model = verify_and_load_frozen_model(model_dir)
+
+        # Preprocessing pipeline checks
+        self.assertEqual(list(pipeline.named_steps.keys()), EXPECTED_STEP_NAMES)
+        self.assertEqual(len(pipeline.named_steps["imputer"].statistics_), 19900)
+        self.assertEqual(len(pipeline.named_steps["scaler"].mean_), 19900)
+        self.assertEqual(pipeline.named_steps["select"].k, 100)
+        actual_indices = list(pipeline.named_steps["select"].get_support(indices=True))
+        self.assertEqual([int(x) for x in actual_indices], EXPECTED_SELECTED_FEATURE_INDICES)
+
+        # Classifier checks
+        self.assertEqual(model.n_estimators, 50)
+        self.assertEqual(model.max_depth, 3)
+        self.assertEqual(model.class_weight, "balanced")
+        self.assertEqual(model.random_state, 42)
+        self.assertEqual(list(model.classes_), [0, 1])
+        self.assertEqual(model.n_features_in_, 100)
+
+
+class TestFrozenArtifactIntegration(unittest.TestCase):
+    """4. Actual frozen artifact integration tests (zero-refit inference pass)."""
+
+    def test_frozen_artifact_real_inference_pass(self):
+        """Verify end-to-end inference pass with real frozen artifacts when NEUROADHD_MODEL_DIR is set."""
+        model_dir = os.environ.get("NEUROADHD_MODEL_DIR")
+        if not model_dir or not (Path(model_dir) / "final_model.joblib").is_file():
+            self.skipTest(
+                "NEUROADHD_MODEL_DIR is not set or artifacts are unavailable. "
+                "Real frozen artifact integration test was not performed."
+            )
+
+        pipeline, model = verify_and_load_frozen_model(model_dir)
+
+        # 1. Generate synthetic 60-timepoint x 200-ROI signals using our connectivity generator
+        np.random.seed(123)
+        synthetic_signals = np.random.randn(60, 200)
+
+        # 2. Compute 19,900 Fisher-z connectivity vector
+        z_vector, names = compute_connectivity_vector(synthetic_signals)
+        self.assertEqual(len(z_vector), 19900)
+        self.assertEqual(len(names), 19900)
+        self.assertEqual(names, get_feature_names())
+        self.assertTrue(np.all(np.isfinite(z_vector)))
+
+        # 3. Transform via loaded frozen pipeline (transform() only, NO fit())
+        X_raw = z_vector.reshape(1, -1)
+        self.assertEqual(X_raw.shape, (1, 19900))
+
+        X_selected = pipeline.transform(X_raw)
+        self.assertEqual(X_selected.shape, (1, 100))
+
+        # 4. Predict via loaded frozen classifier
+        probs = model.predict_proba(X_selected)[0]
+        pred = model.predict(X_selected)[0]
+
+        self.assertIn(pred, [0, 1])
+        self.assertEqual(len(probs), 2)
+        self.assertTrue(np.all(np.isfinite(probs)))
+        self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=5)
+        self.assertTrue(0.0 <= probs[0] <= 1.0)
+        self.assertTrue(0.0 <= probs[1] <= 1.0)
+
+        # 5. Verify through run_frozen_inference helper
+        res = run_frozen_inference(z_vector, pipeline, model)
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["features_in"], 19900)
+        self.assertEqual(res["features_selected"], 100)
+        self.assertFalse(res["refit_performed"])
+        self.assertEqual(res["predicted_class"], pred)
 
 
 if __name__ == "__main__":
     unittest.main()
-
