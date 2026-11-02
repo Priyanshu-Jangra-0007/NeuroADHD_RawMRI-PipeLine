@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NeuroADHD RawMRI PoC V2 Research Authorization Register Schema",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "register_id",
+    "project",
+    "phase",
+    "overall_authorization_state",
+    "execution_policy",
+    "real_data_authorized",
+    "last_updated",
+    "categories",
+    "audit_trail"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "register_id": {
+      "type": "string",
+      "pattern": "^REG-NA-[A-Z0-9-]+$"
+    },
+    "project": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "overall_authorization_state": {
+      "type": "string",
+      "enum": ["NOT_AUTHORIZED", "CONDITIONALLY_AUTHORIZED", "FULLY_AUTHORIZED"]
+    },
+    "execution_policy": {
+      "type": "string",
+      "enum": ["STRICTLY_SYNTHETIC_ONLY", "AUTHORIZED_PILOT_ONLY", "AUTHORIZED_RESEARCH_ONLY"]
+    },
+    "real_data_authorized": {
+      "type": "boolean"
+    },
+    "last_updated": {
+      "type": "string"
+    },
+    "categories": {
+      "type": "object",
+      "required": [
+        "supervisor_decisions",
+        "institutional_legal",
+        "operational_safeguards"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "supervisor_decisions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/register_item" }
+        },
+        "institutional_legal": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/register_item" }
+        },
+        "operational_safeguards": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/register_item" }
+        }
+      }
+    },
+    "audit_trail": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "event",
+          "target_id",
+          "previous_state",
+          "new_state",
+          "changed_by",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "timestamp": { "type": "string" },
+          "event": { "type": "string" },
+          "target_id": { "type": "string" },
+          "previous_state": { "type": "string" },
+          "new_state": { "type": "string" },
+          "changed_by": { "type": "string" },
+          "reason": { "type": "string" },
+          "evidence_reference": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "register_item": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "title",
+        "description",
+        "status",
+        "responsible_reviewer",
+        "decision_date",
+        "selected_option",
+        "evidence_reference",
+        "evidence_sha256",
+        "reviewer_comments",
+        "revision_history"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": ["supervisor_decision", "institutional_legal", "operational_safeguard"]
+        },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "REVISION_REQUIRED", "REJECTED", "APPROVED", "NOT_APPLICABLE"]
+        },
+        "responsible_reviewer": { "type": ["string", "null"] },
+        "decision_date": { "type": ["string", "null"] },
+        "selected_option": { "type": ["string", "null"] },
+        "evidence_reference": { "type": ["string", "null"] },
+        "evidence_sha256": { "type": ["string", "null"] },
+        "reviewer_comments": { "type": ["string", "null"] },
+        "revision_history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "timestamp",
+              "previous_status",
+              "new_status",
+              "changed_by",
+              "reason"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "timestamp": { "type": "string" },
+              "previous_status": { "type": "string" },
+              "new_status": { "type": "string" },
+              "changed_by": { "type": "string" },
+              "reason": { "type": "string" },
+              "evidence_reference": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -90,6 +90,11 @@ from src.preprocessing.segmentation import (
     segment_t1w_tissue,
     validate_tissue_masks,
 )
+from src.validation.authorization_gate import (
+    AuthorizationBypassAttemptError,
+    AuthorizationDeniedError,
+    ResearchAuthorizationGate,
+)
 from src.validation.bids_validator import BIDSInputValidator
 from src.validation.memory_guard import (
     DEFAULT_CONTAINER_MEMORY_LIMIT_BYTES,
@@ -216,11 +221,17 @@ def check_safety_guards(
     modification, file swapping, and path misconfiguration during development and testing.
     It does not claim public-key digital signature authentication.
     """
+    # 0. Enforce research authorization gate and reject bypass environment variables
+    auth_gate = ResearchAuthorizationGate(base_dir=PROJECT_ROOT)
+    auth_gate.check_for_bypass_attempts()
+
     # 1. Reject explicit bypass attempts
     if allow_real_scans:
-        raise RuntimeError(
+        auth_report = auth_gate.evaluate_register()
+        raise AuthorizationDeniedError(
             "SAFETY VIOLATION: Execution on real MRI scans is strictly disabled by Phase A safety policy. "
-            "'allow_real_scans=True' is prohibited and will not bypass safety guards."
+            "'allow_real_scans=True' is prohibited and will not bypass safety guards. "
+            f"The Phase A.6 research authorization gate is {auth_report['overall_authorization_state']}."
         )
 
     # 2. Block known real participant and cohort identifiers
@@ -1414,8 +1425,15 @@ def main():
 
     args = parser.parse_args()
 
+    # Enforce Phase A.6 research authorization gate on CLI execution
+    auth_gate = ResearchAuthorizationGate(base_dir=PROJECT_ROOT)
+    auth_gate.check_execution_allowed(
+        requested_mode=args.mode,
+        allow_real_scans=args.allow_real_scans,
+    )
+
     if args.allow_real_scans:
-        raise RuntimeError(
+        raise AuthorizationDeniedError(
             "SAFETY VIOLATION: Execution on real MRI scans is strictly disabled by Phase A safety policy. "
             "--allow-real-scans is not permitted."
         )
