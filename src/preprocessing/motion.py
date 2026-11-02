@@ -29,8 +29,8 @@ def compute_framewise_displacement(motion_params: np.ndarray, radius_mm: float =
     np.ndarray
         1D array of length T with FD values in mm (first volume set to 0.0).
     """
-    if motion_params.shape[1] != 6:
-        raise ValueError(f"Expected 6 motion parameters, got shape {motion_params.shape}")
+    if motion_params.ndim != 2 or motion_params.shape[1] != 6:
+        raise ValueError(f"Expected 2D array of 6 motion parameters (T, 6), got shape {motion_params.shape}")
 
     t = motion_params[:, :3]
     # Convert degrees to radians, then to arc length in mm: arc = radius * radians
@@ -58,6 +58,9 @@ def build_friston_24_regressors(motion_params: np.ndarray) -> np.ndarray:
     np.ndarray
         Array of shape (T, 24) representing the full Friston-24 nuisance regressors.
     """
+    if motion_params.ndim != 2 or motion_params.shape[1] != 6:
+        raise ValueError(f"Expected 2D array of (T, 6) motion parameters, got shape {motion_params.shape}")
+
     t_vol = motion_params.shape[0]
     r = motion_params
     r_sq = r ** 2
@@ -93,6 +96,8 @@ def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndar
         raise ValueError(f"Expected 4D functional scan, got {data.ndim}D")
 
     t_vol = data.shape[3]
+    if t_vol < 2:
+        raise ValueError(f"At least 2 functional volumes required for 3D motion correction, got {t_vol}")
     affine = bold_img.affine
 
     # Compute reference: mean volume across all timepoints

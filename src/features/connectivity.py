@@ -30,8 +30,11 @@ def compute_connectivity_vector(time_by_roi: np.ndarray) -> Tuple[np.ndarray, Li
         - 1D float64 array of shape (19,900,) containing Fisher-z connectivity values.
         - List of 19,900 corresponding edge names.
     """
-    if time_by_roi.shape[1] != N_ROIS:
-        raise ValueError(f"Expected {N_ROIS} ROIs, got {time_by_roi.shape[1]}")
+    if time_by_roi.ndim != 2 or time_by_roi.shape[1] != N_ROIS:
+        raise ValueError(f"Expected 200 ROIs in 2D array of shape (T, {N_ROIS}), got shape {time_by_roi.shape}")
+
+    if time_by_roi.shape[0] < 2:
+        raise ValueError(f"At least 2 timepoints required to compute correlation, got {time_by_roi.shape[0]}")
 
     # Check zero-variance
     stds = np.std(time_by_roi, axis=0, ddof=0)

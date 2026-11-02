@@ -217,6 +217,8 @@ def run_frozen_inference(
 
     return {
         "status": "SUCCESS",
+        "evaluation_mode": "SYNTHETIC_DEMONSTRATION_ONLY",
+        "diagnostic_disclaimer": "SYNTHETIC_DEMONSTRATION_ONLY: Not approved or validated for clinical diagnostic use.",
         "predicted_class": pred,
         "class_label": "ADHD Pattern" if pred == 1 else "Typical Control Pattern",
         "adhd_probability": round(prob_adhd, 4),
