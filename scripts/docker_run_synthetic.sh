@@ -20,8 +20,12 @@ OUTPUT_DIR="$(cd "${TARGET_OUT}" && pwd)"
 ATLAS_DIR="${PROJECT_ROOT}/data/atlases"
 ATLAS_FILE="${ATLAS_DIR}/cc200_roi_atlas.nii.gz"
 
-# Verify HMAC key
-export NEUROADHD_HMAC_KEY="${NEUROADHD_HMAC_KEY:-synthetic_deployment_hmac_key_arm64_phase_a3}"
+# Verify HMAC key is explicitly configured (fail-closed, no hardcoded fallbacks)
+if [[ -z "${NEUROADHD_HMAC_KEY:-}" ]]; then
+    echo "ERROR: Mandatory NEUROADHD_HMAC_KEY environment variable is missing or empty." >&2
+    echo "An explicit HMAC integrity key must be configured in the environment." >&2
+    exit 1
+fi
 
 echo "==========================================================================="
 echo "NeuroADHD RawMRI PoC V2 — Container Deployment Runner"

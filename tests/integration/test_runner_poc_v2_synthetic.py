@@ -656,7 +656,7 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
 
     def test_runner_canonical_atlas_mode_validation(self):
         """Pipeline in canonical atlas mode validates authentic CC200 atlas successfully."""
-        from src.parcellation.extractor import verify_canonical_cc200_atlas
+        from src.parcellation.extractor import CANONICAL_CC200_AFFINE, verify_canonical_cc200_atlas
         authentic_atlas = Path("data/atlases/cc200_roi_atlas.nii.gz")
         self.assertTrue(authentic_atlas.is_file())
         res = verify_canonical_cc200_atlas(authentic_atlas)
@@ -664,6 +664,7 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         self.assertEqual(res["shape"], (63, 75, 61))
         self.assertEqual(res["zooms"], (3.0, 3.0, 3.0))
         self.assertEqual(res["n_rois"], 200)
+        np.testing.assert_allclose(res["affine"], CANONICAL_CC200_AFFINE)
 
     def test_runner_canonical_atlas_mode_rejects_corrupted_atlas(self):
         """Pipeline in canonical atlas mode rejects corrupted or modified atlas."""

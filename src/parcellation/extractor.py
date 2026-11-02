@@ -109,6 +109,7 @@ def verify_canonical_cc200_atlas(
         "zooms": zooms,
         "n_rois": 200,
         "atlas_path": str(path.resolve()),
+        "affine": atlas_img.affine,
     }
 
 

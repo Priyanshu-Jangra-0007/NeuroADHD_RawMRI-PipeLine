@@ -9,7 +9,7 @@ The pipeline processes synthetic resting-state functional MRI (rs-fMRI) phantoms
 ### Core Deployment Contracts
 1. **Operating-System Memory Ceiling**: A hard container limit of **2560 MiB (2.5 GiB)** enforced by the Linux kernel via Control Groups (cgroup v2 / v1).
 2. **Canonical Atlas Integrity**: Authentic CC200 atlas (`data/atlases/cc200_roi_atlas.nii.gz`) mounted strictly read-only (`:ro`) and validated via SHA-256 (`9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`), spatial shape `(63, 75, 61)`, 3.0 mm isotropic voxel zooms, and 200 contiguous ROI labels (1–200).
-3. **Fail-Closed Execution Policy**: Strict input authenticity verification via HMAC-SHA256 (`NEUROADHD_HMAC_KEY`). Any execution missing OS memory constraints or attempting to process unverified or real MRI data fails closed.
+3. **Fail-Closed Execution Policy**: Strict input authenticity verification via HMAC-SHA256 (`NEUROADHD_HMAC_KEY`). The `NEUROADHD_HMAC_KEY` environment variable must be explicitly configured in the environment with no fallback default. Any execution with a missing or empty HMAC key, missing OS memory constraints, or attempting to process unverified or real MRI data fails closed.
 4. **Synthetic-Only Guarantee**: Execution is restricted exclusively to cryptographically authenticated synthetic phantom data; real scan processing is strictly blocked.
 
 ---
@@ -119,3 +119,4 @@ Verify:
 2. `features_19900_fisher_z.csv` has exactly 19,900 rows and matching feature names.
 3. `run_manifest.json` reports `"pipeline_status": "SUCCESS"`.
 4. `provenance.json` validates against `configs/provenance_schema.json` and records cgroup memory telemetry.
+

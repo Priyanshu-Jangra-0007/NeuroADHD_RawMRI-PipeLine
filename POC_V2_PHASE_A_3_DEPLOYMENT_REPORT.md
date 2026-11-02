@@ -26,7 +26,7 @@ The authentic canonical CC200 atlas was deployed to `data/atlases/cc200_roi_atla
 | **Spatial Shape** | `(63, 75, 61)` | `(63, 75, 61)` | **MATCH** |
 | **Voxel Zooms** | `(3.0, 3.0, 3.0)` mm | `(3.0, 3.0, 3.0)` mm | **MATCH** |
 | **Parcel Labels** | Exactly 200 contiguous ($1..200$) | Exactly 200 contiguous labels ($1$ to $200$, min=1, max=200) | **MATCH** |
-| **Canonical Affine** | $\begin{bmatrix} 3 & 0 & 0 & -96 \\ 0 & 3 & 0 & -132 \\ 0 & 0 & 3 & -78 \\ 0 & 0 & 0 & 1 \end{bmatrix}$ | $\begin{bmatrix} 3.0 & 0.0 & 0.0 & -96.0 \\ 0.0 & 3.0 & 0.0 & -132.0 \\ 0.0 & 0.0 & 3.0 & -78.0 \\ 0.0 & 0.0 & 0.0 & 1.0 \end{bmatrix}$ | **MATCH** |
+| **Canonical Affine** | $\begin{bmatrix} -3 & 0 & 0 & 93 \\ 0 & 3 & 0 & -129 \\ 0 & 0 & 3 & -72 \\ 0 & 0 & 0 & 1 \end{bmatrix}$ | $\begin{bmatrix} -3.0 & 0.0 & 0.0 & 93.0 \\ 0.0 & 3.0 & 0.0 & -129.0 \\ 0.0 & 0.0 & 3.0 & -72.0 \\ 0.0 & 0.0 & 0.0 & 1.0 \end{bmatrix}$ | **MATCH** |
 | **Total Brain Voxels**| $> 40,000$ | $43,413$ voxels | **MATCH** |
 | **Container Mount** | Read-Only (`:ro`) | Mounted as `/opt/neuro_adhd/data/atlases:ro` | **ENFORCED** |
 
@@ -178,3 +178,4 @@ Container Memory Test:   3/3 passed in scripts/verify_container_memory.sh
 2. **Immutable Canonical Atlas**: The authentic CC200 atlas was verified via cryptographic SHA-256 and mounted strictly read-only.
 3. **Fail-Closed Memory Boundary**: Container memory is bounded at 2560 MiB by the Linux kernel; attempting to run outside container isolation with `--enforce-container-memory` immediately aborts execution.
 4. **No ML Model Drift**: Downstream ML classifiers, weights, and scoring matrices remain untouched.
+

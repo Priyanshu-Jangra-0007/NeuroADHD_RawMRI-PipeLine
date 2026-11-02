@@ -209,7 +209,9 @@ class TestConnectivityAndParcellation(unittest.TestCase):
         self.assertTrue(res["verified"])
         self.assertEqual(res["sha256"], CANONICAL_CC200_SHA256)
         self.assertEqual(res["shape"], CANONICAL_CC200_SHAPE)
+        self.assertEqual(res["zooms"], (3.0, 3.0, 3.0))
         self.assertEqual(res["n_rois"], 200)
+        np.testing.assert_allclose(res["affine"], CANONICAL_CC200_AFFINE)
 
     def test_verify_canonical_cc200_atlas_missing_file_raises_filenotfound(self):
         """Missing file must raise FileNotFoundError."""

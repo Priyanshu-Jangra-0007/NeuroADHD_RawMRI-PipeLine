@@ -75,7 +75,7 @@ else
     PY_BIN="python3"
 fi
 
-OUTPUT=$(export NEUROADHD_HMAC_KEY="test" && "${PY_BIN}" "${SCRIPT_DIR}/run_poc_v2.py" --mode synthetic --enforce-container-memory 2>&1)
+OUTPUT=$(export NEUROADHD_HMAC_KEY="test_only_synthetic_isolation_verification_key" && "${PY_BIN}" "${SCRIPT_DIR}/run_poc_v2.py" --mode synthetic --enforce-container-memory 2>&1)
 EXIT_CODE=$?
 set -e
 
