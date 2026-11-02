@@ -5,7 +5,9 @@
 **Repository:** `Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine`  
 **Branch:** `main`  
 **Baseline Commit:** `26b944106407ad7d343ae74f9f92575c45d0740d`  
-**Phase A.4.2 Commit:** `7282eea173f97118ee395a2d15eec49c7e953876`  
+**Phase A.4.2 Verified Commit:** `d6673c4ff7a1ac5f1116722acbca24783034fd65`  
+*(Note: Initial pre-amend working commit `7282eea173f97118ee395a2d15eec49c7e953876` was superseded during test permission hardening; `d6673c4ff7a1ac5f1116722acbca24783034fd65` is the authoritative verified commit on `main`.)*  
+**GitHub Actions CI Run:** [#41431929861](https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine/actions/runs/41431929861)  
 **Deployment Decision:** `DEPLOYMENT_VERIFIED_WITH_FROZEN_MODEL`  
 
 ---
@@ -129,11 +131,13 @@ Stage 19: Export & Frozen Model Inference:
 
 CI test reporting has been corrected to dynamically extract test results directly from JUnit XML test outputs via `scripts/ci_test_summary.py`.
 
-### Test Architecture Breakdown
-- **Unit Tests:** 14 passed, 2 skipped (when `NEUROADHD_MODEL_DIR` unset) / 16 passed (when set).
-- **Synthetic Runner Integrations:** 26 passed.
-- **Container Model Integrations:** 4 passed, 1 skipped (when `NEUROADHD_MODEL_DIR` unset) / 5 passed (when set).
-- **Total Local Suite:** 170 passed, 0 failed.
+### Test Architecture Breakdown (179 Total Collected Tests)
+- **Core Unit Tests (`tests/unit/`):** 145 tests total (143 passed, 2 skipped in CI / 145 passed locally with model directory).
+- **Synthetic Pipeline & Runner Integrations (`tests/integration/`):** 29 tests total (29 passed in CI and locally).
+- **Container Model Integrations (`tests/integration/test_container_model_integration.py`):** 5 tests total (4 passed, 1 skipped in CI / 5 passed locally with model directory).
+- **Total Local Suite:** **179 passed, 0 failed, 0 errors, 0 skipped.**
+- **Total CI Suite:** **176 passed, 0 failed, 0 errors, 3 skipped.**
+- *(Note on historical documentation: An earlier draft referenced 170 passed tests based on a partial local test run before all 145 unit tests and 5 container tests were consolidated. The authoritative total across the entire codebase is 179 collected tests.)*
 
 ### Explicit CI Skip Policy
 In GitHub Actions CI where model binaries (`*.joblib`) are excluded from Git per security/licensing rules:

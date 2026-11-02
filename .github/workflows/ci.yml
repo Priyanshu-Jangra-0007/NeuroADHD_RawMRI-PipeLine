@@ -43,4 +43,17 @@ jobs:
 
     - name: Report Dynamic CI Test Execution Summary & Model Status
       run: |
-        python scripts/ci_test_summary.py --xml report-tests.xml report-scripts.xml
+        python scripts/ci_test_summary.py --xml report-tests.xml report-scripts.xml --markdown test-summary.md
+
+    - name: Upload Test and Verification Evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-and-verification-evidence
+        path: |
+          report-tests.xml
+          report-scripts.xml
+          coverage-src.xml
+          coverage-scripts.xml
+          test-summary.md
+        retention-days: 30
