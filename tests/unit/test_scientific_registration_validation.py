@@ -24,7 +24,15 @@ import tempfile
 import nibabel as nib
 import numpy as np
 from dipy.align.imwarp import DiffeomorphicMap
+from scipy.ndimage import map_coordinates, rotate
 
+from src.parcellation.extractor import (
+    CANONICAL_CC200_AFFINE,
+    CANONICAL_CC200_SHA256,
+    CANONICAL_CC200_SHAPE,
+    CANONICAL_CC200_ZOOMS,
+    extract_cc200_timeseries,
+)
 from src.preprocessing.qc import (
     compute_registration_qc_metrics,
     generate_before_after_qc_figure,
@@ -33,6 +41,8 @@ from src.preprocessing.qc import (
 from src.preprocessing.registration import (
     compose_transformations,
     compute_spatial_dice,
+    register_epi_to_t1w,
+    register_t1w_to_mni,
     resample_4d_bold,
     resample_mask_to_target,
 )
@@ -476,6 +486,277 @@ class TestScientificRegistrationValidation(unittest.TestCase):
         self.assertTrue(gen_lm.is_file())
         self.assertTrue(lm_metrics["qc_pass"])
         self.assertLess(lm_metrics["max_tre_mm"], 2.0)
+
+    def test_canonical_cc200_geometry_and_resampling_contract(self):
+        """Test 11: Canonical CC200 atlas geometry contract: (63, 75, 61), 3mm isotropic, and resampling."""
+        # 1. Verify canonical geometry constants
+        self.assertEqual(CANONICAL_CC200_SHAPE, (63, 75, 61))
+        self.assertEqual(CANONICAL_CC200_ZOOMS, (3.0, 3.0, 3.0))
+        self.assertEqual(CANONICAL_CC200_SHA256, "9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650")
+        expected_affine = np.array([
+            [-3.0, 0.0, 0.0, 93.0],
+            [0.0, 3.0, 0.0, -129.0],
+            [0.0, 0.0, 3.0, -72.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        np.testing.assert_allclose(CANONICAL_CC200_AFFINE, expected_affine)
+
+        # 2. Resample 4D BOLD into canonical CC200 grid
+        source_shape = CANONICAL_CC200_SHAPE
+        source_affine = CANONICAL_CC200_AFFINE
+        bold_data = np.zeros((*source_shape, 50), dtype=np.float32)
+        for t in range(50):
+            bold_data[..., t] = 50.0 + float(np.sin(t * 0.2) * 10.0) + float(t % 5)
+        bold_img = nib.Nifti1Image(bold_data, source_affine)
+
+        identity_map = DiffeomorphicMap(
+            3,
+            disp_shape=CANONICAL_CC200_SHAPE,
+            disp_grid2world=CANONICAL_CC200_AFFINE,
+            domain_shape=source_shape,
+            domain_grid2world=source_affine,
+            codomain_shape=CANONICAL_CC200_SHAPE,
+            codomain_grid2world=CANONICAL_CC200_AFFINE,
+        )
+        identity_map.forward = np.zeros((*CANONICAL_CC200_SHAPE, 3), dtype=np.float32)
+        identity_map.backward = np.zeros((*CANONICAL_CC200_SHAPE, 3), dtype=np.float32)
+
+        resampled_bold = resample_4d_bold(
+            bold_img,
+            identity_map,
+            target_shape=CANONICAL_CC200_SHAPE,
+            target_affine=CANONICAL_CC200_AFFINE,
+            interpolation="linear",
+        )
+        self.assertEqual(resampled_bold.shape, (*CANONICAL_CC200_SHAPE, 50))
+        np.testing.assert_allclose(resampled_bold.affine, CANONICAL_CC200_AFFINE)
+
+        # 3. Create synthetic 200-parcel atlas on canonical grid and verify extraction
+        atlas_data = np.zeros(CANONICAL_CC200_SHAPE, dtype=np.int32)
+        for i in range(200):
+            atlas_data[10 + (i % 20), 10 + ((i // 20) % 20), 10 + (i % 10)] = i + 1
+        atlas_img = nib.Nifti1Image(atlas_data, CANONICAL_CC200_AFFINE)
+
+        # Extraction should succeed cleanly because geometry and affine match exactly
+        df, signals = extract_cc200_timeseries(resampled_bold, atlas_img)
+        self.assertEqual(df.shape, (200, 51))
+        self.assertEqual(signals.shape, (50, 200))
+
+    def test_actual_epi_to_t1w_registration_optimizer(self):
+        """Test 12: Actual DIPY optimizer for EPI-to-T1w rigid coregistration."""
+        grid_shape = (24, 24, 20)
+        grid_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+
+        # Static T1w brain
+        static = np.zeros(grid_shape, dtype=np.float32)
+        static[6:18, 6:18, 5:15] = 100.0
+        static_img = nib.Nifti1Image(static, grid_affine)
+
+        # Moving EPI shifted by +2 voxels (+6.0 mm) along X
+        moving = np.zeros(grid_shape, dtype=np.float32)
+        moving[8:20, 6:18, 5:15] = 100.0
+        moving_img = nib.Nifti1Image(moving, grid_affine)
+
+        # Initial Dice before registration
+        dice_before = compute_spatial_dice(moving > 50, static > 50)
+        self.assertLess(dice_before, 0.85)
+
+        # Run actual registration algorithm
+        m_rigid, affine_map = register_epi_to_t1w(moving_img, static_img, level_iters=[10])
+
+        # 1. Determinant and orientation: rigid matrix must have det = +1.0
+        det_r = float(np.linalg.det(m_rigid[:3, :3]))
+        self.assertAlmostEqual(det_r, 1.0, places=5)
+
+        # 2. Transform direction: maps static space to moving space (+6.0 mm in X)
+        self.assertAlmostEqual(m_rigid[0, 3], 6.0, delta=0.5)
+
+        # 3. Recovered physical landmark: static landmark (12, 12, 10) in voxels -> (36, 36, 30) mm
+        static_lm = np.array([36.0, 36.0, 30.0, 1.0])
+        moving_lm_expected = np.array([42.0, 36.0, 30.0, 1.0])  # +6.0 mm along X
+        recovered_moving_lm = m_rigid @ static_lm
+        tre_mm = np.linalg.norm(recovered_moving_lm[:3] - moving_lm_expected[:3])
+        self.assertLess(tre_mm, 1.0, f"TRE on rigid registration exceeds 1.0 mm: {tre_mm:.3f} mm")
+
+        # 4. Alignment quality after registration
+        warped = affine_map.transform(moving)
+        dice_after = compute_spatial_dice(warped > 50, static > 50)
+        self.assertGreater(dice_after, 0.90)
+        self.assertGreater(dice_after, dice_before)
+
+    def test_actual_t1w_to_mni_registration_optimizer(self):
+        """Test 13: Actual DIPY optimizer for T1w-to-MNI affine and nonlinear SyN registration."""
+        grid_shape = (24, 24, 20)
+        grid_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+
+        # Static MNI
+        mni = np.zeros(grid_shape, dtype=np.float32)
+        mni[6:18, 6:18, 5:15] = 100.0
+        mni_img = nib.Nifti1Image(mni, grid_affine)
+
+        # Moving T1w shifted by +2 voxels (+6.0 mm) along X
+        t1w = np.zeros(grid_shape, dtype=np.float32)
+        t1w[8:20, 6:18, 5:15] = 100.0
+        t1w_img = nib.Nifti1Image(t1w, grid_affine)
+
+        dice_before = compute_spatial_dice(t1w > 50, mni > 50)
+
+        # Run actual hierarchical registration
+        m_affine, syn_map = register_t1w_to_mni(
+            t1w_img, mni_img, affine_level_iters=[10], syn_level_iters=[5]
+        )
+
+        # 1. Orientation: det(m_affine) > 0
+        det_a = float(np.linalg.det(m_affine))
+        self.assertGreater(det_a, 0.0)
+
+        # 2. X translation in pullback affine: ~+6.0 mm
+        self.assertAlmostEqual(m_affine[0, 3], 6.0, delta=0.5)
+
+        # 3. Output SyN deformation field geometry
+        self.assertEqual(syn_map.forward.shape, (*grid_shape, 3))
+        self.assertEqual(syn_map.backward.shape, (*grid_shape, 3))
+
+        # 4. Transform moving image through syn_map
+        warped_t1w = syn_map.transform(t1w)
+        dice_after = compute_spatial_dice(warped_t1w > 50, mni > 50)
+        self.assertGreater(dice_after, 0.85)
+        self.assertGreater(dice_after, dice_before)
+
+    def test_actual_composed_transformations_pipeline(self):
+        """Test 14: End-to-end execution of actual registrations, composition, and 4D resampling."""
+        shape = (24, 24, 20)
+        affine = np.diag([3.0, 3.0, 3.0, 1.0])
+
+        mni_data = np.zeros(shape, dtype=np.float32)
+        mni_data[6:18, 6:18, 5:15] = 100.0
+        mni_img = nib.Nifti1Image(mni_data, affine)
+
+        t1_data = np.zeros(shape, dtype=np.float32)
+        t1_data[8:20, 6:18, 5:15] = 100.0
+        t1_img = nib.Nifti1Image(t1_data, affine)
+
+        epi_data = np.zeros((*shape, 50), dtype=np.float32)
+        for t in range(50):
+            epi_data[10:22, 6:18, 5:15, t] = 100.0 + (t % 5)
+        epi_img = nib.Nifti1Image(epi_data, affine)
+        mean_epi = nib.Nifti1Image(np.mean(epi_data, axis=3), affine)
+
+        # Run actual optimizers
+        m_epi_to_t1, _ = register_epi_to_t1w(mean_epi, t1_img, level_iters=[10])
+        m_t1_to_mni, syn_map = register_t1w_to_mni(t1_img, mni_img, affine_level_iters=[10], syn_level_iters=[5])
+
+        # Compose
+        composed = compose_transformations(
+            m_epi_to_t1, m_t1_to_mni, syn_map,
+            target_shape=shape, target_affine=affine,
+            source_shape=shape, source_affine=affine,
+        )
+
+        # Resample
+        resampled = resample_4d_bold(epi_img, composed, target_shape=shape, target_affine=affine)
+        self.assertEqual(resampled.shape, (*shape, 50))
+        np.testing.assert_allclose(resampled.affine, affine)
+
+        mean_res = np.mean(np.asanyarray(resampled.dataobj), axis=3)
+        dice_before = compute_spatial_dice(np.mean(epi_data, axis=3) > 50, mni_data > 50)
+        dice_after = compute_spatial_dice(mean_res > 50, mni_data > 50)
+        self.assertGreater(dice_after, 0.85)
+        self.assertGreater(dice_after, dice_before)
+
+    def test_actual_nonlinear_syn_inverse_consistency_in_mm(self):
+        """Test 15: Quantitative inverse consistency error of actual SyN forward/backward mappings."""
+        shape = (24, 24, 24)
+        affine = np.diag([2.0, 2.0, 2.0, 1.0])
+
+        static = np.zeros(shape, dtype=np.float32)
+        static[8:16, 8:16, 8:16] = 100.0
+
+        moving = np.zeros(shape, dtype=np.float32)
+        moving[9:17, 8:16, 8:16] = 100.0
+
+        static_img = nib.Nifti1Image(static, affine)
+        moving_img = nib.Nifti1Image(moving, affine)
+
+        _, syn_map = register_t1w_to_mni(
+            moving_img, static_img, affine_level_iters=[10], syn_level_iters=[5]
+        )
+
+        # Evaluate inverse consistency over foreground ROI
+        roi = static > 50
+        coords = np.argwhere(roi)  # shape (N, 3)
+
+        # Forward displacement at voxel coordinates
+        fwd_disp = syn_map.forward[roi]
+        y_coords = coords + fwd_disp
+
+        # Interpolate backward displacement at forward-mapped coordinates y_coords
+        back_x = map_coordinates(syn_map.backward[..., 0], y_coords.T, order=1, mode="nearest")
+        back_y = map_coordinates(syn_map.backward[..., 1], y_coords.T, order=1, mode="nearest")
+        back_z = map_coordinates(syn_map.backward[..., 2], y_coords.T, order=1, mode="nearest")
+        back_disp = np.stack([back_x, back_y, back_z], axis=1)
+
+        # Recovered coordinates
+        recovered_coords = y_coords + back_disp
+
+        # Inverse consistency error (ICE) in mm:
+        residual_voxels = np.linalg.norm(recovered_coords - coords, axis=1)
+        residual_mm = residual_voxels * 2.0  # 2.0 mm voxel size
+
+        mean_ice = float(np.mean(residual_mm))
+        max_ice = float(np.max(residual_mm))
+        median_ice = float(np.median(residual_mm))
+
+        # Assert sub-voxel inverse consistency error on SyN optimizer:
+        # Tolerances: mean ICE < 0.20 mm, max ICE < 0.50 mm (sub-voxel for 2.0 mm voxels)
+        self.assertLess(mean_ice, 0.20, f"Mean SyN ICE too high: {mean_ice:.4f} mm")
+        self.assertLess(max_ice, 0.50, f"Max SyN ICE too high: {max_ice:.4f} mm")
+        self.assertLess(median_ice, 0.20, f"Median SyN ICE too high: {median_ice:.4f} mm")
+
+    def test_production_qc_metrics_four_canonical_cases(self):
+        """Test 16: Verification of production QC calculations across 4 canonical cases."""
+        shape = (30, 30, 30)
+        affine = np.diag([2.0, 2.0, 2.0, 1.0])
+
+        gx, gy, gz = np.indices(shape)
+        r2 = ((gx - 15) / 5.0) ** 2 + ((gy - 15) / 5.0) ** 2 + ((gz - 15) / 5.0) ** 2
+        target = (100.0 * np.exp(-r2)).astype(np.float32)
+        tgt_img = nib.Nifti1Image(target, affine)
+
+        # Case 1: Perfect alignment
+        m_perf = compute_registration_qc_metrics(tgt_img, tgt_img)
+        self.assertAlmostEqual(m_perf["pearson_r"], 1.0, places=5)
+        self.assertAlmostEqual(m_perf["rmse"], 0.0, places=5)
+        self.assertAlmostEqual(m_perf["dice"], 1.0, places=5)
+        self.assertTrue(m_perf["qc_pass"])
+
+        # Case 2: Known translation (0.5 voxel shift = 1.0 mm)
+        r2_trans = ((gx - 15.5) / 5.0) ** 2 + ((gy - 15) / 5.0) ** 2 + ((gz - 15) / 5.0) ** 2
+        trans_img = nib.Nifti1Image((100.0 * np.exp(-r2_trans)).astype(np.float32), affine)
+        m_trans = compute_registration_qc_metrics(tgt_img, trans_img)
+        self.assertGreater(m_trans["pearson_r"], 0.90)
+        self.assertGreater(m_trans["dice"], 0.90)
+        self.assertGreater(m_trans["rmse"], 0.0)
+        self.assertTrue(m_trans["qc_pass"])
+
+        # Case 3: Known rotation (5 degrees around Z)
+        rot_data = rotate(target, 5.0, axes=(0, 1), reshape=False, order=1)
+        rot_img = nib.Nifti1Image(rot_data, affine)
+        m_rot = compute_registration_qc_metrics(tgt_img, rot_img)
+        self.assertGreater(m_rot["pearson_r"], 0.90)
+        self.assertGreater(m_rot["dice"], 0.90)
+        self.assertGreater(m_rot["rmse"], 0.0)
+        self.assertTrue(m_rot["qc_pass"])
+
+        # Case 4: Deliberately poor alignment (12-voxel displacement)
+        r2_poor = ((gx - 3) / 5.0) ** 2 + ((gy - 3) / 5.0) ** 2 + ((gz - 3) / 5.0) ** 2
+        poor_img = nib.Nifti1Image((100.0 * np.exp(-r2_poor)).astype(np.float32), affine)
+        m_poor = compute_registration_qc_metrics(tgt_img, poor_img)
+        self.assertLess(m_poor["pearson_r"], 0.20)
+        self.assertLess(m_poor["dice"], 0.10)
+        self.assertGreater(m_poor["rmse"], 10.0)
+        self.assertFalse(m_poor["qc_pass"])
+
 
 
 if __name__ == "__main__":

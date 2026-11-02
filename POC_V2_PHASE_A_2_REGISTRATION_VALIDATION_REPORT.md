@@ -33,8 +33,8 @@ $$\mathcal{I}_{\text{resampled}}(x_{\text{target}}) = \mathcal{I}_{\text{source}
 | **1. EPI-to-T1w Rigid Coregistration** | Native functional EPI (`mean_epi`) | Subject anatomical T1w (`t1w_brain`) | Maps functional voxel to subject anatomical space: $x_{\text{T1w}} = R_{\text{fwd}} x_{\text{EPI}}$ | $M_{\text{T1w}\to\text{EPI}} = (R_{\text{fwd}})^{-1}$ | N/A (matrix returned for composition) | Matrix: $4 \times 4 \in \text{SE}(3)$ |
 | **2. T1w-to-MNI Affine Registration** | Subject anatomical T1w (`t1w_brain`) | MNI152 standard template | Maps subject anatomy to standard template: $x_{\text{MNI}} = A_{\text{fwd}} x_{\text{T1w}}$ | $M_{\text{MNI}\to\text{T1w}} = (A_{\text{fwd}})^{-1}$ | N/A (affine returned for composition) | Matrix: $4 \times 4, \det(A) > 0$ |
 | **3. Nonlinear Diffeomorphic SyN** | Affine-aligned T1w brain | MNI152 standard template | Diffeomorphic warp $\phi(x)$ aligning structural details | Pullback displacement field: $u_{\text{backward}}(x_{\text{MNI}})$ | N/A (DiffeomorphicMap returned for composition) | 3D vector field: $(\Omega_{\text{MNI}}, 3)$ |
-| **4. Composed EPI-to-MNI Resampling** | 4D Functional BOLD series | MNI / CC200 target template grid | Full composite mapping from native BOLD to MNI152 | $x_{\text{EPI}} = M_{\text{T1w}\to\text{EPI}} \cdot M_{\text{MNI}\to\text{T1w}} \cdot \left[ x_{\text{MNI}} + u(x_{\text{MNI}}) \right]$ | Continuous Trilinear (`order=1` / spline) | Exact CC200 Atlas grid ($96 \times 96 \times 60$, 2.0 mm) |
-| **5. Anatomical Mask Resampling** | Subject T1w anatomical space | MNI / CC200 target template grid | Structural tissue boundaries (WM / CSF) mapped to MNI | $x_{\text{T1w}} = M_{\text{MNI}\to\text{T1w}} \cdot \left[ x_{\text{MNI}} + u(x_{\text{MNI}}) \right]$ *(Excludes EPI rigid transform)* | Nearest-Neighbor (`order=0`) | Exact CC200 Atlas grid ($96 \times 96 \times 60$, 2.0 mm) |
+| **4. Composed EPI-to-MNI Resampling** | 4D Functional BOLD series | MNI / CC200 target template grid | Full composite mapping from native BOLD to MNI152 | $x_{\text{EPI}} = M_{\text{T1w}\to\text{EPI}} \cdot M_{\text{MNI}\to\text{T1w}} \cdot \left[ x_{\text{MNI}} + u(x_{\text{MNI}}) \right]$ | Continuous Trilinear (`order=1` / spline) | Exact CC200 Atlas grid ($63 \times 75 \times 61$, 3.0 mm isotropic) |
+| **5. Anatomical Mask Resampling** | Subject T1w anatomical space | MNI / CC200 target template grid | Structural tissue boundaries (WM / CSF) mapped to MNI | $x_{\text{T1w}} = M_{\text{MNI}\to\text{T1w}} \cdot \left[ x_{\text{MNI}} + u(x_{\text{MNI}}) \right]$ *(Excludes EPI rigid transform)* | Nearest-Neighbor (`order=0`) | Exact CC200 Atlas grid ($63 \times 75 \times 61$, 3.0 mm isotropic) |
 
 ### 1.2 Mathematical Proof of Composed Pullback
 
@@ -77,7 +77,7 @@ All 10 validation suites in `tests/unit/test_scientific_registration_validation.
 
 ### 3.1 CC200 Target Grid Enforcement
 - Both 4D BOLD series (`resample_4d_bold`) and tissue masks (`resample_mask_to_target`) require target spatial dimensions and affine matrices to be explicitly provided.
-- Resampled functional data matches the CC200 atlas geometry ($96 \times 96 \times 60$, voxel size $2.0 \times 2.0 \times 2.0\text{ mm}$).
+- Resampled functional data matches the canonical CC200 atlas geometry ($63 \times 75 \times 61$, voxel size $3.0 \times 3.0 \times 3.0\text{ mm}$).
 - Implicit resampling is strictly prohibited; geometry checks in `extract_cc200_timeseries` raise `ValueError` on any spatial discrepancy.
 
 ### 3.2 Chirality and Left-Right Reflection Prevention
