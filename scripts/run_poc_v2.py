@@ -667,6 +667,7 @@ def run_poc_v2_pipeline(
     atlas_mode: str = "synthetic_phantom",
     enforce_container_memory: bool = False,
     model_dir: Optional[Union[str, Path]] = None,
+    require_model_inference: bool = False,
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
     start_time = time.time()
@@ -693,6 +694,26 @@ def run_poc_v2_pipeline(
         allow_real_scans=allow_real_scans,
         manifest_path=manifest_path,
     )
+
+    # Downstream ML Model verification (fail-closed early check)
+    target_model_dir = model_dir or os.environ.get("NEUROADHD_MODEL_DIR")
+    frozen_pipe, frozen_clf = None, None
+    if require_model_inference:
+        if not target_model_dir:
+            raise RuntimeError(
+                "SAFETY VIOLATION: Model inference was explicitly requested (--require-model-inference), "
+                "but neither --model-dir was provided nor NEUROADHD_MODEL_DIR environment variable is configured."
+            )
+        from src.integration.model_verifier import verify_and_load_frozen_model
+        try:
+            frozen_pipe, frozen_clf = verify_and_load_frozen_model(target_model_dir)
+        except Exception as exc:
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Explicitly requested model inference failed verification: {exc}"
+            ) from exc
+    elif target_model_dir:
+        from src.integration.model_verifier import verify_and_load_frozen_model
+        frozen_pipe, frozen_clf = verify_and_load_frozen_model(target_model_dir)
 
     run_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     # Active staging directory for isolation: partial outputs will never be mistaken for successful runs
@@ -997,15 +1018,10 @@ def run_poc_v2_pipeline(
         feat_csv_path = sub_out_dir / "features_19900_fisher_z.csv"
         feat_df.to_csv(feat_csv_path, index=False)
 
-        # Optional Frozen Downstream ML Model Inference
-        target_model_dir = model_dir or os.environ.get("NEUROADHD_MODEL_DIR")
-        if target_model_dir:
-            print("\n[Downstream ML Integration] Verifying frozen model artifacts...")
-            from src.integration.model_verifier import (
-                run_frozen_inference,
-                verify_and_load_frozen_model,
-            )
-            frozen_pipe, frozen_clf = verify_and_load_frozen_model(target_model_dir)
+        # Downstream ML Model Inference (optional by default, mandatory when require_model_inference=True)
+        if frozen_pipe is not None and frozen_clf is not None:
+            print("\n[Downstream ML Integration] Executing zero-refit frozen model inference...")
+            from src.integration.model_verifier import run_frozen_inference
             pred_res = run_frozen_inference(z_vector, frozen_pipe, frozen_clf)
             pred_json_path = sub_out_dir / "model_prediction.json"
             with open(pred_json_path, "w", encoding="utf-8") as f:
@@ -1389,6 +1405,12 @@ def main():
         default=None,
         help="Optional directory containing frozen model artifacts (final_preprocessing_pipeline.joblib, final_model.joblib).",
     )
+    parser.add_argument(
+        "--require-model-inference",
+        action="store_true",
+        default=False,
+        help="Require downstream model inference to execute; fail closed if model artifacts are missing or unverified.",
+    )
 
     args = parser.parse_args()
 
@@ -1427,6 +1449,7 @@ def main():
             atlas_mode=args.atlas_mode,
             enforce_container_memory=args.enforce_container_memory,
             model_dir=args.model_dir,
+            require_model_inference=args.require_model_inference,
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:

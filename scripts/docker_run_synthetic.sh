@@ -13,7 +13,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 IMAGE_NAME="${IMAGE_NAME:-neuro_adhd_pipeline:v2}"
-TARGET_OUT="${1:-${PROJECT_ROOT}/outputs/docker_deployment}"
+
+# Parse command line arguments
+REQUIRE_MODEL_INFERENCE="${REQUIRE_MODEL_INFERENCE:-0}"
+POSITIONAL_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--require-model-inference" ]]; then
+        REQUIRE_MODEL_INFERENCE="1"
+    else
+        POSITIONAL_ARGS+=("$arg")
+    fi
+done
+
+TARGET_OUT="${POSITIONAL_ARGS[0]:-${PROJECT_ROOT}/outputs/docker_deployment}"
 mkdir -p "${TARGET_OUT}"
 OUTPUT_DIR="$(cd "${TARGET_OUT}" && pwd)"
 
@@ -27,19 +39,40 @@ if [[ -z "${NEUROADHD_HMAC_KEY:-}" ]]; then
     exit 1
 fi
 
-# Optional frozen model directory mount (read-only)
+# Optional / Mandatory frozen model directory mount (read-only)
 MODEL_MOUNT_ARGS=()
+RUNNER_MODEL_ARGS=()
+if [[ "${REQUIRE_MODEL_INFERENCE}" == "1" ]]; then
+    if [[ -z "${NEUROADHD_MODEL_DIR:-}" ]]; then
+        echo "ERROR: Integrated model inference was explicitly requested, but NEUROADHD_MODEL_DIR is unset or empty." >&2
+        exit 1
+    fi
+fi
+
 if [[ -n "${NEUROADHD_MODEL_DIR:-}" ]]; then
+    if [[ -L "${NEUROADHD_MODEL_DIR}" ]]; then
+        echo "ERROR: Symlink substitution detected at NEUROADHD_MODEL_DIR: ${NEUROADHD_MODEL_DIR}" >&2
+        exit 1
+    fi
     if [[ ! -d "${NEUROADHD_MODEL_DIR}" ]]; then
         echo "ERROR: Configured NEUROADHD_MODEL_DIR does not exist or is not a directory: ${NEUROADHD_MODEL_DIR}" >&2
         exit 1
     fi
     MODEL_DIR_RESOLVED="$(cd "${NEUROADHD_MODEL_DIR}" && pwd)"
+    if [[ -L "${MODEL_DIR_RESOLVED}/final_preprocessing_pipeline.joblib" ]] || [[ -L "${MODEL_DIR_RESOLVED}/final_model.joblib" ]]; then
+        echo "ERROR: Symlink substitution detected at model artifact (.joblib)" >&2
+        exit 1
+    fi
     if [[ ! -f "${MODEL_DIR_RESOLVED}/final_preprocessing_pipeline.joblib" ]] || [[ ! -f "${MODEL_DIR_RESOLVED}/final_model.joblib" ]]; then
         echo "ERROR: NEUROADHD_MODEL_DIR missing required frozen artifacts (.joblib)" >&2
         exit 1
     fi
     MODEL_MOUNT_ARGS=(-v "${MODEL_DIR_RESOLVED}:/opt/neuro_adhd/models:ro" -e NEUROADHD_MODEL_DIR="/opt/neuro_adhd/models")
+    RUNNER_MODEL_ARGS=(--model-dir /opt/neuro_adhd/models)
+fi
+
+if [[ "${REQUIRE_MODEL_INFERENCE}" == "1" ]]; then
+    RUNNER_MODEL_ARGS+=(--require-model-inference)
 fi
 
 echo "==========================================================================="
@@ -53,6 +86,7 @@ echo "Host Output Path:     ${OUTPUT_DIR}"
 if [[ -n "${NEUROADHD_MODEL_DIR:-}" ]]; then
     echo "Host Model Mount:     ${MODEL_DIR_RESOLVED} -> /opt/neuro_adhd/models:ro"
 fi
+echo "Require Model Infer:  ${REQUIRE_MODEL_INFERENCE}"
 echo "==========================================================================="
 
 # Validate canonical atlas file presence
@@ -77,7 +111,8 @@ docker run --rm \
     --mode synthetic \
     --atlas-mode canonical \
     --enforce-container-memory \
-    --output-dir /opt/neuro_adhd/outputs
+    --output-dir /opt/neuro_adhd/outputs \
+    "${RUNNER_MODEL_ARGS[@]}"
 
 echo "==========================================================================="
 echo "Container execution completed successfully."

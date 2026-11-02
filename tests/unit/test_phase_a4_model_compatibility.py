@@ -156,10 +156,10 @@ class TestSyntheticModelInterfaceSmoke(unittest.TestCase):
 
 
 class TestFrozenArtifactIntegrityAndDiscovery(unittest.TestCase):
-    """3. Frozen artifact discovery and integrity tests."""
+    """3. Frozen artifact discovery and integrity tests (Task 6 Cases A-G)."""
 
-    def test_missing_model_dir_raises_filenotfound(self):
-        """Calling verify_and_load_frozen_model without NEUROADHD_MODEL_DIR fails closed."""
+    def test_case_a_no_neuroadhd_model_dir_configured(self):
+        """Case A: Calling verify_and_load_frozen_model without NEUROADHD_MODEL_DIR fails closed."""
         old_val = os.environ.pop("NEUROADHD_MODEL_DIR", None)
         try:
             with self.assertRaises(FileNotFoundError) as ctx:
@@ -169,34 +169,93 @@ class TestFrozenArtifactIntegrityAndDiscovery(unittest.TestCase):
             if old_val is not None:
                 os.environ["NEUROADHD_MODEL_DIR"] = old_val
 
-    def test_corrupted_artifact_fails_closed(self):
-        """Corrupted or modified artifact files must fail SHA-256 verification."""
+    def test_case_b_model_directory_does_not_exist(self):
+        """Case B: Model directory does not exist fails closed."""
+        nonexistent = Path("/nonexistent/directory/for/neuro_adhd_models")
+        with self.assertRaises(FileNotFoundError) as ctx:
+            verify_and_load_frozen_model(nonexistent)
+        self.assertIn("does not exist", str(ctx.exception))
+
+    def test_case_c_pipeline_missing(self):
+        """Case C: Model directory exists but preprocessing pipeline is missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            model_file = tmp / "final_model.joblib"
+            model_file.write_bytes(b"dummy_model")
+            with self.assertRaises(FileNotFoundError) as ctx:
+                verify_and_load_frozen_model(tmp)
+            self.assertIn("pipeline artifact missing", str(ctx.exception))
+
+    def test_case_d_classifier_missing(self):
+        """Case D: Model directory exists but classifier is missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            pipe_file = tmp / "final_preprocessing_pipeline.joblib"
+            pipe_file.write_bytes(b"dummy_pipe")
+            with self.assertRaises(FileNotFoundError) as ctx:
+                verify_and_load_frozen_model(tmp)
+            self.assertIn("classifier artifact missing", str(ctx.exception))
+
+    def test_case_e_pipeline_checksum_mismatch(self):
+        """Case E: Pipeline checksum mismatch fails closed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             pipe_file = tmp / "final_preprocessing_pipeline.joblib"
             pipe_file.write_bytes(b"corrupted_pipeline_data")
             model_file = tmp / "final_model.joblib"
-            model_file.write_bytes(b"corrupted_model_data")
+            model_file.write_bytes(b"dummy_model_data")
 
             with self.assertRaises(ValueError) as ctx:
                 verify_and_load_frozen_model(tmp)
-            self.assertIn("SHA-256 mismatch", str(ctx.exception))
+            self.assertIn("Frozen preprocessing pipeline SHA-256 mismatch", str(ctx.exception))
 
-    def test_symlink_artifact_fails_closed(self):
-        """Symlinks are strictly prohibited for model directories and artifacts."""
+    def test_case_f_classifier_checksum_mismatch(self):
+        """Case F: Classifier checksum mismatch fails closed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            model_dir = os.environ.get("NEUROADHD_MODEL_DIR")
+            pipe_file = tmp / "final_preprocessing_pipeline.joblib"
+            model_file = tmp / "final_model.joblib"
+
+            if model_dir and (Path(model_dir) / "final_preprocessing_pipeline.joblib").is_file():
+                # Copy real pipeline so pipeline hash passes, then corrupt classifier
+                pipe_file.write_bytes((Path(model_dir) / "final_preprocessing_pipeline.joblib").read_bytes())
+                model_file.write_bytes(b"corrupted_classifier_bytes")
+                with self.assertRaises(ValueError) as ctx:
+                    verify_and_load_frozen_model(tmp)
+                self.assertIn("Frozen classifier SHA-256 mismatch", str(ctx.exception))
+            else:
+                pipe_file.write_bytes(b"corrupted_pipeline")
+                model_file.write_bytes(b"corrupted_classifier")
+                with self.assertRaises(ValueError) as ctx:
+                    verify_and_load_frozen_model(tmp)
+                self.assertIn("SHA-256 mismatch", str(ctx.exception))
+
+    def test_case_g_artifact_file_is_symlink(self):
+        """Case G: Symlinks are strictly prohibited for model directories and artifacts."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             real_file = tmp / "real.joblib"
             real_file.write_bytes(b"some content")
+
+            # Test 1: directory symlink
             sym_dir = tmp / "symlink_dir"
             sym_dir.symlink_to(tmp, target_is_directory=True)
-
             with self.assertRaises(RuntimeError) as ctx:
                 verify_and_load_frozen_model(sym_dir)
             self.assertIn("Symlink substitution detected", str(ctx.exception))
 
-    def test_frozen_artifact_checksums_and_architecture(self):
-        """Verify actual frozen artifact SHA-256 hashes and architecture if NEUROADHD_MODEL_DIR is set."""
+            # Test 2: file symlink inside real directory
+            sym_pipe = tmp / "final_preprocessing_pipeline.joblib"
+            sym_pipe.symlink_to(real_file)
+            real_model = tmp / "final_model.joblib"
+            real_model.write_bytes(b"some content")
+            with self.assertRaises(RuntimeError) as ctx:
+                verify_and_load_frozen_model(tmp)
+            self.assertIn("Symlink substitution detected at pipeline artifact", str(ctx.exception))
+
+    def test_case_h_authentic_model_artifacts_mounted_correctly(self):
+        """Case H: Verify authentic frozen artifact SHA-256 hashes and architecture if NEUROADHD_MODEL_DIR is set."""
         model_dir = os.environ.get("NEUROADHD_MODEL_DIR")
         if not model_dir or not (Path(model_dir) / "final_model.joblib").is_file():
             self.skipTest(
@@ -222,12 +281,34 @@ class TestFrozenArtifactIntegrityAndDiscovery(unittest.TestCase):
         self.assertEqual(list(model.classes_), [0, 1])
         self.assertEqual(model.n_features_in_, 100)
 
+    def test_require_model_inference_fails_closed_when_missing(self):
+        """Explicitly requiring model inference without valid model dir must fail closed."""
+        from scripts.run_poc_v2 import run_poc_v2_pipeline
+        old_val = os.environ.pop("NEUROADHD_MODEL_DIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                with self.assertRaises(RuntimeError) as ctx:
+                    run_poc_v2_pipeline(
+                        bold_path=tmp / "bold.nii.gz",
+                        bold_json_path=tmp / "bold.json",
+                        t1w_path=tmp / "t1w.nii.gz",
+                        atlas_path=tmp / "atlas.nii.gz",
+                        template_path=tmp / "template.nii.gz",
+                        output_dir=tmp / "out",
+                        require_model_inference=True,
+                    )
+                self.assertIn("SAFETY VIOLATION", str(ctx.exception))
+        finally:
+            if old_val is not None:
+                os.environ["NEUROADHD_MODEL_DIR"] = old_val
+
 
 class TestFrozenArtifactIntegration(unittest.TestCase):
-    """4. Actual frozen artifact integration tests (zero-refit inference pass)."""
+    """4. Actual frozen artifact integration tests (Case I: zero-refit inference pass)."""
 
-    def test_frozen_artifact_real_inference_pass(self):
-        """Verify end-to-end inference pass with real frozen artifacts when NEUROADHD_MODEL_DIR is set."""
+    def test_case_i_actual_synthetic_inference_completes_successfully(self):
+        """Case I: Verify end-to-end inference pass with real frozen artifacts when NEUROADHD_MODEL_DIR is set."""
         model_dir = os.environ.get("NEUROADHD_MODEL_DIR")
         if not model_dir or not (Path(model_dir) / "final_model.joblib").is_file():
             self.skipTest(
