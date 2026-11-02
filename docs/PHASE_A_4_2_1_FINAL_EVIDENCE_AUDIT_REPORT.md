@@ -6,7 +6,10 @@
 **Branch:** `main`  
 **Baseline Commit:** `26b944106407ad7d343ae74f9f92575c45d0740d`  
 **Phase A.4.2 Authoritative Commit:** `d6673c4ff7a1ac5f1116722acbca24783034fd65`  
-**Latest GitHub Actions CI Run:** [#41431929861](https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine/actions/runs/41431929861) — **Completed (`success`)**  
+**Phase A.4.2.1 Audit Reconciliation Commit:** `2ff75cd17d5ad34bb39d8425c6a303e8a2265641`  
+**Latest GitHub Actions CI Run:** [#41433992271](https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine/actions/runs/41433992271) — **Completed (`success`)**  
+*(Artifact Retained: `test-and-verification-evidence`)*  
+**Previous CI Run:** [#41431929861](https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine/actions/runs/41431929861) — **Completed (`success`)**  
 **Final Deployment Decision:** **`DEPLOYMENT_VERIFIED_WITH_FROZEN_MODEL`**  
 **Execution Policy:** **STRICTLY SYNTHETIC-ONLY (Zero Human/Real MRI Scans Ingested)**  
 
@@ -213,3 +216,4 @@ FINAL DEPLOYMENT STATUS: DEPLOYMENT_VERIFIED_WITH_FROZEN_MODEL
 - Governance: Strictly synthetic-only; real MRI execution remains permanently locked
 ================================================================================
 ```
+
