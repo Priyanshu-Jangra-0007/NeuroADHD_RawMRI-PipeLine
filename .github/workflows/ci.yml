@@ -35,3 +35,8 @@ jobs:
     - name: Run Synthetic End-to-End Runner Tests (scripts coverage)
       run: |
         pytest tests/integration/test_runner_poc_v2_synthetic.py --cov=scripts.run_poc_v2 --cov-report=term-missing --cov-report=xml:coverage-scripts.xml
+
+    - name: Build Container Image & Verify OS Memory Isolation
+      run: |
+        docker build -t neuro_adhd_pipeline:v2 .
+        ./scripts/verify_container_memory.sh

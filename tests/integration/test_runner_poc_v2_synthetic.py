@@ -635,6 +635,48 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
         for k in ["bold_nii", "bold_json", "t1w_nii", "mni_template", "cc200_atlas"]:
             self.assertIn(k, res["verified_hashes"])
 
+    def test_runner_enforce_container_memory_fails_on_unconstrained_host(self):
+        """Pipeline must fail closed when container memory isolation is requested on unconstrained host."""
+        with self.assertRaises(RuntimeError) as ctx:
+            run_poc_v2_pipeline(
+                bold_path=self.synth_paths["bold_nii"],
+                bold_json_path=self.synth_paths["bold_json"],
+                t1w_path=self.synth_paths["t1w_nii"],
+                atlas_path=self.synth_paths["cc200_atlas"],
+                template_path=self.synth_paths["mni_template"],
+                output_dir=self.output_dir,
+                subject_id=self.subject_id,
+                session_id=self.session_id,
+                max_memory_gb=2.5,
+                allow_real_scans=False,
+                manifest_path=self.synth_paths["synthetic_manifest"],
+                enforce_container_memory=True,
+            )
+        self.assertIn("MEMORY ISOLATION FAILURE", str(ctx.exception))
+
+    def test_runner_canonical_atlas_mode_validation(self):
+        """Pipeline in canonical atlas mode validates authentic CC200 atlas successfully."""
+        from src.parcellation.extractor import verify_canonical_cc200_atlas
+        authentic_atlas = Path("data/atlases/cc200_roi_atlas.nii.gz")
+        self.assertTrue(authentic_atlas.is_file())
+        res = verify_canonical_cc200_atlas(authentic_atlas)
+        self.assertTrue(res["verified"])
+        self.assertEqual(res["shape"], (63, 75, 61))
+        self.assertEqual(res["zooms"], (3.0, 3.0, 3.0))
+        self.assertEqual(res["n_rois"], 200)
+
+    def test_runner_canonical_atlas_mode_rejects_corrupted_atlas(self):
+        """Pipeline in canonical atlas mode rejects corrupted or modified atlas."""
+        from src.parcellation.extractor import verify_canonical_cc200_atlas
+        corrupted_path = self.work_dir / "corrupted_atlas.nii.gz"
+        # Save wrong shape / modified atlas
+        wrong_data = np.zeros((30, 30, 20), dtype=np.int32)
+        nib.save(nib.Nifti1Image(wrong_data, np.eye(4)), str(corrupted_path))
+
+        with self.assertRaises(ValueError) as ctx:
+            verify_canonical_cc200_atlas(corrupted_path)
+        self.assertIn("mismatch", str(ctx.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

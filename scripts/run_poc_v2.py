@@ -91,6 +91,11 @@ from src.preprocessing.segmentation import (
     validate_tissue_masks,
 )
 from src.validation.bids_validator import BIDSInputValidator
+from src.validation.memory_guard import (
+    DEFAULT_CONTAINER_MEMORY_LIMIT_BYTES,
+    get_cgroup_memory_stats,
+    verify_os_memory_isolation,
+)
 
 
 def compute_sha256(file_path: Union[str, Path]) -> str:
@@ -437,6 +442,7 @@ def generate_synthetic_phantom_session(
     session_id: str = "ses-1",
     t_vol: int = 60,
     seed: int = 42,
+    canonical_atlas_path: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Path]:
     """Construct a clean, valid synthetic BIDS session with anatomical and functional data."""
     np.random.seed(seed)
@@ -501,27 +507,84 @@ def generate_synthetic_phantom_session(
     nib.save(nib.Nifti1Image(t1_data, t1_affine), str(t1_nii_path))
 
     # 3. Target Standard Template & CC200 Atlas
-    target_shape = (30, 30, 20)
-    target_affine = np.diag([3.0, 3.0, 3.0, 1.0])
-    mni_data = np.zeros(target_shape, dtype=np.float32)
-    mni_data[epi_brain] = 100.0
+    if canonical_atlas_path is not None:
+        canonical_p = Path(canonical_atlas_path).resolve()
+        if not canonical_p.is_file():
+            raise FileNotFoundError(
+                f"Canonical CC200 atlas asset not found at '{canonical_p}'. "
+                "Deployment requires authentic canonical atlas file."
+            )
+        verify_canonical_cc200_atlas(canonical_p)
+        atlas_path = canonical_p
 
-    mni_path = template_dir / "MNI152_T1_3mm.nii.gz"
-    nib.save(nib.Nifti1Image(mni_data, target_affine), str(mni_path))
+        # Load authentic CC200 atlas parcels to construct matching synthetic data
+        canonical_img = nib.load(str(canonical_p))
+        canonical_atlas_data = np.asanyarray(canonical_img.dataobj, dtype=np.int32)
+        target_shape = CANONICAL_CC200_SHAPE
+        target_affine = CANONICAL_CC200_AFFINE
+        brain_mask = canonical_atlas_data > 0
 
-    # 200 CC200 Parcels
-    atlas_data = np.zeros(target_shape, dtype=np.int32)
-    brain_indices = np.argwhere(epi_brain)
-    n_brain = len(brain_indices)
-    chunk_size = max(1, n_brain // 200)
-    for i in range(200):
-        start = i * chunk_size
-        end = (i + 1) * chunk_size if i < 199 else n_brain
-        for coord in brain_indices[start:end]:
-            atlas_data[tuple(coord)] = i + 1
+        # Regenerate BOLD data matching canonical atlas space and all 200 parcels
+        bold_data = np.zeros((*target_shape, t_vol), dtype=np.float32)
+        for i in range(1, 201):
+            mask_i = (canonical_atlas_data == i)
+            n_vox = int(np.sum(mask_i))
+            if n_vox > 0:
+                for t in range(t_vol):
+                    bold_data[mask_i, t] = (
+                        100.0
+                        + np.sin(0.08 * t + i * 0.05) * 10.0
+                        + np.random.normal(0, 1.0, n_vox).astype(np.float32)
+                    )
+        nib.save(nib.Nifti1Image(bold_data, target_affine), str(bold_nii_path))
 
-    atlas_path = template_dir / "cc200_synthetic_atlas.nii.gz"
-    nib.save(nib.Nifti1Image(atlas_data, target_affine), str(atlas_path))
+        # Regenerate T1w data matching canonical atlas space
+        mx, my, mz = np.ogrid[: target_shape[0], : target_shape[1], : target_shape[2]]
+        mc = (target_shape[0] // 2, target_shape[1] // 2, target_shape[2] // 2)
+        ventricles = brain_mask & (((mx - mc[0]) ** 2 / 5 ** 2 + (my - mc[1]) ** 2 / 5 ** 2 + (mz - mc[2]) ** 2 / 5 ** 2) <= 1.0)
+        csf = ventricles
+        wm_core = brain_mask & (~csf) & (((mx - mc[0]) ** 2 / 12 ** 2 + (my - mc[1]) ** 2 / 15 ** 2 + (mz - mc[2]) ** 2 / 12 ** 2) <= 1.0)
+        gm = brain_mask & (~csf) & (~wm_core)
+        dist_sq = (mx - mc[0]) ** 2 + (my - mc[1]) ** 2 + (mz - mc[2]) ** 2
+        skull = (~brain_mask) & (dist_sq >= 28 ** 2) & (dist_sq <= 30 ** 2)
+
+        t1_data = np.zeros(target_shape, dtype=np.float32)
+        t1_data[csf] = 25.0 + np.random.normal(0, 2, np.sum(csf))
+        t1_data[gm] = 85.0 + np.random.normal(0, 3, np.sum(gm))
+        t1_data[wm_core] = 150.0 + np.random.normal(0, 3, np.sum(wm_core))
+        t1_data[skull] = 110.0 + np.random.normal(0, 3, np.sum(skull))
+        nib.save(nib.Nifti1Image(t1_data, target_affine), str(t1_nii_path))
+
+        # Standard MNI template matching canonical CC200 atlas grid
+        mni_data = np.zeros(target_shape, dtype=np.float32)
+        mni_data[brain_mask] = 100.0
+        mni_data[wm_core] = 150.0
+        mni_data[gm] = 85.0
+        mni_data[csf] = 25.0
+        mni_path = template_dir / "MNI152_T1_3mm.nii.gz"
+        nib.save(nib.Nifti1Image(mni_data, target_affine), str(mni_path))
+    else:
+        target_shape = (30, 30, 20)
+        target_affine = np.diag([3.0, 3.0, 3.0, 1.0])
+        mni_data = np.zeros(target_shape, dtype=np.float32)
+        mni_data[epi_brain] = 100.0
+
+        mni_path = template_dir / "MNI152_T1_3mm.nii.gz"
+        nib.save(nib.Nifti1Image(mni_data, target_affine), str(mni_path))
+
+        # 200 CC200 Parcels
+        atlas_data = np.zeros(target_shape, dtype=np.int32)
+        brain_indices = np.argwhere(epi_brain)
+        n_brain = len(brain_indices)
+        chunk_size = max(1, n_brain // 200)
+        for i in range(200):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < 199 else n_brain
+            for coord in brain_indices[start:end]:
+                atlas_data[tuple(coord)] = i + 1
+
+        atlas_path = template_dir / "cc200_synthetic_atlas.nii.gz"
+        nib.save(nib.Nifti1Image(atlas_data, target_affine), str(atlas_path))
 
     # All 5 files registered in synthetic manifest with resolved paths and hashes
     files_dict = {
@@ -602,10 +665,21 @@ def run_poc_v2_pipeline(
     allow_real_scans: bool = False,
     manifest_path: Optional[Union[str, Path]] = None,
     atlas_mode: str = "synthetic_phantom",
+    enforce_container_memory: bool = False,
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
     start_time = time.time()
     start_rss = check_process_memory_gb()
+
+    # Verify operating-system memory isolation
+    os_memory_info = verify_os_memory_isolation(
+        max_allowed_bytes=int(max_memory_gb * 1024 * 1024 * 1024),
+        require_enforcement=enforce_container_memory,
+    )
+    if os_memory_info["enforced"]:
+        print(f"[Memory Guard] OS Cgroup Memory Isolation: ENFORCED ({os_memory_info['memory_max_mib']:.1f} MiB max, cgroup v{os_memory_info['cgroup_version']})")
+    else:
+        print(f"[Memory Guard] OS Cgroup Memory Isolation: {os_memory_info['status']} ({os_memory_info['reason']})")
 
     # Safety Enforcement - fail closed across all inputs
     check_safety_guards(
@@ -981,7 +1055,14 @@ def run_poc_v2_pipeline(
         n_rois = int(signals.shape[1])
         constant_rois = int(np.count_nonzero(np.std(signals, axis=0, ddof=0) == 0.0))
 
-        gate1_passed = bool(peak_rss <= max_memory_gb)
+        cgroup_stats = get_cgroup_memory_stats()
+        cgroup_peak_bytes = cgroup_stats.get("memory_peak_bytes")
+        cgroup_peak_gb = (cgroup_peak_bytes / (1024.0 * 1024.0 * 1024.0)) if cgroup_peak_bytes else None
+
+        gate1_passed = bool(
+            peak_rss <= max_memory_gb
+            and (not enforce_container_memory or (os_memory_info["enforced"] and (cgroup_peak_gb is None or cgroup_peak_gb <= max_memory_gb)))
+        )
         gate2_passed = bool(tr > 0.0 and t_vol >= 50 and all(d > 0 for d in epi_shape))
         gate3_passed = bool(len(target_shape) == 3 and all(d > 0 for d in target_shape))
         affine_aligned = bool(np.allclose(resampled_bold.affine, target_affine, atol=1e-4))
@@ -1062,6 +1143,13 @@ def run_poc_v2_pipeline(
                 "peak_rss_gb": round(peak_rss, 4),
                 "peak_memory_ceiling_gb": float(max_memory_gb),
                 "runtime_seconds": round(runtime_sec, 2),
+                "cgroup_memory": {
+                    "enforced": os_memory_info["enforced"],
+                    "status": os_memory_info["status"],
+                    "cgroup_version": os_memory_info.get("cgroup_version"),
+                    "memory_max_mib": os_memory_info.get("memory_max_mib"),
+                    "memory_peak_mib": cgroup_stats.get("memory_peak_mib"),
+                },
             },
             "validation_gates": validation_gates,
             "output_artifacts": output_artifacts_dict,
@@ -1131,6 +1219,13 @@ def run_poc_v2_pipeline(
             "timestamp_utc": provenance_dict["timestamp_utc"],
             "runtime_seconds": runtime_sec,
             "peak_rss_gb": peak_rss,
+            "os_memory_isolation": {
+                "enforced": os_memory_info["enforced"],
+                "status": os_memory_info["status"],
+                "cgroup_version": os_memory_info.get("cgroup_version"),
+                "memory_max_mib": os_memory_info.get("memory_max_mib"),
+                "memory_peak_mib": cgroup_stats.get("memory_peak_mib"),
+            },
         }
         with open(sub_out_dir / "run_manifest.json", "w", encoding="utf-8") as rf:
             json.dump(run_manifest, rf, indent=2)
@@ -1260,6 +1355,18 @@ def main():
         default="synthetic_phantom",
         help="Atlas validation policy: 'synthetic_phantom' verifies against authenticated session manifest, 'canonical' verifies canonical CC200 checksum and geometry.",
     )
+    parser.add_argument(
+        "--canonical-atlas-path",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "atlases" / "cc200_roi_atlas.nii.gz",
+        help="Path to authentic canonical CC200 atlas (default: data/atlases/cc200_roi_atlas.nii.gz).",
+    )
+    parser.add_argument(
+        "--enforce-container-memory",
+        action="store_true",
+        default=False,
+        help="Fail closed if operating-system cgroup memory limit is unconfigured or exceeds ceiling.",
+    )
 
     args = parser.parse_args()
 
@@ -1273,12 +1380,14 @@ def main():
         print(f"[Synthetic Generation] Building synthetic BIDS session for {args.subject_id}...")
         phantom_scratch = args.output_dir / "synthetic_inputs"
         phantom_scratch.mkdir(parents=True, exist_ok=True)
+        canonical_atlas = args.canonical_atlas_path if args.atlas_mode == "canonical" else None
         synthetic_paths = generate_synthetic_phantom_session(
             phantom_scratch,
             subject_id=args.subject_id,
             session_id=args.session_id,
             t_vol=args.t_vol,
             seed=args.seed,
+            canonical_atlas_path=canonical_atlas,
         )
 
         res = run_poc_v2_pipeline(
@@ -1294,6 +1403,7 @@ def main():
             allow_real_scans=False,
             manifest_path=synthetic_paths.get("synthetic_manifest"),
             atlas_mode=args.atlas_mode,
+            enforce_container_memory=args.enforce_container_memory,
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:
