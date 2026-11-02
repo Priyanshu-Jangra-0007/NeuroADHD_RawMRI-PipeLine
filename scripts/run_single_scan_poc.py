@@ -26,10 +26,15 @@ from src.preprocessing.motion import build_friston_24_regressors, realign_4d_bol
 from src.preprocessing.nuisance import (
     build_confound_matrix,
     clean_functional_bold,
-    extract_compcor_components,
+    extract_acompcor_components,
 )
-from src.preprocessing.registration import normalize_to_mni, register_epi_to_t1w
+from src.preprocessing.registration import register_epi_to_t1w, register_t1w_to_mni
+from src.validation.authorization_gate import (
+    AuthorizationDeniedError,
+    ResearchAuthorizationGate,
+)
 from src.validation.bids_validator import BIDSInputValidator
+from scripts.run_poc_v2 import check_safety_guards
 
 
 def check_memory_headroom_gb() -> float:
@@ -42,6 +47,12 @@ def check_memory_headroom_gb() -> float:
 
 
 def run_poc():
+    # Enforce Phase A.7 fail-closed research authorization gate and safety guards
+    auth_gate = ResearchAuthorizationGate(base_dir=PROJECT_ROOT)
+    auth_gate.check_for_bypass_attempts()
+    auth_gate.check_execution_allowed(requested_mode="real", allow_real_scans=True)
+    check_safety_guards(subject_id="sub-2344857", allow_real_scans=True)
+
     start_time = time.time()
     print("=" * 70)
     print("NEUROADHD_RAWMRI — GATED SINGLE-SUBJECT PROOF OF CONCEPT (PHASE 2)")

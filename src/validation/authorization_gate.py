@@ -1,6 +1,6 @@
 """Research Authorization Gate & Supervisor Feedback Validation Engine.
 
-Phase A.6 Governance & Research Authorization Gatekeeper.
+Phase A.6 / A.7 Governance & Research Authorization Gatekeeper.
 Enforces fail-closed safety policy, validates machine-readable authorization registers,
 verifies physical evidence references, and guarantees that real participant MRI processing
 remains strictly disabled until all external institutional and supervisory approvals are verified.
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,7 @@ PROHIBITED_BYPASS_ENV_VARS = (
     "NEUROADHD_OVERRIDE_SAFETY",
     "NEUROADHD_FORCE_REAL_DATA",
     "NEUROADHD_DISABLE_AUTH_GATE",
+    "NEUROADHD_AUTH_OVERRIDE",
 )
 
 # Core requirements that can NEVER be marked NOT_APPLICABLE
@@ -48,6 +50,17 @@ NON_EXEMPT_REQUIREMENTS: Set[str] = {
     "SAFE-DEID-01", # De-identification protocol
     "SAFE-FACE-02", # Facial defacing audit
     "SAFE-STOR-03", # Encrypted storage & memory isolation
+}
+
+# Approved file extensions for documentary evidence
+ALLOWED_EVIDENCE_EXTENSIONS: Set[str] = {
+    ".pdf",
+    ".md",
+    ".txt",
+    ".json",
+    ".png",
+    ".jpg",
+    ".jpeg",
 }
 
 
@@ -68,14 +81,20 @@ class ResearchAuthorizationGate:
         self.schema_path = Path(schema_path).resolve() if schema_path else (self.base_dir / self.DEFAULT_SCHEMA_PATH).resolve()
 
     def check_for_bypass_attempts(self) -> None:
-        """Detect and reject any attempt to bypass safety guards via environment variables."""
-        for var_name in PROHIBITED_BYPASS_ENV_VARS:
-            val = os.environ.get(var_name)
-            if val is not None and val.strip().lower() in ("1", "true", "yes", "enabled", "bypass", "allow"):
-                raise AuthorizationBypassAttemptError(
-                    f"SAFETY VIOLATION: Unauthorized safety bypass attempt detected via environment variable '{var_name}={val}'. "
-                    "Environment variable overrides are strictly prohibited. The authorization gate fails closed."
-                )
+        """Detect and reject any attempt to bypass safety guards via environment variables.
+
+        Performs case-insensitive inspection across all environment keys and catches
+        non-standard truthy representations.
+        """
+        for env_k, env_v in os.environ.items():
+            k_clean = env_k.strip().upper()
+            if k_clean in PROHIBITED_BYPASS_ENV_VARS:
+                # Reject any non-empty value that is not explicitly falsy
+                if env_v is not None and env_v.strip().lower() not in ("", "0", "false", "no", "none", "off"):
+                    raise AuthorizationBypassAttemptError(
+                        f"SAFETY VIOLATION: Unauthorized safety bypass attempt detected via environment variable '{env_k}={env_v}'. "
+                        "Environment variable overrides are strictly prohibited. The authorization gate fails closed."
+                    )
 
     def load_register(self, register_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """Load and parse the machine-readable authorization register."""
@@ -148,7 +167,7 @@ class ResearchAuthorizationGate:
                 )
 
     def verify_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Inspect and verify an individual decision or requirement item."""
+        """Inspect and verify an individual decision or requirement item with conservative evidence checks."""
         item_id = item.get("id", "UNKNOWN_ID")
         status = item.get("status")
         valid_statuses = {"PENDING", "REVISION_REQUIRED", "REJECTED", "APPROVED", "NOT_APPLICABLE"}
@@ -181,38 +200,88 @@ class ResearchAuthorizationGate:
             if not selected_option or not isinstance(selected_option, str) or not selected_option.strip():
                 issues.append("Approved item missing 'selected_option'.")
 
-            # 4. Evidence reference must exist and point to an existing physical file
+            # 4. Mandatory evidence reference & cryptographic digest
             ev_ref = item.get("evidence_reference")
+            expected_sha = item.get("evidence_sha256")
+
             if not ev_ref or not isinstance(ev_ref, str) or not ev_ref.strip():
                 issues.append("Approved item missing mandatory 'evidence_reference'.")
             else:
-                # Check file existence relative to base_dir
-                ev_path = Path(ev_ref)
-                if not ev_path.is_absolute():
-                    ev_path = (self.base_dir / ev_path).resolve()
-                if not ev_path.exists():
-                    issues.append(f"Referenced evidence file does not exist: '{ev_ref}'.")
-                elif ev_path.is_symlink():
-                    issues.append(f"Referenced evidence file cannot be a symlink: '{ev_ref}'.")
+                ev_ref_str = ev_ref.strip()
+                raw_path = Path(ev_ref_str)
+                if raw_path.is_absolute():
+                    issues.append(
+                        f"Path traversal detected: Absolute paths are strictly prohibited for evidence references: '{ev_ref_str}'."
+                    )
                 else:
-                    evidence_verified = True
-                    # Check SHA-256 if specified
-                    expected_sha = item.get("evidence_sha256")
-                    if expected_sha:
+                    candidate_path = self.base_dir / raw_path
+
+                    # Symlink detection on raw candidate path and intermediate directories
+                    has_symlink = False
+                    try:
+                        if candidate_path.is_symlink():
+                            has_symlink = True
+                        curr = candidate_path
+                        while curr != curr.parent and curr != self.base_dir:
+                            if curr.is_symlink():
+                                has_symlink = True
+                                break
+                            curr = curr.parent
+                    except Exception:
+                        has_symlink = True
+
+                    if has_symlink:
+                        issues.append(
+                            f"Symlink substitution detected in evidence path '{ev_ref_str}'. "
+                            "Symlinks are strictly prohibited for approval evidence."
+                        )
+                    else:
                         try:
-                            h = hashlib.sha256()
-                            with open(ev_path, "rb") as ef:
-                                for chunk in iter(lambda: ef.read(65536), b""):
-                                    h.update(chunk)
-                            actual_sha = h.hexdigest().lower()
-                            if actual_sha != expected_sha.strip().lower():
+                            resolved_path = candidate_path.resolve(strict=False)
+                        except Exception as res_err:
+                            issues.append(f"Could not resolve evidence path '{ev_ref_str}': {res_err}")
+                            resolved_path = None
+
+                        if resolved_path is not None:
+                            # Path traversal assertion: must be strictly inside self.base_dir
+                            try:
+                                resolved_path.relative_to(self.base_dir)
+                                is_inside_repo = True
+                            except ValueError:
+                                is_inside_repo = False
+
+                            if not is_inside_repo:
                                 issues.append(
-                                    f"Evidence SHA-256 mismatch for '{ev_ref}'. Expected '{expected_sha}', got '{actual_sha}'."
+                                    f"Path traversal detected: Evidence reference '{ev_ref_str}' resolves outside repository root."
                                 )
-                                evidence_verified = False
-                        except Exception as ef_err:
-                            issues.append(f"Failed to read evidence file '{ev_path}': {ef_err}")
-                            evidence_verified = False
+                            elif not resolved_path.exists():
+                                issues.append(f"Referenced evidence file does not exist: '{ev_ref_str}'.")
+                            elif not resolved_path.is_file():
+                                issues.append(f"Referenced evidence must be a regular file, not a directory or device: '{ev_ref_str}'.")
+                            elif resolved_path.suffix.lower() not in ALLOWED_EVIDENCE_EXTENSIONS:
+                                issues.append(
+                                    f"Evidence file extension '{resolved_path.suffix}' is not permitted. "
+                                    f"Must be one of {sorted(ALLOWED_EVIDENCE_EXTENSIONS)}."
+                                )
+                            else:
+                                # Mandatory SHA-256 digest validation for approved item
+                                if not expected_sha or not isinstance(expected_sha, str) or len(expected_sha.strip()) != 64:
+                                    issues.append("Approved item requires a valid 64-character hex 'evidence_sha256'.")
+                                else:
+                                    try:
+                                        h = hashlib.sha256()
+                                        with open(resolved_path, "rb") as ef:
+                                            for chunk in iter(lambda: ef.read(65536), b""):
+                                                h.update(chunk)
+                                        actual_sha = h.hexdigest().lower()
+                                        if not hmac.compare_digest(actual_sha, expected_sha.strip().lower()):
+                                            issues.append(
+                                                f"Evidence SHA-256 mismatch for '{ev_ref_str}'. Expected '{expected_sha}', got '{actual_sha}'."
+                                            )
+                                        else:
+                                            evidence_verified = True
+                                    except Exception as ef_err:
+                                        issues.append(f"Failed to read evidence file '{resolved_path}': {ef_err}")
 
             # 5. Check for conflicting comments
             comments = str(item.get("reviewer_comments") or "").lower()
@@ -343,29 +412,7 @@ class ResearchAuthorizationGate:
         allow_real_scans: bool = False,
         register_path: Optional[Union[str, Path]] = None,
     ) -> Dict[str, Any]:
-        """Enforce the fail-closed real-data authorization gate before pipeline execution.
-
-        Parameters
-        ----------
-        requested_mode : str
-            Requested pipeline mode ("synthetic" or "real").
-        allow_real_scans : bool
-            Whether execution on real MRI scans was requested.
-        register_path : Optional[Union[str, Path]]
-            Custom path to authorization register (defaults to standard repo config).
-
-        Returns
-        -------
-        Dict[str, Any]
-            Authorization decision dictionary if execution is permitted.
-
-        Raises
-        ------
-        AuthorizationDeniedError
-            If real data execution is requested or attempted without verified authorization.
-        AuthorizationBypassAttemptError
-            If an unauthorized environment variable bypass is detected.
-        """
+        """Enforce the fail-closed real-data authorization gate before pipeline execution."""
         # Step 1: Detect and reject any environment variable bypass attempt
         self.check_for_bypass_attempts()
 
@@ -411,22 +458,56 @@ class ResearchAuthorizationGate:
         evidence_reference: Optional[str] = None,
         register_path: Optional[Union[str, Path]] = None,
     ) -> None:
-        """Append an auditable event to the authorization register audit trail."""
+        """Append an auditable event to the authorization register audit trail with strict sanitization."""
         target_file = Path(register_path).resolve() if register_path else self.register_path
         reg_data = self.load_register(target_file)
         self.validate_schema(reg_data)
 
-        # Disallow sensitive PHI keywords in reason or comments
-        prohibited_phi_terms = [
-            "patient", "hospital", "mrn", "birthdate", "ssn", "aadhaar", "address", "phone"
+        # Comprehensive sanitization against PHI/PII and historical subject identifiers
+        prohibited_terms = [
+            "patient",
+            "hospital",
+            "mrn",
+            "birthdate",
+            "ssn",
+            "aadhaar",
+            "address",
+            "phone",
+            "clinical",
+            "doctor",
+            "physician",
+            "medical_record",
+            "diagnosis",
+            "sub-2344857",
+            "2344857",
+            "peking",
+            "kki",
+            "nyu",
+            "abide",
+            "adhd200",
+            "adhd-200",
         ]
         text_to_check = f"{reason} {changed_by}".lower()
-        for term in prohibited_phi_terms:
+        for term in prohibited_terms:
             if term in text_to_check:
                 raise ValueError(
-                    f"AUDIT VIOLATION: PHI/PII keyword '{term}' detected. "
+                    f"AUDIT VIOLATION: Restricted identifier or PHI/PII keyword '{term}' detected. "
                     "Audit log entries must contain only de-identified, governance-related metadata."
                 )
+
+        # Sanitize against control character and newline injection in audit log fields
+        for field_name, field_val in [
+            ("event", event),
+            ("target_id", target_id),
+            ("previous_state", previous_state),
+            ("new_state", new_state),
+            ("changed_by", changed_by),
+            ("reason", reason),
+        ]:
+            if not isinstance(field_val, str) or not field_val.strip():
+                raise ValueError(f"AUDIT VIOLATION: Field '{field_name}' must be a non-empty string.")
+            if "\n" in field_val or "\r" in field_val or "\x00" in field_val:
+                raise ValueError(f"AUDIT VIOLATION: Log injection detected: Field '{field_name}' contains newline or control characters.")
 
         new_entry = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -444,4 +525,3 @@ class ResearchAuthorizationGate:
         with open(target_file, "w", encoding="utf-8") as f:
             json.dump(reg_data, f, indent=2)
             f.write("\n")
-
