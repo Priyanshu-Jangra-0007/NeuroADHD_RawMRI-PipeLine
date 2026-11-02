@@ -7,7 +7,7 @@ or resampling is permitted inside QC routines.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -268,3 +268,284 @@ def generate_parcellation_qc_overlay(
     plt.close(fig)
 
     return output_png_path
+
+
+def compute_registration_qc_metrics(
+    target_img: nib.Nifti1Image,
+    aligned_img: nib.Nifti1Image,
+    mask: Optional[nib.Nifti1Image] = None,
+    correlation_threshold: float = 0.70,
+    dice_threshold: float = 0.70,
+) -> Dict[str, Any]:
+    """Compute quantitative registration accuracy metrics between target and aligned images.
+
+    Evaluates:
+    - Pearson correlation (NCC proxy)
+    - Root-Mean-Square Error (RMSE)
+    - Binary Sørensen-Dice coefficient (at 10% maximum intensity)
+
+    Parameters
+    ----------
+    target_img : nib.Nifti1Image
+        Reference image in target space.
+    aligned_img : nib.Nifti1Image
+        Resampled image aligned to the target grid.
+    mask : Optional[nib.Nifti1Image]
+        Optional binary mask restricting metric evaluation.
+    correlation_threshold : float
+        Minimum Pearson correlation coefficient required for pass.
+    dice_threshold : float
+        Minimum Sørensen-Dice coefficient required for pass.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary with keys:
+        - "pearson_r": float
+        - "rmse": float
+        - "dice": float
+        - "qc_pass": bool
+        - "n_voxels_evaluated": int
+    """
+    validate_qc_grid_alignment(target_img, aligned_img, "target_img", "aligned_img")
+    if mask is not None:
+        validate_qc_grid_alignment(target_img, mask, "target_img", "mask")
+
+    t_data = np.asanyarray(target_img.dataobj, dtype=np.float32)
+    a_data = np.asanyarray(aligned_img.dataobj, dtype=np.float32)
+
+    if mask is not None:
+        roi = np.asanyarray(mask.dataobj) > 0
+    else:
+        roi = (np.abs(t_data) > 1e-4) | (np.abs(a_data) > 1e-4)
+
+    if not np.any(roi):
+        roi = np.ones(t_data.shape, dtype=bool)
+
+    t_vals = t_data[roi]
+    a_vals = a_data[roi]
+
+    # 1. Pearson correlation
+    std_t = float(np.std(t_vals))
+    std_a = float(np.std(a_vals))
+    if std_t > 1e-7 and std_a > 1e-7:
+        pearson_r = float(np.corrcoef(t_vals, a_vals)[0, 1])
+        if np.isnan(pearson_r):
+            pearson_r = 1.0 if np.allclose(t_vals, a_vals) else 0.0
+    else:
+        pearson_r = 1.0 if np.allclose(t_vals, a_vals) else 0.0
+
+    # 2. RMSE
+    rmse = float(np.sqrt(np.mean((t_vals - a_vals) ** 2)))
+
+    # 3. Sørensen-Dice
+    t_max = float(np.max(t_vals)) if len(t_vals) > 0 and np.max(t_vals) > 0 else 1.0
+    a_max = float(np.max(a_vals)) if len(a_vals) > 0 and np.max(a_vals) > 0 else 1.0
+    bin_t = t_vals > (0.1 * t_max)
+    bin_a = a_vals > (0.1 * a_max)
+
+    intersection = int(np.sum(bin_t & bin_a))
+    denom = int(np.sum(bin_t) + np.sum(bin_a))
+    dice = float((2.0 * intersection) / denom) if denom > 0 else 1.0
+
+    qc_pass = bool((pearson_r >= correlation_threshold) and (dice >= dice_threshold))
+
+    return {
+        "pearson_r": pearson_r,
+        "rmse": rmse,
+        "dice": dice,
+        "qc_pass": qc_pass,
+        "n_voxels_evaluated": int(np.sum(roi)),
+    }
+
+
+def generate_before_after_qc_figure(
+    target_img: nib.Nifti1Image,
+    before_img: nib.Nifti1Image,
+    after_img: nib.Nifti1Image,
+    output_png_path: Path,
+    title: str = "Registration Before vs After QC",
+) -> Path:
+    """Generate 3x3 orthogonal comparison panel: Target, Before Registration, After Registration.
+
+    Parameters
+    ----------
+    target_img : nib.Nifti1Image
+        Ground-truth or static reference image.
+    before_img : nib.Nifti1Image
+        Unregistered image on target grid (e.g., identity resample).
+    after_img : nib.Nifti1Image
+        Registered / transformed image on target grid.
+    output_png_path : Path
+        Destination PNG path.
+    title : str
+        Figure suptitle.
+
+    Returns
+    -------
+    Path
+        Path to generated QC figure.
+    """
+    output_png_path = Path(output_png_path)
+    output_png_path.parent.mkdir(parents=True, exist_ok=True)
+
+    validate_qc_grid_alignment(target_img, before_img, "target_img", "before_img")
+    validate_qc_grid_alignment(target_img, after_img, "target_img", "after_img")
+
+    t_data = np.asanyarray(target_img.dataobj, dtype=np.float32)
+    b_data = np.asanyarray(before_img.dataobj, dtype=np.float32)
+    a_data = np.asanyarray(after_img.dataobj, dtype=np.float32)
+
+    nx, ny, nz = t_data.shape[:3]
+    cx, cy, cz = nx // 2, ny // 2, nz // 2
+
+    fig, axes = plt.subplots(3, 3, figsize=(14, 12))
+    fig.suptitle(title, fontsize=15, fontweight="bold")
+
+    rows = [
+        ("Target Reference", t_data),
+        ("Before Registration", b_data),
+        ("After Registration", a_data),
+    ]
+
+    for row_idx, (row_label, data) in enumerate(rows):
+        sag = np.rot90(data[cx, :, :])
+        cor = np.rot90(data[:, cy, :])
+        ax_view = np.rot90(data[:, :, cz])
+
+        axes[row_idx, 0].imshow(sag, cmap="gray", origin="upper")
+        axes[row_idx, 0].set_ylabel(row_label, fontsize=12, fontweight="bold")
+        if row_idx == 0:
+            axes[row_idx, 0].set_title(f"Sagittal (x={cx})")
+        axes[row_idx, 0].axis("off")
+
+        axes[row_idx, 1].imshow(cor, cmap="gray", origin="upper")
+        if row_idx == 0:
+            axes[row_idx, 1].set_title(f"Coronal (y={cy})")
+        axes[row_idx, 1].axis("off")
+
+        axes[row_idx, 2].imshow(ax_view, cmap="gray", origin="upper")
+        if row_idx == 0:
+            axes[row_idx, 2].set_title(f"Axial (z={cz})")
+        axes[row_idx, 2].axis("off")
+
+    plt.tight_layout()
+    fig.savefig(output_png_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return output_png_path
+
+
+def generate_landmark_qc_overlay(
+    background_img: nib.Nifti1Image,
+    target_landmarks_mm: np.ndarray,
+    warped_landmarks_mm: np.ndarray,
+    output_png_path: Path,
+    max_allowed_tre_mm: float = 3.0,
+    title: str = "Landmark Alignment QC Overlay",
+) -> Tuple[Path, Dict[str, Any]]:
+    """Compute Target Registration Error (TRE) and generate visual landmark overlay.
+
+    Parameters
+    ----------
+    background_img : nib.Nifti1Image
+        Reference image in target space.
+    target_landmarks_mm : np.ndarray
+        (N, 3) coordinates of target landmarks in physical millimeters.
+    warped_landmarks_mm : np.ndarray
+        (N, 3) coordinates of transformed landmarks in physical millimeters.
+    output_png_path : Path
+        Destination PNG file path.
+    max_allowed_tre_mm : float
+        Maximum acceptable TRE threshold (mm).
+    title : str
+        Figure suptitle.
+
+    Returns
+    -------
+    Tuple[Path, Dict[str, Any]]
+        File path and dictionary with TRE metrics:
+        - "mean_tre_mm": float
+        - "max_tre_mm": float
+        - "median_tre_mm": float
+        - "max_allowed_tre_mm": float
+        - "qc_pass": bool
+        - "tre_errors_mm": List[float]
+    """
+    output_png_path = Path(output_png_path)
+    output_png_path.parent.mkdir(parents=True, exist_ok=True)
+
+    t_lms = np.asarray(target_landmarks_mm, dtype=np.float64)
+    w_lms = np.asarray(warped_landmarks_mm, dtype=np.float64)
+
+    if t_lms.ndim != 2 or t_lms.shape[1] != 3:
+        raise ValueError(f"target_landmarks_mm must have shape (N, 3), got {t_lms.shape}")
+    if w_lms.ndim != 2 or w_lms.shape[1] != 3:
+        raise ValueError(f"warped_landmarks_mm must have shape (N, 3), got {w_lms.shape}")
+    if len(t_lms) != len(w_lms):
+        raise ValueError(f"Number of landmarks mismatch: {len(t_lms)} vs {len(w_lms)}")
+
+    diffs = w_lms - t_lms
+    errors_mm = np.linalg.norm(diffs, axis=1)
+
+    mean_tre = float(np.mean(errors_mm)) if len(errors_mm) > 0 else 0.0
+    max_tre = float(np.max(errors_mm)) if len(errors_mm) > 0 else 0.0
+    median_tre = float(np.median(errors_mm)) if len(errors_mm) > 0 else 0.0
+    qc_pass = bool(max_tre <= max_allowed_tre_mm)
+
+    metrics = {
+        "mean_tre_mm": mean_tre,
+        "max_tre_mm": max_tre,
+        "median_tre_mm": median_tre,
+        "max_allowed_tre_mm": float(max_allowed_tre_mm),
+        "qc_pass": qc_pass,
+        "tre_errors_mm": errors_mm.tolist(),
+    }
+
+    # Convert mm coordinates to voxel coordinates on background_img
+    inv_affine = np.linalg.inv(background_img.affine)
+    t_vox = (inv_affine[:3, :3] @ t_lms.T).T + inv_affine[:3, 3]
+    w_vox = (inv_affine[:3, :3] @ w_lms.T).T + inv_affine[:3, 3]
+
+    bg_data = np.asanyarray(background_img.dataobj, dtype=np.float32)
+    nx, ny, nz = bg_data.shape[:3]
+    cx = int(np.clip(np.mean(t_vox[:, 0]), 0, nx - 1)) if len(t_vox) > 0 else nx // 2
+    cy = int(np.clip(np.mean(t_vox[:, 1]), 0, ny - 1)) if len(t_vox) > 0 else ny // 2
+    cz = int(np.clip(np.mean(t_vox[:, 2]), 0, nz - 1)) if len(t_vox) > 0 else nz // 2
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    status_str = "PASS" if qc_pass else "FAIL"
+    fig.suptitle(
+        f"{title}\nMean TRE: {mean_tre:.2f} mm | Max TRE: {max_tre:.2f} mm | Status: {status_str}",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    # 1. Sagittal (Y-Z plane, slice at x=cx)
+    axes[0].imshow(np.rot90(bg_data[cx, :, :]), cmap="gray", origin="upper")
+    axes[0].scatter(t_vox[:, 1], nz - 1 - t_vox[:, 2], c="lime", marker="o", s=40, label="Target LM")
+    axes[0].scatter(w_vox[:, 1], nz - 1 - w_vox[:, 2], c="red", marker="x", s=40, label="Warped LM")
+    axes[0].set_title(f"Sagittal Proj (x={cx})")
+    axes[0].legend(loc="lower right", fontsize=8)
+    axes[0].axis("off")
+
+    # 2. Coronal (X-Z plane, slice at y=cy)
+    axes[1].imshow(np.rot90(bg_data[:, cy, :]), cmap="gray", origin="upper")
+    axes[1].scatter(t_vox[:, 0], nz - 1 - t_vox[:, 2], c="lime", marker="o", s=40)
+    axes[1].scatter(w_vox[:, 0], nz - 1 - w_vox[:, 2], c="red", marker="x", s=40)
+    axes[1].set_title(f"Coronal Proj (y={cy})")
+    axes[1].axis("off")
+
+    # 3. Axial (X-Y plane, slice at z=cz)
+    axes[2].imshow(np.rot90(bg_data[:, :, cz]), cmap="gray", origin="upper")
+    axes[2].scatter(t_vox[:, 0], ny - 1 - t_vox[:, 1], c="lime", marker="o", s=40)
+    axes[2].scatter(w_vox[:, 0], ny - 1 - w_vox[:, 1], c="red", marker="x", s=40)
+    axes[2].set_title(f"Axial Proj (z={cz})")
+    axes[2].axis("off")
+
+    plt.tight_layout()
+    fig.savefig(output_png_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return output_png_path, metrics
+

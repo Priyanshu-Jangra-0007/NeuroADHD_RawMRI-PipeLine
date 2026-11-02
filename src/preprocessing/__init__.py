@@ -18,8 +18,15 @@ from src.preprocessing.nuisance import (
     extract_acompcor_components,
 )
 from src.preprocessing.qc import (
+    compute_registration_qc_metrics,
+    generate_before_after_qc_figure,
+    generate_coregistration_qc_overlay,
+    generate_landmark_qc_overlay,
+    generate_normalization_qc_overlay,
     generate_parcellation_qc_overlay,
     generate_registration_qc_overlay,
+    generate_tissue_mask_qc_overlay,
+    validate_qc_grid_alignment,
 )
 from src.preprocessing.registration import (
     compose_transformations,
@@ -58,5 +65,12 @@ __all__ = [
     "build_confound_matrix",
     "clean_functional_bold",
     "generate_registration_qc_overlay",
+    "generate_coregistration_qc_overlay",
+    "generate_normalization_qc_overlay",
+    "generate_tissue_mask_qc_overlay",
     "generate_parcellation_qc_overlay",
+    "compute_registration_qc_metrics",
+    "generate_before_after_qc_figure",
+    "generate_landmark_qc_overlay",
+    "validate_qc_grid_alignment",
 ]
