@@ -258,7 +258,7 @@ def check_safety_guards(
     for key, p_val in all_inputs.items():
         if p_val is not None:
             p_str = str(p_val).lower()
-            for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200"]:
+            for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200", "adhd200"]:
                 if kw in p_str:
                     raise RuntimeError(
                         f"SAFETY VIOLATION: Attempted to process real raw data at '{p_val}'. "
