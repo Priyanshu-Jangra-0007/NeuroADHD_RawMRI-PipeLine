@@ -288,7 +288,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if route.startswith("/api/"):
                 return self._error("API endpoint not found.", 404)
             self._serve_static(route)
-        except DashboardDataError as exc:
+        except (DashboardDataError, IntakeError) as exc:
             self._error(str(exc), 404)
         except (ValueError, TypeError) as exc:
             self._error(str(exc), 400)
