@@ -171,6 +171,8 @@ class IntakeService:
         max_file = MAX_SCAN_FILE_BYTES if kind == "scan" else MAX_REPORT_FILE_BYTES
         if content_length <= 0 or content_length > max_file:
             raise IntakeError(f"File size must be between 1 byte and {max_file // (1024 * 1024)} MB.")
+        if kind == "scan" and suffix == ".json" and content_length > 10 * 1024 * 1024:
+            raise IntakeError("BIDS JSON sidecars must be 10 MB or smaller.")
         prior_bytes = sum(int(item.get("size_bytes", 0)) for item in manifest.get("uploaded_files", []))
         if prior_bytes + content_length > MAX_SESSION_BYTES:
             raise IntakeError("The total upload size for this session exceeds the 8 GB limit.")
@@ -474,12 +476,15 @@ class IntakeService:
     def _extract_pdf(self, path: Path, report_dir: Path) -> tuple[str, str]:
         pdftotext = shutil.which("pdftotext")
         if pdftotext:
-            result = subprocess.run(
-                [pdftotext, "-layout", str(path), "-"],
-                capture_output=True, text=True, timeout=45, check=False,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout[:2_000_000], "PDF_TEXT_LAYER"
+            try:
+                result = subprocess.run(
+                    [pdftotext, "-layout", str(path), "-"],
+                    capture_output=True, text=True, timeout=45, check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout[:2_000_000], "PDF_TEXT_LAYER"
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         try:
             from pypdf import PdfReader
             reader = PdfReader(str(path), strict=False)
@@ -493,32 +498,41 @@ class IntakeService:
         if pdftoppm and tesseract:
             with tempfile.TemporaryDirectory(prefix="neuroadhd-pdf-") as temp_dir:
                 prefix = Path(temp_dir) / "page"
-                render = subprocess.run(
-                    [pdftoppm, "-f", "1", "-l", "5", "-scale-to", "1800", "-png", str(path), str(prefix)],
-                    capture_output=True, timeout=60, check=False,
-                )
-                if render.returncode == 0:
-                    texts = []
-                    for image_path in sorted(Path(temp_dir).glob("page-*.png")):
-                        ocr = subprocess.run(
-                            [tesseract, str(image_path), "stdout"],
-                            capture_output=True, text=True, timeout=45, check=False,
-                        )
-                        if ocr.returncode == 0:
-                            texts.append(ocr.stdout)
-                    joined = "\n\n".join(texts)
-                    if joined.strip():
-                        return joined[:2_000_000], "PDF_PAGE_OCR_FIRST_FIVE"
+                try:
+                    render = subprocess.run(
+                        [pdftoppm, "-f", "1", "-l", "5", "-scale-to", "1800", "-png", str(path), str(prefix)],
+                        capture_output=True, timeout=60, check=False,
+                    )
+                    if render.returncode == 0:
+                        texts = []
+                        for image_path in sorted(Path(temp_dir).glob("page-*.png")):
+                            try:
+                                ocr = subprocess.run(
+                                    [tesseract, str(image_path), "stdout"],
+                                    capture_output=True, text=True, timeout=45, check=False,
+                                )
+                            except (OSError, subprocess.TimeoutExpired):
+                                continue
+                            if ocr.returncode == 0:
+                                texts.append(ocr.stdout)
+                        joined = "\n\n".join(texts)
+                        if joined.strip():
+                            return joined[:2_000_000], "PDF_PAGE_OCR_FIRST_FIVE"
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
         return "", "PDF_TEXT_OR_OCR_ENGINE_NOT_AVAILABLE"
 
     def _extract_image(self, path: Path) -> tuple[str, str]:
         tesseract = shutil.which("tesseract")
         if not tesseract:
             return "", "TESSERACT_NOT_AVAILABLE"
-        result = subprocess.run(
-            [tesseract, str(path), "stdout"],
-            capture_output=True, text=True, timeout=45, check=False,
-        )
+        try:
+            result = subprocess.run(
+                [tesseract, str(path), "stdout"],
+                capture_output=True, text=True, timeout=45, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "", "OCR_FAILED"
         if result.returncode != 0:
             return "", "OCR_FAILED"
         return result.stdout[:2_000_000], "IMAGE_OCR"
