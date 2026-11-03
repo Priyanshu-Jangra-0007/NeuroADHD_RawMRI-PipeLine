@@ -457,7 +457,13 @@ class IntakeService:
         self._verify_staged_files(session_dir, manifest)
         extracted = []
         report_dir = session_dir / "reports"
+        if report_dir.is_symlink():
+            raise IntakeError("Report output directory is a symlink and is not safe.")
         report_dir.mkdir(exist_ok=True, mode=0o700)
+        try:
+            report_dir.resolve(strict=True).relative_to(session_dir)
+        except ValueError as exc:
+            raise IntakeError("Report output directory escapes its intake session.") from exc
         for record in manifest.get("uploaded_files", []):
             path = session_dir / record["storage_path"]
             if path.is_symlink() or not path.is_file():
@@ -471,10 +477,25 @@ class IntakeService:
                 text, method = self._extract_image(path)
             text_name = None
             if text.strip():
-                text_name = f"{path.stem}.extracted.txt"
+                text_name = f"{path.stem}-{record['sha256'][:10]}.extracted.txt"
                 text_path = report_dir / text_name
-                text_path.write_text(text, encoding="utf-8")
-                os.chmod(text_path, 0o600)
+                if text_path.is_symlink():
+                    raise IntakeError("Extracted report target is a symlink.")
+                fd, temporary_name = tempfile.mkstemp(prefix=".extract-", suffix=".tmp", dir=report_dir)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as out:
+                        out.write(text)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.replace(temporary_name, text_path)
+                    os.chmod(text_path, 0o600)
+                except Exception:
+                    try:
+                        os.unlink(temporary_name)
+                    except OSError:
+                        pass
+                    raise
             extracted.append({
                 "filename": path.name,
                 "status": "TEXT_EXTRACTED" if text.strip() else method,
@@ -594,7 +615,10 @@ class IntakeService:
         safe_name = _clean_filename(filename)
         if not safe_name.endswith(".extracted.txt"):
             raise IntakeError("Only extracted text artifacts can be downloaded.")
-        candidate = session_dir / "reports" / safe_name
+        report_root = session_dir / "reports"
+        if report_root.is_symlink() or not report_root.is_dir():
+            raise IntakeError("Extracted report directory is missing or unsafe.")
+        candidate = report_root / safe_name
         if candidate.is_symlink() or not candidate.is_file():
             raise IntakeError("Extracted report artifact was not found.")
         resolved = candidate.resolve(strict=True)
