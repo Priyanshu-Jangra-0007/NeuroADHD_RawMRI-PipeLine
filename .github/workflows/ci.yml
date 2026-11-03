@@ -28,6 +28,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
 
+    - name: Validate Dashboard and Pipeline Python/JavaScript
+      run: |
+        python -m py_compile scripts/serve_dashboard.py scripts/run_synthetic_cohort.py src/dashboard/service.py
+        node --check frontend/app.js
+
     - name: Build Container Image & Verify OS Memory Isolation
       run: |
         docker build -t neuro_adhd_pipeline:v2 .
