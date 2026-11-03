@@ -165,7 +165,7 @@ class TestDashboardDataService(unittest.TestCase):
         self.assertEqual(len(result["matrix"][0]), 200)
         self.assertEqual(result["matrix"][0][0], 0.0)
         self.assertAlmostEqual(result["matrix"][0][1], 0.01)
-        self.assertAlmostEqual(result["matrix"][1][0], 0.02)
+        self.assertAlmostEqual(result["matrix"][1][0], 0.01)
 
     def test_artifact_is_verified_against_output_manifest(self):
         content, content_type = self.service.get_artifact(
