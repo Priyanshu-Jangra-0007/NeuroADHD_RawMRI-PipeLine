@@ -5,3 +5,32 @@
 .model-toggle{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:2px 0 12px;border:1px solid #273852;border-radius:7px;background:#0c1627;cursor:pointer}.model-toggle input{accent-color:#6c9dff;width:15px;height:15px}.model-toggle strong,.model-toggle small{display:block}.model-toggle strong{font-size:10px;color:#c8d6eb}.model-toggle small{font-size:9px;color:#788ba8;margin-top:4px}.model-toggle:has(input:disabled){opacity:.55;cursor:not-allowed}
 
 .log-actions{display:flex;justify-content:flex-end;margin-top:10px}.run-log{margin-top:10px;border:1px solid #2b3a54;border-radius:8px;background:#080f1d;overflow:hidden}.log-head{display:flex;align-items:center;justify-content:space-between;padding:9px 11px;border-bottom:1px solid #26344b}.log-head strong{font-size:10px;color:#c9d7eb}.run-log pre{max-height:290px;overflow:auto;white-space:pre-wrap;word-break:break-word;padding:12px;margin:0;color:#91a8c7;font:10px/1.55 'DM Mono',monospace}
+
+
+/* MRI intake workspace */
+.intake-panel{margin:18px 0 15px;scroll-margin-top:18px}
+.intake-safety{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;margin:14px 0;background:#30281b;border:1px solid #67512c;border-radius:8px;color:#edc77b;font-size:10px;line-height:1.6}
+.intake-safety strong{white-space:nowrap;color:#ffe0a2}
+.intake-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:12px;margin-top:15px}
+.intake-option{display:flex;flex-direction:column;align-items:flex-start;min-width:0;padding:16px;border:1px solid #283851;border-radius:9px;background:#0c1627}
+.intake-option.intake-featured{border-color:#416c68;background:linear-gradient(160deg,rgba(31,92,81,.18),#0c1627 58%)}
+.intake-option-icon{display:grid;place-items:center;width:34px;height:34px;border:1px solid #334762;border-radius:9px;background:#14233a;color:#8fb5ed;font-size:20px}
+.intake-option-tag{margin-top:12px;color:#78cbb3;font:600 8px 'DM Mono';letter-spacing:1px}
+.intake-option h3{margin:6px 0 7px;color:#e1ebfa;font-size:14px}
+.intake-option p{min-height:58px;margin:0 0 12px;color:#8fa1bc;font-size:10px;line-height:1.65}
+.file-picker{display:flex;flex-direction:column;gap:8px;width:100%;padding:10px;border:1px dashed #3c5272;border-radius:7px;background:#101e32;color:#b8c9e2;font-size:10px;cursor:pointer}
+.file-picker input{width:100%;max-width:100%;color:#8398b7;font-size:9px}
+.intake-option button{width:100%;margin-top:10px}
+.intake-option>small{margin-top:10px;color:#7386a2;font-size:9px;line-height:1.55}
+.intake-option code{color:#b1caff}
+.secondary-button{border:1px solid #3b5273;background:#172943;border-radius:7px;padding:10px 13px;color:#c5d6f0;font-size:10px;font-weight:700}
+.secondary-button:hover{border-color:#7196cd;background:#1a3151}
+.intake-progress{margin-top:13px;padding:11px 13px;border:1px solid #344c6c;border-radius:7px;background:#0d1b2e;color:#a9c4e7;font:10px/1.6 'DM Mono'}
+.intake-result{margin-top:13px;padding:13px;border:1px solid #2e415e;border-radius:8px;background:#091321}
+.intake-result-head{display:flex;justify-content:space-between;align-items:center;color:#dce8f8;font-size:11px}
+.intake-result pre{max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:12px 0 0;padding:12px;border-radius:6px;background:#050b14;color:#9eb2cf;font:9px/1.55 'DM Mono'}
+.intake-artifacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.intake-artifacts a{color:#9cc1ff;font-size:10px;text-decoration:none}
+.intake-artifacts a:hover{text-decoration:underline}
+@media(max-width:1050px){.intake-grid{grid-template-columns:1fr 1fr}.intake-option.intake-featured{grid-column:1/-1}}
+@media(max-width:650px){.intake-grid{grid-template-columns:1fr}.intake-option.intake-featured{grid-column:auto}.intake-option p{min-height:0}.intake-safety{display:block}.intake-safety strong{display:block;margin-bottom:3px}}
