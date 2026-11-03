@@ -20,11 +20,14 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from src.intake.service import IntakeError, IntakeService
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 OUTPUT_ROOT = PROJECT_ROOT / "outputs" / "dashboard_cohorts"
+INTAKE_ROOT = PROJECT_ROOT / "outputs" / "intake_sessions"
 RUNNER = PROJECT_ROOT / "scripts" / "run_synthetic_cohort.py"
 MAX_REQUEST_BYTES = 4096
 
@@ -34,6 +37,7 @@ class DashboardApplication:
         from src.dashboard.service import DashboardDataService
 
         self.service = DashboardDataService(OUTPUT_ROOT)
+        self.intake = IntakeService(INTAKE_ROOT)
         self._lock = threading.Lock()
         self._active: Dict[str, Dict[str, Any]] = {}
         self._ephemeral_integrity_key = os.environ.get("NEUROADHD_HMAC_KEY") or os.environ.get("NEUROADHD_INTEGRITY_KEY")
@@ -249,10 +253,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             if route == "/api/health":
                 return self._send_json(APP.health())
+            if route == "/api/intake/sessions":
+                return self._send_json({"sessions": APP.intake.list_sessions()})
             if route == "/api/runs":
                 return self._send_json({"runs": APP.service.list_cohorts()})
 
             parts = [unquote(part) for part in route.strip("/").split("/") if part]
+            if len(parts) == 4 and parts[:2] == ["api", "intake"] and parts[2] == "sessions":
+                return self._send_json(APP.intake.get_session(parts[3]))
             if len(parts) >= 3 and parts[0:2] == ["api", "runs"]:
                 cohort_id = parts[2]
                 if len(parts) == 3:
@@ -284,42 +292,90 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._error(f"Dashboard request failed: {type(exc).__name__}.", 500)
 
-    def do_POST(self) -> None:
-        if urlsplit(self.path).path != "/api/runs":
-            return self._error("API endpoint not found.", 404)
+    def _local_request_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed_origin = urlsplit(origin)
+            origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
+            if (
+                parsed_origin.scheme != "http"
+                or parsed_origin.hostname not in ("127.0.0.1", "localhost")
+                or origin_port != self.server.server_port
+            ):
+                self._error("Cross-origin requests are not allowed.", 403)
+                return False
+        host_header = self.headers.get("Host", "")
+        parsed_host = urlsplit(f"//{host_header}")
+        if parsed_host.hostname not in ("127.0.0.1", "localhost"):
+            self._error("Dashboard Host header is not allowed.", 403)
+            return False
+        return True
+
+    def _content_length(self, maximum: int, minimum: int = 1) -> Optional[int]:
         try:
-            # The dashboard is local-only; reject cross-origin browser submissions
-            # to prevent another website from starting runs in the user's browser.
-            origin = self.headers.get("Origin")
-            if origin:
-                parsed_origin = urlsplit(origin)
-                origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
-                if (
-                    parsed_origin.scheme != "http"
-                    or parsed_origin.hostname not in ("127.0.0.1", "localhost")
-                    or origin_port != self.server.server_port
-                ):
-                    return self._error("Cross-origin run requests are not allowed.", 403)
-            host_header = self.headers.get("Host", "")
-            parsed_host = urlsplit(f"//{host_header}")
-            if parsed_host.hostname not in ("127.0.0.1", "localhost"):
-                return self._error("Dashboard Host header is not allowed.", 403)
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > MAX_REQUEST_BYTES:
-                return self._error("Request body is missing or too large.", 413)
+        except ValueError:
+            self._error("Content-Length must be an integer.", 400)
+            return None
+        if length < minimum or length > maximum:
+            self._error(f"Request body must be between {minimum} bytes and {maximum} bytes.", 413)
+            return None
+        return length
+
+    def do_POST(self) -> None:
+        if not self._local_request_allowed():
+            return
+        parsed = urlsplit(self.path)
+        route = parsed.path
+        try:
+            if route == "/api/intake/sessions":
+                length = self._content_length(MAX_REQUEST_BYTES)
+                if length is None:
+                    return
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(payload, dict) or set(payload) != {"kind"}:
+                    return self._error("Request body must contain only kind: scan or report.")
+                result = APP.intake.create_session(payload["kind"])
+                return self._send_json(result, status=201)
+
+            parts = [unquote(part) for part in route.strip("/").split("/") if part]
+            if len(parts) == 5 and parts[:2] == ["api", "intake"] and parts[2] == "sessions":
+                session_id, action = parts[3], parts[4]
+                if action == "files":
+                    # File bytes are streamed to disk; they are not buffered in process memory.
+                    length = self._content_length(2 * 1024 * 1024 * 1024)
+                    if length is None:
+                        return
+                    filename = unquote(self.headers.get("X-Upload-Filename", ""))
+                    result = APP.intake.upload_file(session_id, filename, self.rfile, length)
+                    return self._send_json(result, status=201)
+                if action == "validate":
+                    result = APP.intake.validate_scan_session(session_id)
+                    return self._send_json(result)
+                if action == "process-reports":
+                    result = APP.intake.process_report_session(session_id)
+                    return self._send_json(result)
+            if route != "/api/runs":
+                return self._error("API endpoint not found.", 404)
+
+            length = self._content_length(MAX_REQUEST_BYTES)
+            if length is None:
+                return
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 return self._error("Request body must be a JSON object.")
             result = APP.start_run(payload)
             self._send_json(result, status=202)
+        except IntakeError as exc:
+            self._error(str(exc), 400)
         except json.JSONDecodeError:
-            self._error("Request body must be valid JSON.")
+            self._error("Request body must be valid JSON.", 400)
         except ValueError as exc:
             self._error(str(exc), 400)
         except RuntimeError as exc:
             self._error(str(exc), 409)
         except Exception as exc:
-            self._error(f"Could not start synthetic run: {type(exc).__name__}.", 500)
+            self._error(f"Dashboard request failed: {type(exc).__name__}.", 500)
 
     def _serve_static(self, route: str) -> None:
         file_map = {
