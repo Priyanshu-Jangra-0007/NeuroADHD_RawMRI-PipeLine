@@ -286,7 +286,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/api/runs":
             return self._error("API endpoint not found.", 404)
         try:
-            length = int(self.headers.get("Content-Length", "0"))
+            # The dashboard is local-only; reject cross-origin browser submissions
+            # to prevent another website from starting runs in the user's browser.
+            origin = self.headers.get("Origin")
+            if origin:
+                parsed_origin = urlsplit(origin)
+                origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
+                if (
+                    parsed_origin.scheme != "http"
+                    or parsed_origin.hostname not in ("127.0.0.1", "localhost")
+                    or origin_port != self.server.server_port
+                ):
+                    return self._error("Cross-origin run requests are not allowed.", 403)
+            host_header = self.headers.get("Host", "")
+            parsed_host = urlsplit(f"//{host_header}")
+            if parsed_host.hostname not in ("127.0.0.1", "localhost"):
+                return self._error("Dashboard Host header is not allowed.", 403)
+            length = int(self.headers.get("Content-Length", "0")
             if length <= 0 or length > MAX_REQUEST_BYTES:
                 return self._error("Request body is missing or too large.", 413)
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
