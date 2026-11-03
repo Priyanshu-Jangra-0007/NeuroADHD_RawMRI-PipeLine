@@ -72,6 +72,17 @@ RAW RESTING-STATE fMRI SCAN (BIDS format: *_bold.nii.gz + *.json)
 - **Disk Space**: 274 GiB available SSD storage
 - **Python**: Python 3.10+ / 3.11+
 
+### 4.2 Installation
+
+```bash
+# Create and activate an isolated virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install pinned dependencies
+pip install -r requirements-lock.txt
+```
+
 ### 4.3 Local Dashboard and MRI Intake
 
 Start the local dashboard:
@@ -84,16 +95,6 @@ Open http://127.0.0.1:8765. The preferred upload is one complete BIDS-style sess
 
 Uploads are staged locally under outputs/intake_sessions/. This local intake feature does not authorize or launch real-scan preprocessing.
 
-### 4.2 Installation (For Future Testing)
-```bash
-# Create and activate an isolated virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install validated dependencies
-pip install -r requirements.txt
-```
-
 ---
 
 ## 5. Input and Output Specifications
@@ -102,7 +103,7 @@ pip install -r requirements.txt
 - BIDS-formatted directory containing:
   - 4D functional BOLD scan (`*_task-rest_bold.nii.gz`) with $T \ge 50$ timepoints.
   - JSON sidecar (`*_task-rest_bold.json`) containing `RepetitionTime` ($0.5 \le T_R \le 5.0\text{ s}$).
-  - Optional anatomical scan (`*_T1w.nii.gz`) for boundary-based coregistration.
+  - Required anatomical scan (`*_T1w.nii.gz`) for anatomical processing and registration.
 
 ### 5.2 Intended Outputs
 - Cleaned ROI timeseries: `roi_CC200.csv` (200 rows $\times$ $T$ columns).
