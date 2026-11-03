@@ -92,6 +92,7 @@
               </label>
             </div>
             <div class="run-note"><span>ⓘ</span><span>Subjects are processed sequentially to limit memory use. Each run is checkpointed and its output hashes are verified.</span></div>
+            <label class="model-toggle"><input id="modelInference" type="checkbox" disabled><span><strong>Include frozen model inference</strong><small id="modelAvailability">Available when the trusted model is mounted on the dashboard server.</small></span></label>
             <button class="primary-button" id="runButton" type="submit"><span class="button-play">▶</span> Run MRI pipeline <span class="button-arrow">→</span></button>
           </form>
           <div class="run-progress hidden" id="runProgress">
