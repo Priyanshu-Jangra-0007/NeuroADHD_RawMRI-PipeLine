@@ -30,7 +30,7 @@ jobs:
 
     - name: Validate Dashboard and Pipeline Python/JavaScript
       run: |
-        python -m py_compile scripts/serve_dashboard.py scripts/run_synthetic_cohort.py src/dashboard/service.py
+        python -m py_compile scripts/serve_dashboard.py scripts/run_synthetic_cohort.py src/dashboard/service.py src/intake/service.py
         node --check frontend/app.js
 
     - name: Build Container Image & Verify OS Memory Isolation
