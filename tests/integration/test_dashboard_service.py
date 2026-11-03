@@ -144,6 +144,13 @@ class TestDashboardDataService(unittest.TestCase):
         self.assertEqual(detail["model_prediction"]["evaluation_mode"], "SYNTHETIC_DEMONSTRATION_ONLY")
         self.assertEqual(detail["model_prediction"]["class_label"], "Control")
 
+
+    def test_tampered_model_prediction_is_not_silently_hidden(self):
+        prediction_path = self.run_dir / "model_prediction.json"
+        prediction_path.write_text('{"class_label":"ADHD"}', encoding="utf-8")
+        with self.assertRaisesRegex(DashboardDataError, "integrity"):
+            self.service.get_subject_detail(self.cohort_id, self.subject_id)
+
     def test_roi_timeseries_uses_exported_roi_rows_and_time_columns(self):
         result = self.service.get_timeseries(self.cohort_id, self.subject_id, 7)
         self.assertEqual(result["n_timepoints"], 3)
