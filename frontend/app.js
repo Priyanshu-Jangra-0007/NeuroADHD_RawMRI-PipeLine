@@ -297,6 +297,74 @@ function drawHeatmap(canvas, matrix) {
   ctx.drawImage(temp, 0, 0, canvas.width, canvas.height);
 }
 
+function renderIntakeResult(sessionId, result) {
+  $("intakeResult").classList.remove("hidden");
+  $("intakeResultTitle").textContent = `${result.kind === "report" ? "Report extraction" : "MRI scan validation"} · ${result.status || result.validation?.status || result.report_extraction?.status || "COMPLETE"}`;
+  $("intakeResultText").textContent = JSON.stringify({ session_id: sessionId, ...result }, null, 2);
+  const links = $("intakeArtifactLinks");
+  links.replaceChildren();
+  const reports = result.report_extraction?.files || [];
+  reports.filter((item) => item.text_artifact).forEach((item) => {
+    const link = document.createElement("a");
+    const filename = item.text_artifact.split("/").pop();
+    link.href = `/api/intake/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(filename)}`;
+    link.textContent = `Download extracted text: ${item.filename}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    links.appendChild(link);
+  });
+  $("intakeResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function uploadIntake(kind, files, button) {
+  if (!files || !files.length) {
+    showToast("Choose at least one file first.");
+    return;
+  }
+  const progress = $("intakeProgress");
+  button.disabled = true;
+  progress.classList.remove("hidden");
+  let sessionId = null;
+  try {
+    progress.textContent = "Creating a secure local intake session…";
+    const created = await api("/api/intake/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    sessionId = created.session_id;
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      progress.textContent = `Uploading ${index + 1} of ${files.length}: ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`;
+      await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/files`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Upload-Filename": encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+    }
+    progress.textContent = kind === "scan"
+      ? "Checking NIfTI dimensions, BOLD metadata and required scan pairing…"
+      : "Extracting report text with locally installed PDF/OCR tools…";
+    const action = kind === "scan" ? "validate" : "process-reports";
+    const result = await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/${action}`, {
+      method: "POST",
+    });
+    renderIntakeResult(sessionId, result);
+    progress.textContent = `Intake complete · session ${sessionId}`;
+    showToast(kind === "scan" ? "MRI files uploaded and validation completed." : "Report upload and extraction completed.");
+  } catch (error) {
+    progress.textContent = sessionId
+      ? `Upload stopped. Intake session ${sessionId} was retained for review. ${error.message}`
+      : `Could not create intake session. ${error.message}`;
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function startRun(event) {
   event.preventDefault();
   const button = $("runButton");
@@ -353,6 +421,18 @@ async function init() {
 }
 
 $("runForm").addEventListener("submit", startRun);
+$("uploadZipButton").addEventListener("click", () => {
+  const files = $("sessionZipInput").files;
+  if (files.length !== 1) return showToast("Choose one complete MRI session ZIP.");
+  uploadIntake("scan", files, $("uploadZipButton"));
+});
+$("uploadFilesButton").addEventListener("click", () => {
+  uploadIntake("scan", $("scanFilesInput").files, $("uploadFilesButton"));
+});
+$("uploadReportsButton").addEventListener("click", () => {
+  uploadIntake("report", $("reportFilesInput").files, $("uploadReportsButton"));
+});
+$("closeIntakeResult").addEventListener("click", () => $("intakeResult").classList.add("hidden"));
 $("refreshRuns").addEventListener("click", refreshRuns);
 $("subjectSelect").addEventListener("change", (event) => loadSubject(event.target.value));
 $("roiSelect").addEventListener("change", () => loadTimeseries().catch((e) => showToast(e.message)));

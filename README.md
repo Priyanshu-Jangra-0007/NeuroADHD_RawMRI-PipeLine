@@ -20,14 +20,14 @@ Ingesting raw 4D resting-state fMRI scans in BIDS format, executing standardized
 
 ---
 
-## 2. Current Status: PHASE 1 ONLY
+## 2. Current Status: SYNTHETIC PIPELINE + LOCAL MRI INTAKE
 
 > [!IMPORTANT]
-> **STATUS: PHASE 1 COMPLETED (SPECIFICATION, AUDIT & ARCHITECTURE)**
-> 
-> **Raw scan processing is NOT YET OPERATIONAL in this phase.**
-> In accordance with strict project rules, Phase 1 is restricted to read-only audits, parameter cataloging, architecture design, and test planning.
-> No raw scans have been preprocessed, no models have been retrained, and no code has been merged into the existing NeuroADHD ecosystem.
+> **STATUS: Synthetic preprocessing demonstration and local upload validation are implemented; real-participant processing remains locked.**
+>
+> The local dashboard accepts complete BIDS-style MRI session ZIP files, individual NIfTI/DICOM files, and separate PDF/JPEG/PNG report uploads. It validates scan structure, NIfTI dimensions and BOLD JSON metadata. Report text extraction uses optional local PDF/OCR tools.
+>
+> **A successful upload validation is not a successful preprocessing run.** Real-scan preprocessing, DICOM conversion, and real-participant model inference remain disabled by the research authorization gate. The synthetic runner continues to process generated synthetic data only.
 
 ---
 
@@ -72,15 +72,28 @@ RAW RESTING-STATE fMRI SCAN (BIDS format: *_bold.nii.gz + *.json)
 - **Disk Space**: 274 GiB available SSD storage
 - **Python**: Python 3.10+ / 3.11+
 
-### 4.2 Installation (For Future Testing)
+### 4.2 Installation
+
 ```bash
 # Create and activate an isolated virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install validated dependencies
-pip install -r requirements.txt
+# Install pinned dependencies
+pip install -r requirements-lock.txt
 ```
+
+### 4.3 Local Dashboard and MRI Intake
+
+Start the local dashboard:
+
+```bash
+python scripts/serve_dashboard.py
+```
+
+Open http://127.0.0.1:8765. The preferred upload is one complete BIDS-style session ZIP containing a 4D resting-state BOLD NIfTI, its JSON sidecar, and a 3D T1w NIfTI. Individual NIfTI/DICOM files and separate PDF/JPEG/PNG reports are also accepted. See [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md) for input structure, validation rules, report extraction prerequisites, limits, and safety boundaries.
+
+Uploads are staged locally under outputs/intake_sessions/. This local intake feature does not authorize or launch real-scan preprocessing.
 
 ---
 
@@ -90,7 +103,7 @@ pip install -r requirements.txt
 - BIDS-formatted directory containing:
   - 4D functional BOLD scan (`*_task-rest_bold.nii.gz`) with $T \ge 50$ timepoints.
   - JSON sidecar (`*_task-rest_bold.json`) containing `RepetitionTime` ($0.5 \le T_R \le 5.0\text{ s}$).
-  - Optional anatomical scan (`*_T1w.nii.gz`) for boundary-based coregistration.
+  - Required anatomical scan (`*_T1w.nii.gz`) for anatomical processing and registration.
 
 ### 5.2 Intended Outputs
 - Cleaned ROI timeseries: `roi_CC200.csv` (200 rows $\times$ $T$ columns).
@@ -119,6 +132,7 @@ pytest tests/unit -v
 ## 7. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
+- [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
 - [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md): Executive summary, scope, and non-clinical disclaimer.
 - [EXISTING_PROJECT_ARCHITECTURE.md](docs/EXISTING_PROJECT_ARCHITECTURE.md): Audit of existing code, models, and endpoints.
 - [HISTORICAL_PREPROCESSING_AUDIT.md](docs/HISTORICAL_PREPROCESSING_AUDIT.md): Catalog of historical C-PAC parameters and evidence.
@@ -136,6 +150,13 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 8. Changelog
+
+- **2026-11-03 (Local MRI Intake UI & Validation)**:
+  - Added the complete BIDS-style MRI session ZIP as the primary dashboard upload.
+  - Added individual NIfTI, JSON and DICOM file staging.
+  - Added safe ZIP extraction, NIfTI dimensionality checks, BOLD time-point checks and RepetitionTime validation.
+  - Added a separate PDF/JPEG/PNG report extraction path with optional local PDF/OCR engines.
+  - Kept real-participant preprocessing and model inference disabled behind the existing research authorization gate.
 
 - **2026-11-01 (Phase 2 Corrected PoC V2 Implementation & Synthetic Validation)**:
   - Implemented spatial coregistration and MNI SyN normalization in `src/preprocessing/registration.py`.

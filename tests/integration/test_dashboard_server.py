@@ -25,7 +25,9 @@ class TestDashboardApplication(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.output_root = Path(self.temp.name) / "dashboard_cohorts"
+        self.intake_root = Path(self.temp.name) / "intake_sessions"
         self.output_patch = mock.patch.object(serve_dashboard, "OUTPUT_ROOT", self.output_root)
+        self.intake_patch = mock.patch.object(serve_dashboard, "INTAKE_ROOT", self.intake_root)
         self.thread_patch = mock.patch.object(serve_dashboard.threading, "Thread", _FakeThread)
         self.env_patch = mock.patch.dict(
             "os.environ",
@@ -33,9 +35,11 @@ class TestDashboardApplication(unittest.TestCase):
             clear=False,
         )
         self.output_patch.start()
+        self.intake_patch.start()
         self.thread_patch.start()
         self.env_patch.start()
         self.addCleanup(self.output_patch.stop)
+        self.addCleanup(self.intake_patch.stop)
         self.addCleanup(self.thread_patch.stop)
         self.addCleanup(self.env_patch.stop)
         self.app = serve_dashboard.DashboardApplication()
