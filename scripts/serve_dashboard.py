@@ -21,6 +21,8 @@ from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 OUTPUT_ROOT = PROJECT_ROOT / "outputs" / "dashboard_cohorts"
 RUNNER = PROJECT_ROOT / "scripts" / "run_synthetic_cohort.py"
