@@ -299,7 +299,7 @@ function drawHeatmap(canvas, matrix) {
 
 function renderIntakeResult(sessionId, result) {
   $("intakeResult").classList.remove("hidden");
-  $("intakeResultTitle").textContent = \`\${result.kind === "report" ? "Report extraction" : "MRI scan validation"} · \${result.status || result.validation?.status || result.report_extraction?.status || "COMPLETE"}\`;
+  $("intakeResultTitle").textContent = `${result.kind === "report" ? "Report extraction" : "MRI scan validation"} · ${result.status || result.validation?.status || result.report_extraction?.status || "COMPLETE"}`;
   $("intakeResultText").textContent = JSON.stringify({ session_id: sessionId, ...result }, null, 2);
   const links = $("intakeArtifactLinks");
   links.replaceChildren();
@@ -307,8 +307,8 @@ function renderIntakeResult(sessionId, result) {
   reports.filter((item) => item.text_artifact).forEach((item) => {
     const link = document.createElement("a");
     const filename = item.text_artifact.split("/").pop();
-    link.href = \`/api/intake/sessions/\${encodeURIComponent(sessionId)}/artifacts/\${encodeURIComponent(filename)}\`;
-    link.textContent = \`Download extracted text: \${item.filename}\`;
+    link.href = `/api/intake/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(filename)}`;
+    link.textContent = `Download extracted text: ${item.filename}`;
     link.target = "_blank";
     link.rel = "noopener";
     links.appendChild(link);
@@ -335,8 +335,8 @@ async function uploadIntake(kind, files, button) {
     sessionId = created.session_id;
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
-      progress.textContent = \`Uploading \${index + 1} of \${files.length}: \${file.name} (\${(file.size / 1048576).toFixed(1)} MB)…\`;
-      await api(\`/api/intake/sessions/\${encodeURIComponent(sessionId)}/files\`, {
+      progress.textContent = `Uploading ${index + 1} of ${files.length}: ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`;
+      await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/files`, {
         method: "POST",
         headers: {
           "Content-Type": "application/octet-stream",
@@ -349,16 +349,16 @@ async function uploadIntake(kind, files, button) {
       ? "Checking NIfTI dimensions, BOLD metadata and required scan pairing…"
       : "Extracting report text with locally installed PDF/OCR tools…";
     const action = kind === "scan" ? "validate" : "process-reports";
-    const result = await api(\`/api/intake/sessions/\${encodeURIComponent(sessionId)}/\${action}\`, {
+    const result = await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/${action}`, {
       method: "POST",
     });
     renderIntakeResult(sessionId, result);
-    progress.textContent = \`Intake complete · session \${sessionId}\`;
+    progress.textContent = `Intake complete · session ${sessionId}`;
     showToast(kind === "scan" ? "MRI files uploaded and validation completed." : "Report upload and extraction completed.");
   } catch (error) {
     progress.textContent = sessionId
-      ? \`Upload stopped. Intake session \${sessionId} was retained for review. \${error.message}\`
-      : \`Could not create intake session. \${error.message}\`;
+      ? `Upload stopped. Intake session ${sessionId} was retained for review. ${error.message}`
+      : `Could not create intake session. ${error.message}`;
     showToast(error.message);
   } finally {
     button.disabled = false;
