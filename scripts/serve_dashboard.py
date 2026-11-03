@@ -261,6 +261,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             parts = [unquote(part) for part in route.strip("/").split("/") if part]
             if len(parts) == 4 and parts[:2] == ["api", "intake"] and parts[2] == "sessions":
                 return self._send_json(APP.intake.get_session(parts[3]))
+            if len(parts) == 6 and parts[:3] == ["api", "intake", "sessions"] and parts[4] == "artifacts":
+                data, content_type = APP.intake.get_report_artifact(parts[3], parts[5])
+                return self._send_bytes(data, content_type)
             if len(parts) >= 3 and parts[0:2] == ["api", "runs"]:
                 cohort_id = parts[2]
                 if len(parts) == 3:
