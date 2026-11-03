@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -153,7 +154,7 @@ def _verify_run_artifacts(run_output_dir: Path) -> Dict[str, Any]:
         except ValueError as exc:
             raise RuntimeError(f"Artifact escapes run directory: {filename}") from exc
         actual_hash = _sha256(resolved)
-        if not hashlib.compare_digest(actual_hash, expected_hash):
+        if not hmac.compare_digest(actual_hash, expected_hash):
             raise RuntimeError(f"Artifact SHA-256 mismatch: {artifact_name}")
         verified[artifact_name] = actual_hash
 
