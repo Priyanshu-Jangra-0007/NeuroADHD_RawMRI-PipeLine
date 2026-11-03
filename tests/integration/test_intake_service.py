@@ -93,6 +93,38 @@ class TestIntakeService(unittest.TestCase):
         with self.assertRaisesRegex(IntakeError, "symlinks"):
             self._upload(self.service, created["session_id"], "linked.zip", buffer.getvalue())
 
+    def test_bold_and_t1w_subject_ids_must_match(self):
+        created = self.service.create_session("scan")
+        bold = self._nifti_bytes((3, 3, 3, 60), "sub-01_task-rest_bold.nii.gz")
+        t1w = self._nifti_bytes((3, 3, 3), "sub-02_T1w.nii.gz")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("sub-01/func/sub-01_task-rest_bold.nii.gz", bold)
+            archive.writestr("sub-01/func/sub-01_task-rest_bold.json", json.dumps({"RepetitionTime": 2.0}))
+            archive.writestr("sub-02/anat/sub-02_T1w.nii.gz", t1w)
+        self._upload(self.service, created["session_id"], "mixed-subjects.zip", buffer.getvalue())
+
+        result = self.service.validate_scan_session(created["session_id"])
+
+        self.assertEqual(result["validation"]["status"], "VALIDATION_FAILED")
+        self.assertTrue(any("same BIDS subject" in item for item in result["validation"]["errors"]))
+
+    def test_non_rest_bold_task_is_rejected(self):
+        created = self.service.create_session("scan")
+        bold = self._nifti_bytes((3, 3, 3, 60), "sub-01_task-movie_bold.nii.gz")
+        t1w = self._nifti_bytes((3, 3, 3), "sub-01_T1w.nii.gz")
+        self._upload(self.service, created["session_id"], "sub-01_task-movie_bold.nii.gz", bold)
+        self._upload(self.service, created["session_id"], "sub-01_T1w.nii.gz", t1w)
+        self._upload(
+            self.service, created["session_id"], "sub-01_task-movie_bold.json",
+            json.dumps({"RepetitionTime": 2.0}).encode(),
+        )
+
+        result = self.service.validate_scan_session(created["session_id"])
+
+        self.assertEqual(result["validation"]["status"], "VALIDATION_FAILED")
+        self.assertTrue(any("task-rest" in item for item in result["validation"]["errors"]))
+
     def test_invalid_nifti_header_fails_validation(self):
         created = self.service.create_session("scan")
         self._upload(self.service, created["session_id"], "sub-01_task-rest_bold.nii.gz", b"not nifti")
