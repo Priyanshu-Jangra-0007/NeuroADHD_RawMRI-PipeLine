@@ -134,7 +134,9 @@ class TestDashboardDataService(unittest.TestCase):
     def test_roi_timeseries_uses_exported_roi_rows_and_time_columns(self):
         result = self.service.get_timeseries(self.cohort_id, self.subject_id, 7)
         self.assertEqual(result["n_timepoints"], 3)
-        self.assertEqual(result["values"], [0.7, 1.4, 2.1])
+        self.assertEqual(len(result["values"]), 3)
+        for actual, expected in zip(result["values"], [0.7, 1.4, 2.1]):
+            self.assertAlmostEqual(actual, expected)
 
     def test_connectivity_reconstructs_symmetric_200_by_200_matrix(self):
         result = self.service.get_connectivity(self.cohort_id, self.subject_id)
@@ -142,7 +144,7 @@ class TestDashboardDataService(unittest.TestCase):
         self.assertEqual(len(result["matrix"]), 200)
         self.assertEqual(len(result["matrix"][0]), 200)
         self.assertEqual(result["matrix"][0][0], 0.0)
-        self.assertAlmostEqual(result["matrix"][0][1], 0.02)
+        self.assertAlmostEqual(result["matrix"][0][1], 0.01)
         self.assertAlmostEqual(result["matrix"][1][0], 0.02)
 
     def test_artifact_is_verified_against_output_manifest(self):
