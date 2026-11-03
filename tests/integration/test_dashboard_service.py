@@ -66,8 +66,19 @@ class TestDashboardDataService(unittest.TestCase):
                 for right in range(left + 1, 201):
                     writer.writerow([f"ROI_{left:03d}__ROI_{right:03d}", (right - left) / 100.0])
 
+        (self.run_dir / "model_prediction.json").write_text(
+            json.dumps({
+                "class_label": "Control",
+                "adhd_probability": 0.2,
+                "control_probability": 0.8,
+                "evaluation_mode": "SYNTHETIC_DEMONSTRATION_ONLY",
+                "diagnostic_disclaimer": "Synthetic only.",
+            }),
+            encoding="utf-8",
+        )
         artifact_names = [
             "provenance.json",
+            "model_prediction.json",
             "confound_report.json",
             "framewise_displacement.tsv",
             "roi_CC200.csv",
@@ -130,6 +141,8 @@ class TestDashboardDataService(unittest.TestCase):
         self.assertEqual(detail["n_connectivity_features"], 19900)
         self.assertEqual(detail["confound_rank"], 31)
         self.assertEqual(detail["qc_threshold_status"], "QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL")
+        self.assertEqual(detail["model_prediction"]["evaluation_mode"], "SYNTHETIC_DEMONSTRATION_ONLY")
+        self.assertEqual(detail["model_prediction"]["class_label"], "Control")
 
     def test_roi_timeseries_uses_exported_roi_rows_and_time_columns(self):
         result = self.service.get_timeseries(self.cohort_id, self.subject_id, 7)
