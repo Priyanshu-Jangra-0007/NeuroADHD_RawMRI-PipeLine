@@ -62,6 +62,31 @@ class TestDashboardApplication(unittest.TestCase):
         self.assertTrue(result["cohort_id"].startswith("cohort_"))
         self.assertEqual(result["execution_policy"], "STRICTLY_SYNTHETIC_ONLY")
 
+
+    def test_runner_log_is_bounded_and_read_from_cohort_directory(self):
+        cohort_id = "cohort_20261103T123000_456789Z"
+        cohort_dir = self.output_root / cohort_id
+        cohort_dir.mkdir(parents=True)
+        (cohort_dir / "dashboard-run.log").write_text("pipeline started\\npipeline finished\\n", encoding="utf-8")
+
+        result = self.app.process_log(cohort_id)
+
+        self.assertTrue(result["available"])
+        self.assertIn("pipeline finished", result["text"])
+
+    def test_runner_log_rejects_symlink(self):
+        cohort_id = "cohort_20261103T123000_456790Z"
+        cohort_dir = self.output_root / cohort_id
+        cohort_dir.mkdir(parents=True)
+        external = Path(self.temp.name) / "outside.log"
+        external.write_text("outside", encoding="utf-8")
+        (cohort_dir / "dashboard-run.log").symlink_to(external)
+
+        result = self.app.process_log(cohort_id)
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["text"], "")
+
     def test_launcher_rejects_browser_supplied_paths(self):
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
             self.app.start_run({"n_subjects": 1, "output_dir": "/tmp/external"})
