@@ -29,7 +29,7 @@ MAX_ZIP_UNCOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_ZIP_RATIO = 150
 CHUNK_BYTES = 1024 * 1024
 
-SCAN_SUFFIXES = (".nii.gz", ".nii", ".dcm", ".ima", ".json", ".tsv", ".bval", ".bvec", ".txt", ".csv")
+SCAN_SUFFIXES = (".zip", ".nii.gz", ".nii", ".dcm", ".ima", ".json", ".tsv", ".bval", ".bvec", ".txt", ".csv")
 REPORT_SUFFIXES = (".pdf", ".jpg", ".jpeg", ".png")
 
 
