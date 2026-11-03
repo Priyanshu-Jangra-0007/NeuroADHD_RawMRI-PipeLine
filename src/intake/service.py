@@ -306,6 +306,14 @@ class IntakeService:
         return name[:-7] if name.lower().endswith(".nii.gz") else path.stem
 
     @staticmethod
+    def _bids_entity(stem: str, key: str) -> Optional[str]:
+        prefix = f"{key}-"
+        for token in stem.split("_"):
+            if token.startswith(prefix) and len(token) > len(prefix):
+                return token[len(prefix):]
+        return None
+
+    @staticmethod
     def _sidecar(path: Path) -> Path:
         return path.with_name(IntakeService._nifti_stem(path) + ".json")
 
@@ -354,6 +362,18 @@ class IntakeService:
         elif bold_files and t1w_files:
             bold, t1w = bold_files[0], t1w_files[0]
             try:
+                bold_stem = self._nifti_stem(bold)
+                t1w_stem = self._nifti_stem(t1w)
+                if not any(token.lower() == "task-rest" for token in bold_stem.split("_")):
+                    raise IntakeError("BOLD input must be a resting-state file with the BIDS task-rest entity.")
+                bold_subject = self._bids_entity(bold_stem, "sub")
+                t1w_subject = self._bids_entity(t1w_stem, "sub")
+                if not bold_subject or not t1w_subject or bold_subject != t1w_subject:
+                    raise IntakeError("BOLD and T1w files must have the same BIDS subject identifier.")
+                bold_session = self._bids_entity(bold_stem, "ses")
+                t1w_session = self._bids_entity(t1w_stem, "ses")
+                if bold_session and t1w_session and bold_session != t1w_session:
+                    raise IntakeError("BOLD and T1w files have different BIDS session identifiers.")
                 bold_info = self._inspect_nifti(bold, 4)
                 if bold_info["dimensions"][3] < 50:
                     raise IntakeError(f"BOLD scan has {bold_info['dimensions'][3]} volumes; at least 50 are required.")
