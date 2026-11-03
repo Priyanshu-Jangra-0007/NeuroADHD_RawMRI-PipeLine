@@ -256,14 +256,15 @@ class DashboardDataService:
         gate6 = gates.get("gate6_feature_schema_conformance", {})
         record_dir = self._subject_record(cohort_id, subject_id)[1]
         model_prediction = None
-        try:
-            model_prediction = self._json(self._artifact_path(cohort_id, subject_id, "model_prediction.json"))
+        model_prediction_path = run_dir / "model_prediction.json"
+        if model_prediction_path.exists() or model_prediction_path.is_symlink():
+            model_prediction = self._json(
+                self._artifact_path(cohort_id, subject_id, "model_prediction.json")
+            )
             model_prediction = {
                 key: model_prediction.get(key)
                 for key in ("class_label", "adhd_probability", "control_probability", "evaluation_mode", "diagnostic_disclaimer")
             }
-        except DashboardDataError:
-            pass
 
         motion = fd
         max_points = 600
