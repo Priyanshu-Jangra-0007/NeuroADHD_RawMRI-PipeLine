@@ -170,6 +170,8 @@ class DashboardApplication:
             temp_path = status_path.with_suffix(".tmp")
             temp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
             os.replace(temp_path, status_path)
+            with self._lock:
+                self._active.pop(cohort_id, None)
 
     def process_status(self, cohort_id: str) -> Dict[str, Any]:
         from src.dashboard.service import DashboardDataError
