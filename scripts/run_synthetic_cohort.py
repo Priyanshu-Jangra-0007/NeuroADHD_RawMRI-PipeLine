@@ -100,6 +100,7 @@ def _new_manifest(config: Dict[str, Any]) -> Dict[str, Any]:
                 "seed": int(config["seed"]) + index - 1,
                 "status": "PENDING",
                 "input_sha256": {},
+                "synthetic_manifest_sha256": None,
                 "run_output_dir": None,
                 "output_manifest_sha256": None,
                 "artifact_count": 0,
@@ -257,6 +258,12 @@ def run_synthetic_cohort(
 
         subject["status"] = "RUNNING"
         subject["error"] = None
+        # A retry must not retain references to an older, potentially invalid run.
+        subject["run_output_dir"] = None
+        subject["output_manifest_sha256"] = None
+        subject["artifact_count"] = 0
+        subject["input_sha256"] = {}
+        subject["synthetic_manifest_sha256"] = None
         manifest["updated_utc"] = _utc_now()
         _atomic_write_json(manifest_path, manifest)
         started = time.monotonic()
@@ -277,6 +284,9 @@ def run_synthetic_cohort(
                 for key, path in synthetic_paths.items()
                 if key != "synthetic_manifest"
             }
+            subject["synthetic_manifest_sha256"] = _sha256(
+                Path(synthetic_paths["synthetic_manifest"])
+            )
             result = run_poc_v2_pipeline(
                 bold_path=synthetic_paths["bold_nii"],
                 bold_json_path=synthetic_paths["bold_json"],
