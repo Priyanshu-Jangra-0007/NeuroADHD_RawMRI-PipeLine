@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090e1d">
+  <meta name="description" content="NeuroADHD is an exploratory neuroscience research project for resting-state fMRI intake, CC200 connectivity feature extraction, and synthetic pipeline validation.">
+  <title>NeuroADHD | Raw fMRI Research Pipeline</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090e1d;--panel:#101a2d;--panel2:#131f35;--line:#22334d;--text:#edf4ff;--muted:#9bacbf;--cyan:#62e4d0;--blue:#7e9cff;--violet:#b69cff;--amber:#f3c879;--green:#8de0bd}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(ellipse at 82% -10%,#1d3157 0,transparent 38%),var(--bg);color:var(--text);font:16px/1.6 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    a{color:inherit;text-decoration:none}.wrap{width:min(1160px,calc(100% - 40px));margin:auto}
+    header{height:76px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1b2940}
+    .brand{display:flex;gap:12px;align-items:center;font-weight:750;letter-spacing:.01em}.mark{display:grid;grid-template-columns:repeat(3,5px);gap:3px;align-items:end;height:25px}.mark i{display:block;width:5px;border-radius:5px;background:var(--cyan)}.mark i:nth-child(1){height:12px}.mark i:nth-child(2){height:20px;background:var(--blue)}.mark i:nth-child(3){height:16px;background:var(--violet)}.brand small{display:block;color:var(--muted);font-size:9px;letter-spacing:.2em;font-weight:650}
+    nav{display:flex;gap:25px;color:var(--muted);font-size:13px}nav a:hover,.text-link:hover{color:var(--cyan)}.nav-cta{border:1px solid #344968;padding:8px 13px;border-radius:9px;color:var(--text)}
+    .hero{padding:92px 0 66px;display:grid;grid-template-columns:1.2fr .8fr;gap:54px;align-items:center}.eyebrow{color:var(--cyan);font-size:11px;font-weight:750;letter-spacing:.19em;text-transform:uppercase;display:flex;align-items:center;gap:10px}.eyebrow:before{content:"";width:24px;height:1px;background:var(--cyan)}
+    h1{font-size:clamp(42px,6vw,70px);line-height:1.04;letter-spacing:-.055em;margin:18px 0 20px;max-width:720px}h1 span{color:var(--cyan)}.lede{font-size:18px;color:#b4c3d7;max-width:650px;line-height:1.7}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}.btn{padding:12px 17px;border-radius:10px;font-weight:700;font-size:13px;display:inline-flex;align-items:center;gap:9px;border:1px solid var(--line)}.btn.primary{background:var(--cyan);color:#07131c;border-color:var(--cyan)}.btn.secondary{background:#111b2d}.btn:hover{transform:translateY(-1px)}
+    .visual{background:linear-gradient(145deg,#14243d,#0d1729);border:1px solid #2b405d;border-radius:22px;padding:24px;box-shadow:0 24px 90px #0006}.visual-head{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:11px;letter-spacing:.14em;text-transform:uppercase}.state{border:1px solid #3b6a66;color:var(--green);border-radius:99px;padding:4px 8px;font-size:10px;letter-spacing:.06em}
+    .brain{height:210px;display:grid;place-items:center;margin:16px 0}.brain svg{width:100%;max-width:310px;height:200px}.visual-foot{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.visual-stat{background:#0b1525;border:1px solid #22344c;border-radius:11px;padding:12px}.visual-stat strong{display:block;font-size:22px;line-height:1.3}.visual-stat span{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+    .notice{display:flex;gap:12px;align-items:flex-start;border:1px solid #6a5832;background:#261f13;color:#f1d9a6;border-radius:12px;padding:15px 17px;font-size:13px}.notice strong{color:#ffe7b4}.notice .symbol{font-size:18px;line-height:1.2}
+    section{padding:55px 0}.section-head{max-width:670px;margin-bottom:27px}.kicker{color:var(--blue);font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:800}.section-head h2{font-size:clamp(28px,4vw,39px);letter-spacing:-.04em;line-height:1.15;margin:9px 0}.section-head p{color:var(--muted);margin:0}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}.metric,.stage,.status-card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:19px}.metric strong{font-size:30px;letter-spacing:-.04em;display:block}.metric span{color:var(--muted);font-size:12px}
+    .pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:stretch}.stage{padding:17px;min-height:158px;position:relative}.stage:not(:last-child):after{content:"→";position:absolute;right:-12px;top:48%;z-index:2;color:var(--cyan);font-size:15px}.stage .num{font-size:10px;color:var(--cyan);letter-spacing:.12em;font-weight:800}.stage h3{font-size:14px;line-height:1.3;margin:13px 0 7px}.stage p{color:var(--muted);font-size:11px;line-height:1.5;margin:0}
+    .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}.status-card h3{margin:0 0 13px;font-size:16px}.status-list{display:grid;gap:10px}.status-row{display:flex;justify-content:space-between;align-items:center;gap:14px;padding-top:10px;border-top:1px solid #24334a;font-size:12px}.status-row span:first-child{color:#c4d0df}.tag{font-size:10px;font-weight:750;padding:4px 8px;border-radius:99px;white-space:nowrap}.tag.done{color:#a8ebce;background:#173c34}.tag.local{color:#c0d0ff;background:#24345a}.tag.locked{color:#f7d89a;background:#42331a}
+    .disclaimer{border:1px solid #3a3348;background:#171526;border-radius:15px;padding:20px 22px;color:#c9c0d7;font-size:13px}.disclaimer strong{color:#fff}.footer{border-top:1px solid #1b2940;padding:26px 0 36px;display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}
+    @media(max-width:900px){.hero{grid-template-columns:1fr;gap:32px;padding-top:65px}.pipeline{grid-template-columns:repeat(3,1fr)}.stage:nth-child(3):after{display:none}}
+    @media(max-width:620px){.wrap{width:min(100% - 28px,1160px)}header{height:66px}nav a:not(.nav-cta){display:none}.hero{padding:54px 0 44px}.metrics{grid-template-columns:repeat(2,1fr)}.pipeline{grid-template-columns:repeat(2,1fr)}.stage:nth-child(2n):after{display:none}.cols{grid-template-columns:1fr}.visual{padding:17px}.footer{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <a class="brand" href="#" aria-label="NeuroADHD home"><span class="mark"><i></i><i></i><i></i></span><span>neuroadhd<small>RAWMRI RESEARCH PIPELINE</small></span></a>
+    <nav aria-label="Main navigation"><a href="#pipeline">Pipeline</a><a href="#status">Project status</a><a class="nav-cta" href="https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine" target="_blank" rel="noopener">View source ↗</a></nav>
+  </header>
+
+  <main class="wrap">
+    <div class="hero">
+      <div>
+        <div class="eyebrow">Exploratory neuroscience research</div>
+        <h1>From raw fMRI to <span>connectivity features.</span></h1>
+        <p class="lede">NeuroADHD is a research pipeline exploring how resting-state functional MRI can be transformed into CC200 brain-network features for downstream machine-learning experiments.</p>
+        <div class="actions"><a class="btn primary" href="#pipeline">Explore the workflow <span>↓</span></a><a class="btn secondary" href="https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine" target="_blank" rel="noopener">GitHub repository ↗</a></div>
+      </div>
+      <div class="visual" aria-label="Illustration of brain connectivity and project metrics">
+        <div class="visual-head"><span>NeuroADHD / system overview</span><span class="state">RESEARCH PREVIEW</span></div>
+        <div class="brain">
+          <svg viewBox="0 0 340 210" role="img" aria-label="Abstract brain network illustration">
+            <defs><radialGradient id="glow"><stop stop-color="#62e4d0" stop-opacity=".27"/><stop offset="1" stop-color="#62e4d0" stop-opacity="0"/></radialGradient></defs>
+            <circle cx="170" cy="103" r="94" fill="url(#glow)"/>
+            <path d="M166 42 C132 16 83 38 77 76 C45 86 49 135 79 150 C91 181 135 184 164 162 M174 42 C208 16 257 38 263 76 C295 86 291 135 261 150 C249 181 205 184 176 162" fill="none" stroke="#91a8ca" stroke-width="2.2" opacity=".75"/>
+            <path d="M170 42 L170 164 M112 70 L224 139 M105 137 L238 75 M84 106 L252 106 M130 47 L207 162 M210 48 L129 159" stroke="#5278a1" stroke-width="1" opacity=".7"/>
+            <g fill="#62e4d0"><circle cx="170" cy="42" r="5"/><circle cx="112" cy="70" r="4"/><circle cx="224" cy="139" r="5"/><circle cx="105" cy="137" r="4"/><circle cx="238" cy="75" r="4"/><circle cx="84" cy="106" r="3.5"/><circle cx="252" cy="106" r="3.5"/></g>
+            <g fill="#b69cff"><circle cx="170" cy="164" r="4"/><circle cx="130" cy="47" r="3.5"/><circle cx="207" cy="162" r="3.5"/><circle cx="210" cy="48" r="3.5"/><circle cx="129" cy="159" r="3.5"/></g>
+            <circle cx="170" cy="106" r="8" fill="#7e9cff"/><circle cx="170" cy="106" r="17" fill="none" stroke="#7e9cff" opacity=".35"/>
+          </svg>
+        </div>
+        <div class="visual-foot"><div class="visual-stat"><strong>200</strong><span>CC200 ROIs</span></div><div class="visual-stat"><strong>19,900</strong><span>Pairwise edges</span></div><div class="visual-stat"><strong>100</strong><span>Selected features</span></div></div>
+      </div>
+    </div>
+
+    <div class="notice"><span class="symbol">⚠</span><div><strong>Research software — not a diagnostic device.</strong> This public page is a view-only project overview. It does not accept MRI scans, run preprocessing, or provide ADHD diagnosis or clinical advice.</div></div>
+
+    <section id="pipeline">
+      <div class="section-head"><div class="kicker">The research workflow</div><h2>How the data path is designed</h2><p>The intended path connects BIDS-organized MRI inputs to CC200 time series, functional-connectivity features, and a downstream research classifier.</p></div>
+      <div class="pipeline">
+        <article class="stage"><div class="num">01 / INPUT</div><h3>Resting-state BOLD</h3><p>4D fMRI data with spatial dimensions and a time axis, organized using BIDS naming.</p></article>
+        <article class="stage"><div class="num">02 / INTAKE</div><h3>Structure checks</h3><p>Local intake validates NIfTI dimensions, BOLD metadata and session consistency.</p></article>
+        <article class="stage"><div class="num">03 / PROCESS</div><h3>Preprocessing</h3><p>Research design covers motion, normalization, confounds and temporal filtering.</p></article>
+        <article class="stage"><div class="num">04 / ATLAS</div><h3>CC200 extraction</h3><p>Mean BOLD signal is intended to be extracted for 200 atlas regions.</p></article>
+        <article class="stage"><div class="num">05 / FEATURES</div><h3>Connectivity</h3><p>200 regions yield 19,900 unique pairwise correlations, transformed with Fisher z.</p></article>
+        <article class="stage"><div class="num">06 / MODEL</div><h3>Research inference</h3><p>A downstream pipeline selects 100 features before its frozen Random Forest model.</p></article>
+      </div>
+    </section>
+
+    <section id="status">
+      <div class="section-head"><div class="kicker">Implementation status</div><h2>What is available right now</h2><p>Implemented capabilities are separated from future real-scan processing. This Vercel site is intentionally static and does not expose the local research server.</p></div>
+      <div class="cols">
+        <div class="status-card"><h3>Implemented</h3><div class="status-list">
+          <div class="status-row"><span>Synthetic pipeline demonstration</span><b class="tag done">IMPLEMENTED</b></div>
+          <div class="status-row"><span>Local MRI intake and validation</span><b class="tag local">LOCAL ONLY</b></div>
+          <div class="status-row"><span>Separate report text extraction</span><b class="tag local">LOCAL ONLY</b></div>
+          <div class="status-row"><span>Dashboard for synthetic run outputs</span><b class="tag done">IMPLEMENTED</b></div>
+        </div></div>
+        <div class="status-card"><h3>Not enabled</h3><div class="status-list">
+          <div class="status-row"><span>Public MRI upload and storage</span><b class="tag locked">DISABLED</b></div>
+          <div class="status-row"><span>Real-participant preprocessing</span><b class="tag locked">LOCKED</b></div>
+          <div class="status-row"><span>Real-participant model inference</span><b class="tag locked">LOCKED</b></div>
+          <div class="status-row"><span>Clinical diagnosis or decision support</span><b class="tag locked">NOT SUPPORTED</b></div>
+        </div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="disclaimer"><strong>Important research boundary.</strong> A report image or PDF cannot reconstruct a 4D BOLD time series. MRI scans and reports are different input types, and reports are kept on a separate text-extraction path. Real-participant processing remains disabled pending research authorization and an appropriately secured processing environment.</div>
+    </section>
+  </main>
+
+  <footer class="wrap footer"><span>© NeuroADHD Research Pipeline · Public view-only preview</span><span><a class="text-link" href="https://github.com/Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine" target="_blank" rel="noopener">Source code on GitHub ↗</a></span></footer>
+</body>
+</html>
