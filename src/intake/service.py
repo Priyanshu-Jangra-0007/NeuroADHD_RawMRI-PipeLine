@@ -150,6 +150,28 @@ class IntakeService:
         self._save_manifest(session_dir, manifest)
         return {"session_id": session_id, "kind": kind, "status": manifest["status"]}
 
+    def _verify_staged_files(self, session_dir: Path, manifest: Dict[str, Any]) -> None:
+        """Verify upload and extraction hashes before consuming staged files."""
+        records = list(manifest.get("uploaded_files", [])) + list(manifest.get("extracted_files", []))
+        for record in records:
+            relative_raw = record.get("storage_path") or record.get("relative_path")
+            expected_hash = record.get("sha256")
+            if not isinstance(relative_raw, str) or not isinstance(expected_hash, str):
+                raise IntakeError("Intake manifest contains a malformed file-integrity record.")
+            relative = Path(relative_raw)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise IntakeError("Intake manifest contains an unsafe file path.")
+            candidate = session_dir / relative
+            if candidate.is_symlink() or not candidate.is_file():
+                raise IntakeError("A staged upload file is missing or unsafe.")
+            resolved = candidate.resolve(strict=True)
+            try:
+                resolved.relative_to(session_dir)
+            except ValueError as exc:
+                raise IntakeError("A staged upload file escapes its intake session.") from exc
+            if _sha256(resolved) != expected_hash:
+                raise IntakeError(f"Staged file integrity check failed for {candidate.name}.")
+
     def upload_file(
         self,
         session_id: str,
@@ -337,6 +359,7 @@ class IntakeService:
         manifest = self._read_manifest(session_dir)
         if manifest.get("kind") != "scan":
             raise IntakeError("This session is not a scan-upload session.")
+        self._verify_staged_files(session_dir, manifest)
         data_root = session_dir / "data"
         nifti_files = [p for p in data_root.rglob("*") if p.is_file() and not p.is_symlink()
                        and (p.name.lower().endswith(".nii") or p.name.lower().endswith(".nii.gz"))]
@@ -431,6 +454,7 @@ class IntakeService:
         manifest = self._read_manifest(session_dir)
         if manifest.get("kind") != "report":
             raise IntakeError("This session is not a report-upload session.")
+        self._verify_staged_files(session_dir, manifest)
         extracted = []
         report_dir = session_dir / "reports"
         report_dir.mkdir(exist_ok=True, mode=0o700)
