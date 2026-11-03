@@ -19,6 +19,7 @@
       <div class="workspace-label">WORKSPACE</div>
       <nav class="nav">
         <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> Overview</a>
+        <a class="nav-link" href="#upload"><span class="nav-icon">⇧</span> MRI uploads</a>
         <a class="nav-link" href="#runs"><span class="nav-icon">⌁</span> Pipeline runs</a>
         <a class="nav-link" href="#quality"><span class="nav-icon">⌗</span> Quality control</a>
         <a class="nav-link" href="#connectivity"><span class="nav-icon">◉</span> Connectivity</a>
@@ -67,6 +68,56 @@
           <div class="stat-label">REAL-DATA AUTHORIZATION</div><div class="stat-value locked">LOCKED</div>
           <div class="stat-foot"><span class="stat-symbol amber">⬡</span> 23 requirements pending</div>
         </article>
+      </section>
+
+      <section class="panel intake-panel" id="upload">
+        <div class="panel-head">
+          <div><div class="panel-kicker">MRI DATA INTAKE</div><h2>Upload MRI / fMRI data</h2></div>
+          <span class="pill pill-green">LOCAL UPLOAD</span>
+        </div>
+        <p class="panel-desc">Start with a complete BIDS-style session ZIP. NeuroADHD will validate scan structure and metadata before any processing can be considered.</p>
+        <div class="intake-safety"><strong>Intake and validation only.</strong> Real-participant preprocessing and model inference remain locked until the research authorization register is approved. Uploaded files stay in this local workspace.</div>
+        <div class="intake-grid">
+          <article class="intake-option intake-featured">
+            <div class="intake-option-icon">▣</div>
+            <div class="intake-option-tag">RECOMMENDED</div>
+            <h3>Complete MRI session</h3>
+            <p>Upload one ZIP containing a BIDS subject/session with 4D resting-state BOLD, its JSON sidecar, and 3D T1w MRI.</p>
+            <label class="file-picker">Choose session ZIP
+              <input id="sessionZipInput" type="file" accept=".zip,application/zip">
+            </label>
+            <button class="primary-button" id="uploadZipButton" type="button">Upload and validate session <span class="button-arrow">→</span></button>
+            <small>One participant/session per ZIP. ZIP extraction rejects traversal paths, symlinks and oversized archives.</small>
+          </article>
+          <article class="intake-option">
+            <div class="intake-option-icon">▤</div>
+            <div class="intake-option-tag">INDIVIDUAL FILES</div>
+            <h3>MRI / fMRI files</h3>
+            <p>Select BIDS-named NIfTI files and sidecars, or stage a DICOM series. BOLD and T1w must belong to the same session.</p>
+            <label class="file-picker">Choose scan files
+              <input id="scanFilesInput" type="file" multiple accept=".nii,.gz,.dcm,.ima,.json,.tsv,.bval,.bvec,.txt,.csv">
+            </label>
+            <button class="secondary-button" id="uploadFilesButton" type="button">Upload selected files</button>
+            <small>Use filenames ending in <code>_bold.nii.gz</code> and <code>_T1w.nii.gz</code>. DICOM conversion is not executed in this intake-only release.</small>
+          </article>
+          <article class="intake-option">
+            <div class="intake-option-icon">▧</div>
+            <div class="intake-option-tag">SEPARATE REPORT PATH</div>
+            <h3>MRI / radiology report</h3>
+            <p>Upload PDF, JPEG or PNG reports. Text extraction uses local Poppler / Tesseract tools when installed.</p>
+            <label class="file-picker">Choose report files
+              <input id="reportFilesInput" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">
+            </label>
+            <button class="secondary-button" id="uploadReportsButton" type="button">Upload and extract text</button>
+            <small>Reports are stored separately and are never treated as BOLD input or model features.</small>
+          </article>
+        </div>
+        <div class="intake-progress hidden" id="intakeProgress" aria-live="polite">Preparing upload…</div>
+        <div class="intake-result hidden" id="intakeResult">
+          <div class="intake-result-head"><strong id="intakeResultTitle">Intake result</strong><button class="ghost-button" id="closeIntakeResult" type="button">Close</button></div>
+          <pre id="intakeResultText"></pre>
+          <div id="intakeArtifactLinks" class="intake-artifacts"></div>
+        </div>
       </section>
 
       <section class="work-grid">
