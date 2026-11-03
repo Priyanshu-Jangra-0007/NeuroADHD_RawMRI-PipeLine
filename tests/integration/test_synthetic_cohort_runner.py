@@ -141,6 +141,24 @@ class TestSyntheticCohortRunner(unittest.TestCase):
         self.assertEqual(manifest["subjects"][0]["status"], "FAILED")
         self.assertEqual(manifest["subjects"][1]["status"], "PENDING")
 
+
+    def test_failed_retry_clears_stale_success_output_reference(self):
+        run_synthetic_cohort(self.output_dir, n_subjects=1)
+        manifest_path = self.output_dir / "cohort_manifest.json"
+        first_manifest = json.loads(manifest_path.read_text())
+        old_run_dir = Path(first_manifest["subjects"][0]["run_output_dir"])
+        (old_run_dir / "qc.txt").write_text("tampered", encoding="utf-8")
+        self.pipeline.side_effect = RuntimeError("retry failed")
+
+        result = run_synthetic_cohort(self.output_dir, n_subjects=1, resume=True)
+
+        self.assertEqual(result["status"], "FAILED")
+        retried = json.loads(manifest_path.read_text())["subjects"][0]
+        self.assertEqual(retried["status"], "FAILED")
+        self.assertIsNone(retried["run_output_dir"])
+        self.assertIsNone(retried["output_manifest_sha256"])
+        self.assertEqual(retried["artifact_count"], 0)
+
     def test_rejects_oversized_cohort_and_memory_limit(self):
         with self.assertRaisesRegex(ValueError, "n_subjects"):
             run_synthetic_cohort(self.output_dir, n_subjects=21)
