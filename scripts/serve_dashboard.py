@@ -173,6 +173,18 @@ class DashboardApplication:
             with self._lock:
                 self._active.pop(cohort_id, None)
 
+    def process_log(self, cohort_id: str) -> Dict[str, Any]:
+        cohort_dir = self.service._cohort_dir(cohort_id)
+        log_path = cohort_dir / "dashboard-run.log"
+        if log_path.is_symlink() or not log_path.is_file():
+            return {"available": False, "text": ""}
+        with log_path.open("r", encoding="utf-8", errors="replace") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 16000), os.SEEK_SET)
+            text = stream.read()
+        return {"available": True, "text": text[-16000:]}
+
     def process_status(self, cohort_id: str) -> Dict[str, Any]:
         from src.dashboard.service import DashboardDataError
 
@@ -258,6 +270,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         return self._send_bytes(data, content_type)
                 if len(parts) == 4 and parts[3] == "process":
                     return self._send_json(APP.process_status(cohort_id))
+                if len(parts) == 4 and parts[3] == "log":
+                    return self._send_json(APP.process_log(cohort_id))
             if route.startswith("/api/"):
                 return self._error("API endpoint not found.", 404)
             self._serve_static(route)
