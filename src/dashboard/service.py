@@ -124,7 +124,15 @@ class DashboardDataService:
             "status": manifest.get("status"),
             "created_utc": manifest.get("created_utc"),
             "updated_utc": manifest.get("updated_utc"),
-            "configuration": manifest.get("configuration", {}),
+            "configuration": {
+                **{
+                    key: value
+                    for key, value in manifest.get("configuration", {}).items()
+                    if key not in ("model_dir", "canonical_atlas_path")
+                },
+                "model_inference_configured": bool(manifest.get("configuration", {}).get("model_dir")),
+                "atlas_mode": manifest.get("configuration", {}).get("atlas_mode"),
+            },
             "summary": manifest.get("summary", {}),
             "subjects": public_subjects,
             "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
@@ -147,8 +155,15 @@ class DashboardDataService:
         raw = Path(record["run_output_dir"])
         if raw.is_symlink():
             raise DashboardDataError("Run directory symlinks are not permitted.")
+        runs_path = cohort_dir / "runs"
+        if runs_path.is_symlink() or not runs_path.is_dir():
+            raise DashboardDataError("Cohort runs directory is missing or unsafe.")
+        allowed_root = runs_path.resolve(strict=True)
+        try:
+            allowed_root.relative_to(cohort_dir)
+        except ValueError as exc:
+            raise DashboardDataError("Cohort runs directory escapes the cohort root.") from exc
         run_dir = raw.resolve(strict=True)
-        allowed_root = (cohort_dir / "runs").resolve()
         try:
             run_dir.relative_to(allowed_root)
         except ValueError as exc:
@@ -170,7 +185,16 @@ class DashboardDataService:
         except ValueError as exc:
             raise DashboardDataError("Artifact path escapes the run directory.") from exc
 
-        manifest = self._json(run_dir / "output_manifest.json")
+        output_manifest_path = run_dir / "output_manifest.json"
+        if output_manifest_path.is_symlink() or not output_manifest_path.is_file():
+            raise DashboardDataError("Output integrity manifest is missing or unsafe.")
+        cohort_record = self._subject_record(cohort_id, subject_id)[1]
+        recorded_manifest_hash = cohort_record.get("output_manifest_sha256")
+        if recorded_manifest_hash and not hmac.compare_digest(
+            self._sha256(output_manifest_path), recorded_manifest_hash
+        ):
+            raise DashboardDataError("Output integrity manifest checksum mismatch.")
+        manifest = self._json(output_manifest_path)
         entries = manifest.get("artifacts", {})
         expected = next(
             (item.get("sha256") for item in entries.values() if item.get("filename") == filename),
