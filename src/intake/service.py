@@ -525,3 +525,25 @@ class IntakeService:
             except IntakeError:
                 continue
         return sorted(sessions, key=lambda item: item["created_utc"], reverse=True)
+
+
+    def get_report_artifact(self, session_id: str, filename: str) -> tuple[bytes, str]:
+        """Return only a generated text-extraction artifact, never the original report."""
+        session_dir = self._session_dir(session_id)
+        manifest = self._read_manifest(session_dir)
+        if manifest.get("kind") != "report":
+            raise IntakeError("Only report sessions contain extracted report artifacts.")
+        safe_name = _clean_filename(filename)
+        if not safe_name.endswith(".extracted.txt"):
+            raise IntakeError("Only extracted text artifacts can be downloaded.")
+        candidate = session_dir / "reports" / safe_name
+        if candidate.is_symlink() or not candidate.is_file():
+            raise IntakeError("Extracted report artifact was not found.")
+        resolved = candidate.resolve(strict=True)
+        try:
+            resolved.relative_to((session_dir / "reports").resolve(strict=True))
+        except ValueError as exc:
+            raise IntakeError("Report artifact escapes its storage directory.") from exc
+        if resolved.stat().st_size > 2_000_000:
+            raise IntakeError("Extracted report artifact exceeds the download limit.")
+        return resolved.read_bytes(), "text/plain; charset=utf-8"
