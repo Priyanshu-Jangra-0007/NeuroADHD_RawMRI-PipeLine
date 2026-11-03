@@ -351,7 +351,6 @@ async function uploadIntake(kind, files, button) {
     const action = kind === "scan" ? "validate" : "process-reports";
     const result = await api(\`/api/intake/sessions/\${encodeURIComponent(sessionId)}/\${action}\`, {
       method: "POST",
-      headers: { "Content-Length": "0" },
     });
     renderIntakeResult(sessionId, result);
     progress.textContent = \`Intake complete · session \${sessionId}\`;
