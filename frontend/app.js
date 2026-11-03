@@ -307,7 +307,7 @@ async function startRun(event) {
     t_vol: Number($("tVol").value),
     seed: Number($("seed").value),
     atlas_mode: $("atlasMode").value,
-    model_inference: false,
+    model_inference: $("modelInference").checked,
   };
   try {
     const started = await api("/api/runs", {
@@ -335,6 +335,10 @@ async function init() {
   try {
     state.health = await api("/api/health");
     $("serverStatus").textContent = "Local server online";
+    $("modelInference").disabled = !state.health.model_dir_available;
+    $("modelAvailability").textContent = state.health.model_dir_available
+      ? "Trusted frozen model mount detected. Predictions remain synthetic demonstrations."
+      : "Not configured. Runs will produce MRI and connectivity outputs without model inference.";
     if (state.health.real_data_authorized !== false || state.health.execution_policy !== "STRICTLY_SYNTHETIC_ONLY") {
       $("serverStatus").textContent = "Safety configuration error";
       showToast("Unexpected server safety configuration. Run controls remain unavailable.");
