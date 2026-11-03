@@ -98,7 +98,7 @@ async function refreshSelectedCohort() {
     $("runProgressText").textContent = `${done} / ${total} subjects`;
     $("runProgressBar").style.width = `${total ? (done / total) * 100 : 0}%`;
     $("runProgressHint").textContent = failed
-      ? `${failed} subject(s) failed. Open the run log or inspect the cohort manifest.`
+      ? `${failed} subject(s) failed. Inspect the runner log for the failure details.`
       : terminal ? "All subject checkpoints have been written." : "Subjects are processed sequentially; outputs appear as each subject finishes.";
     $("selectedRunTitle").textContent = cohort.cohort_run_id || cohort.cohort_id;
     $("selectedRunSub").textContent = `${cohort.status} · ${fmtDate(cohort.created_utc)} · STRICTLY_SYNTHETIC_ONLY`;
@@ -356,6 +356,17 @@ $("runForm").addEventListener("submit", startRun);
 $("refreshRuns").addEventListener("click", refreshRuns);
 $("subjectSelect").addEventListener("change", (event) => loadSubject(event.target.value));
 $("roiSelect").addEventListener("change", () => loadTimeseries().catch((e) => showToast(e.message)));
+$("viewRunLog").addEventListener("click", async () => {
+  if (!state.selectedRunId) return;
+  try {
+    const result = await api(`/api/runs/${encodeURIComponent(state.selectedRunId)}/log`);
+    $("runLogText").textContent = result.available ? result.text : "No runner log has been written yet.";
+    $("runLogPanel").classList.remove("hidden");
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+$("closeRunLog").addEventListener("click", () => $("runLogPanel").classList.add("hidden"));
 for (let roi = 1; roi <= 200; roi++) {
   const option = document.createElement("option");
   option.value = String(roi); option.textContent = `ROI ${String(roi).padStart(3, "0")}`;
