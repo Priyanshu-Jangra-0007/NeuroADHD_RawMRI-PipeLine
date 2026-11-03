@@ -740,6 +740,7 @@ def run_poc_v2_pipeline(
     print("=" * 75)
 
     current_stage = "Initialization"
+    model_prediction_path: Optional[Path] = None
     try:
         # -------------------------------------------------------------
         # Stage 1: BIDS Input & Sidecar Metadata Validation
@@ -1037,6 +1038,7 @@ def run_poc_v2_pipeline(
             pred_json_path = sub_out_dir / "model_prediction.json"
             with open(pred_json_path, "w", encoding="utf-8") as f:
                 json.dump(pred_res, f, indent=2)
+            model_prediction_path = pred_json_path
             print(f"  -> Frozen Model Prediction: {pred_res['class_label']} (ADHD: {pred_res['adhd_probability']:.4f}, Control: {pred_res['control_probability']:.4f})")
 
         # 3. Motion & Confound Reports
@@ -1093,6 +1095,8 @@ def run_poc_v2_pipeline(
             "qc_tissue_png": compute_sha256(qc_tissue_path),
             "qc_parcellation_png": compute_sha256(qc_parcellation_path),
         }
+        if model_prediction_path is not None:
+            output_checksums["model_prediction"] = compute_sha256(model_prediction_path)
 
         # 2. Measurable Assertions for Validation Gates
         n_rois = int(signals.shape[1])
@@ -1166,6 +1170,8 @@ def run_poc_v2_pipeline(
             "qc_parcellation_png": str(qc_parcellation_path.name),
             "provenance_json": "provenance.json",
         }
+        if model_prediction_path is not None:
+            output_artifacts_dict["model_prediction"] = model_prediction_path.name
 
         provenance_dict: Dict[str, Any] = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
