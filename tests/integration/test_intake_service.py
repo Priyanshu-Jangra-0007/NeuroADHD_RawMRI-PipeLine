@@ -149,6 +149,16 @@ class TestIntakeService(unittest.TestCase):
         self.assertEqual(result["report_extraction"]["files"][0]["status"], "PDF_TEXT_OR_OCR_ENGINE_NOT_AVAILABLE")
         self.assertIn("not used as fMRI input", result["report_extraction"]["notice"])
 
+    def test_tampered_uploaded_report_is_rejected_before_extraction(self):
+        created = self.service.create_session("report")
+        self._upload(self.service, created["session_id"], "radiology-report.pdf", b"%PDF-1.4 placeholder")
+        manifest = self.service.get_session(created["session_id"])
+        stored = self.root / created["session_id"] / manifest["uploaded_files"][0]["storage_path"]
+        stored.write_bytes(b"modified after upload")
+
+        with self.assertRaisesRegex(IntakeError, "integrity check failed"):
+            self.service.process_report_session(created["session_id"])
+
     def test_report_artifact_download_rejects_original_report_and_traversal(self):
         created = self.service.create_session("report")
         with self.assertRaises(IntakeError):
