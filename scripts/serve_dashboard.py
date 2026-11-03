@@ -302,7 +302,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             parsed_host = urlsplit(f"//{host_header}")
             if parsed_host.hostname not in ("127.0.0.1", "localhost"):
                 return self._error("Dashboard Host header is not allowed.", 403)
-            length = int(self.headers.get("Content-Length", "0")
+            length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_REQUEST_BYTES:
                 return self._error("Request body is missing or too large.", 413)
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
