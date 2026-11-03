@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b1020">
+  <title>NeuroADHD | Research Workbench</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="NeuroADHD home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span><strong>neuroadhd</strong><small>RESEARCH WORKBENCH</small></span>
+      </a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav class="nav">
+        <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> Overview</a>
+        <a class="nav-link" href="#runs"><span class="nav-icon">⌁</span> Pipeline runs</a>
+        <a class="nav-link" href="#quality"><span class="nav-icon">⌗</span> Quality control</a>
+        <a class="nav-link" href="#connectivity"><span class="nav-icon">◉</span> Connectivity</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="mode-panel">
+          <div class="mode-dot"></div>
+          <div><strong>Synthetic mode</strong><small>Real-data gate locked</small></div>
+        </div>
+        <div class="sidebar-foot">NeuroADHD RawMRI PoC V2<br>Local research environment</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumb">Research / <strong>Workbench</strong></div>
+        <div class="top-actions">
+          <span class="live-status"><i></i><span id="serverStatus">Connecting</span></span>
+          <span class="avatar">NA</span>
+        </div>
+      </header>
+
+      <section class="page-heading" id="overview">
+        <div>
+          <div class="eyebrow">MRI PROCESSING ENVIRONMENT <span class="eyebrow-line"></span></div>
+          <h1>Research workbench<span>.</span></h1>
+          <p>Run the existing 19-stage pipeline, inspect processing outputs, and explore CC200 functional connectivity.</p>
+        </div>
+        <div class="heading-badge"><span class="shield">⬡</span><span><strong>SAFE EXECUTION</strong><small>STRICTLY SYNTHETIC ONLY</small></span></div>
+      </section>
+
+      <section class="stat-grid">
+        <article class="stat-card">
+          <div class="stat-label">COHORT RUNS</div><div class="stat-value" id="statRuns">—</div>
+          <div class="stat-foot"><span class="stat-symbol blue">▦</span> Saved executions</div>
+        </article>
+        <article class="stat-card">
+          <div class="stat-label">SUBJECTS COMPLETED</div><div class="stat-value" id="statSubjects">—</div>
+          <div class="stat-foot"><span class="stat-symbol green">✓</span> Synthetic subjects</div>
+        </article>
+        <article class="stat-card">
+          <div class="stat-label">CONNECTIVITY FEATURES</div><div class="stat-value">19,900</div>
+          <div class="stat-foot"><span class="stat-symbol violet">◈</span> CC200 ROI pairs</div>
+        </article>
+        <article class="stat-card">
+          <div class="stat-label">REAL-DATA AUTHORIZATION</div><div class="stat-value locked">LOCKED</div>
+          <div class="stat-foot"><span class="stat-symbol amber">⬡</span> 23 requirements pending</div>
+        </article>
+      </section>
+
+      <section class="work-grid">
+        <article class="panel run-panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">PIPELINE CONTROL</div><h2>Start a synthetic run</h2></div>
+            <span class="pill pill-green">READY</span>
+          </div>
+          <p class="panel-desc">Execute the existing MRI preprocessing pipeline against generated synthetic NIfTI data.</p>
+          <form id="runForm">
+            <div class="form-grid">
+              <label>Number of subjects
+                <select id="nSubjects"><option value="1">1 subject</option><option value="2" selected>2 subjects</option><option value="3">3 subjects</option><option value="4">4 subjects</option></select>
+              </label>
+              <label>BOLD volumes
+                <select id="tVol"><option value="50">50 volumes</option><option value="60" selected>60 volumes</option><option value="80">80 volumes</option><option value="100">100 volumes</option><option value="120">120 volumes</option></select>
+              </label>
+              <label>Random seed
+                <input id="seed" type="number" min="0" max="2147483647" value="42">
+              </label>
+              <label>Atlas mode
+                <select id="atlasMode"><option value="synthetic_phantom" selected>Synthetic phantom atlas</option><option value="canonical">Canonical CC200 atlas</option></select>
+              </label>
+            </div>
+            <div class="run-note"><span>ⓘ</span><span>Subjects are processed sequentially to limit memory use. Each run is checkpointed and its output hashes are verified.</span></div>
+            <label class="model-toggle"><input id="modelInference" type="checkbox" disabled><span><strong>Include frozen model inference</strong><small id="modelAvailability">Available when the trusted model is mounted on the dashboard server.</small></span></label>
+            <button class="primary-button" id="runButton" type="submit"><span class="button-play">▶</span> Run MRI pipeline <span class="button-arrow">→</span></button>
+          </form>
+          <div class="run-progress hidden" id="runProgress">
+            <div class="progress-top"><strong id="runProgressTitle">Pipeline starting</strong><span id="runProgressText">0 / 0</span></div>
+            <div class="progress-track"><span id="runProgressBar"></span></div>
+            <div class="progress-bottom" id="runProgressHint">Waiting for first subject...</div>
+            <div class="log-actions"><button class="ghost-button" id="viewRunLog" type="button">View runner log</button></div>
+            <div class="run-log hidden" id="runLogPanel"><div class="log-head"><strong>Pipeline runner log</strong><button class="ghost-button" id="closeRunLog" type="button">Close</button></div><pre id="runLogText">Log is not available yet.</pre></div>
+          </div>
+        </article>
+
+        <article class="panel pipeline-panel">
+          <div class="panel-head"><div><div class="panel-kicker">PROCESSING WORKFLOW</div><h2>Pipeline stages</h2></div><span class="pill pill-blue">19 STAGES</span></div>
+          <div class="pipeline-list">
+            <div class="pipe-step"><span class="pipe-index">01—06</span><span class="pipe-name">MRI preprocessing</span><span class="pipe-detail">BIDS · Motion · Segmentation · Registration · Cleaning</span></div>
+            <div class="pipe-step"><span class="pipe-index">07</span><span class="pipe-name">CC200 parcellation</span><span class="pipe-detail">200 anatomical regions</span></div>
+            <div class="pipe-step"><span class="pipe-index">08</span><span class="pipe-name">ROI time-series</span><span class="pipe-detail">Regional BOLD signals</span></div>
+            <div class="pipe-step"><span class="pipe-index">09—10</span><span class="pipe-name">Functional connectivity</span><span class="pipe-detail">Pearson correlation · Fisher-z</span></div>
+            <div class="pipe-step"><span class="pipe-index">11—12</span><span class="pipe-name">ML inference & QC</span><span class="pipe-detail">Frozen model · Provenance · Reports</span></div>
+          </div>
+          <div class="pipeline-foot"><span class="foot-led"></span> Existing preprocessing implementation is reused</div>
+        </article>
+      </section>
+
+      <section class="panel runs-panel" id="runs">
+        <div class="panel-head">
+          <div><div class="panel-kicker">EXECUTION HISTORY</div><h2>Pipeline runs</h2></div>
+          <button class="ghost-button" id="refreshRuns">↻ Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table class="run-table">
+            <thead><tr><th>COHORT</th><th>CREATED</th><th>SUBJECTS</th><th>STATUS</th><th></th></tr></thead>
+            <tbody id="runsBody"><tr><td colspan="5" class="empty-cell">Loading saved runs…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="results-section hidden" id="resultsSection">
+        <div class="results-heading">
+          <div><div class="panel-kicker">RUN INSPECTOR</div><h2 id="selectedRunTitle">Selected cohort</h2><p id="selectedRunSub" class="muted">Synthetic run details</p></div>
+          <div class="subject-picker"><label for="subjectSelect">SUBJECT</label><select id="subjectSelect"></select></div>
+        </div>
+
+        <div class="metric-grid" id="subjectMetrics">
+          <article class="metric-card"><span>MEAN FRAMEWISE DISPLACEMENT</span><strong id="meanFd">—</strong><small>mm · Power FD</small></article>
+          <article class="metric-card"><span>MAXIMUM MOTION</span><strong id="maxFd">—</strong><small>mm · Peak FD</small></article>
+          <article class="metric-card"><span>PEAK PROCESS MEMORY</span><strong id="peakMem">—</strong><small>GB · Process RSS</small></article>
+          <article class="metric-card"><span>PIPELINE RUNTIME</span><strong id="runtime">—</strong><small>seconds</small></article>
+        </div>
+
+        <div class="panel section-panel" id="quality">
+          <div class="panel-head"><div><div class="panel-kicker">QUALITY CONTROL</div><h2>Processing quality</h2></div><span class="pill pill-amber">THRESHOLDS PENDING</span></div>
+          <div class="qc-banner"><span>!</span><div><strong>Measurements are displayed; research acceptance thresholds are not approved.</strong><small>QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL</small></div></div>
+          <div class="qc-facts" id="qcFacts"></div>
+          <div class="qc-images" id="qcImages"></div>
+          <div class="motion-chart-wrap"><div class="chart-title">Framewise displacement over time <span>Power FD · mm</span></div><canvas id="fdChart" height="150"></canvas></div>
+        </div>
+
+        <div class="analysis-grid">
+          <article class="panel section-panel" id="timeseries">
+            <div class="panel-head"><div><div class="panel-kicker">REGIONAL SIGNAL</div><h2>ROI time series</h2></div><select id="roiSelect" class="compact-select"></select></div>
+            <p class="panel-desc">Mean cleaned BOLD signal for the selected CC200 region.</p>
+            <canvas id="timeChart" height="190"></canvas>
+          </article>
+          <article class="panel section-panel" id="connectivity">
+            <div class="panel-head"><div><div class="panel-kicker">FUNCTIONAL CONNECTIVITY</div><h2>CC200 connectivity matrix</h2></div><span class="pill pill-blue">200 × 200</span></div>
+            <p class="panel-desc">Symmetric Fisher-z transformed Pearson correlation matrix.</p>
+            <canvas id="connectivityCanvas" width="400" height="400"></canvas>
+            <div class="heat-legend"><span>Negative</span><div class="legend-gradient"></div><span>Positive</span></div>
+            <div class="matrix-foot"><strong>19,900</strong> unique ROI connections <span id="matrixRange"></span></div>
+          </article>
+        </div>
+        <article class="panel section-panel model-panel" id="modelPanel">
+          <div class="panel-head"><div><div class="panel-kicker">MACHINE LEARNING</div><h2>Frozen model output</h2></div><span class="pill pill-violet">ZERO-REFIT</span></div>
+          <div id="modelOutput" class="model-output">No model inference artifact is available for this run. Configure the trusted model mount on the server to enable synthetic demonstration inference.</div>
+        </article>
+      </section>
+
+      <footer class="footer">
+        <span>NeuroADHD RawMRI PoC V2</span>
+        <span>Research software · Not a clinical diagnostic tool</span>
+      </footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
