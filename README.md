@@ -112,24 +112,52 @@ Uploads are staged locally under outputs/intake_sessions/. This local intake fea
 
 ---
 
-## 6. Commands Planned for Future Phases
+## 6. Pipeline Execution & Automated Tests
 
-The following commands are planned for execution upon explicit user approval of subsequent phases:
+### 6.1 Production Pipeline Entry Points
+The production synthetic pipeline entry points are:
 
 ```bash
-# PHASE 2: Execute single-scan proof of concept on verified test scan
-python scripts/run_single_scan_poc.py --bids-dir /path/to/sub-01 --output-dir outputs/sub-01
+# Corrected PoC V2 single-scan synthetic execution
+python scripts/run_poc_v2.py --output-dir outputs/synthetic_run --t-vol 60 --seed 42
 
-# PHASE 3: Verify feature-level concordance against historical CC200 output
-python scripts/verify_feature_compatibility.py --new-roi outputs/sub-01/roi_CC200.csv --historical-roi /path/to/historical/roi_CC200.csv
-
-# Run automated validation test suite
-pytest tests/unit -v
+# Synthetic cohort runner (batch execution)
+python scripts/run_synthetic_cohort.py --output-dir outputs/dashboard_cohorts/test_cohort --n-subjects 2 --t-vol 60 --seed 42
 ```
+
+> [!WARNING]
+> **REJECTED V1 PROTOTYPE:**
+> `scripts/run_single_scan_poc.py` is the **REJECTED V1 prototype** (see [REJECTED_POC_FORENSIC_AUDIT.md](docs/REJECTED_POC_FORENSIC_AUDIT.md)). It suffered from multi-stage interpolation blurring, incorrect affine composition order, and unverified tissue masks. Do **NOT** use it as an entry point.
+
+### 6.2 Automated Test Suite
+Run the automated test suite with the HMAC integrity key:
+
+```bash
+NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
+```
+
+**Test Suite Metrics (Measured November 2026):**
+- **Collected:** 267 tests
+- **Passed:** 260 passed
+- **Skipped:** 7 skipped
+- **Statement Coverage:** 81% across `src/` (`pytest --cov=src`)
+
+**Running the model-dependent tests:**
+- **2 skipped model tests** (`test_container_require_model_inference_fails_closed_without_mount`, etc.) require setting `NEUROADHD_MODEL_DIR` pointing to the trusted frozen model directory (e.g. `NeuroADHD_ModelBenchmark/results/final_locked`).
+- **5 skipped Docker tests** require a running Docker daemon and container environment (`docker_run_synthetic.sh`).
 
 ---
 
-## 7. Project Documentation Sitemap
+## 7. Known Scientific Limitation
+
+> [!WARNING]
+> **UNPROVEN FEATURE COMPATIBILITY ON REAL PARTICIPANT DATA**
+>
+> The V2 preprocessing pipeline has been verified against synthetic phantoms and unit tests, but has **never been compared against historical C-PAC CC200 features on a real participant scan** (provenance records `historical_concordance_status: NOT_ASSESSED`). Because real participant execution remains locked under the research authorization gate, feature compatibility between the newly engineered pipeline outputs (`roi_CC200.csv` and resulting Fisher-$z$ connectivity matrices) and the historical training data used to fit the downstream frozen model remains empirically unproven. Investigators must not assume that the frozen model will produce identical probability scores without a formal, authorized concordance audit on real data. See [PHASE_A_9_KNOWN_LIMITATIONS.md](docs/PHASE_A_9_KNOWN_LIMITATIONS.md).
+
+---
+
+## 8. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
 - [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
@@ -149,7 +177,14 @@ Detailed documentation is available in the `docs/` folder:
 
 ---
 
-## 8. Changelog
+## 9. Changelog
+
+- **2026-11-10 (Pipeline Clean-up & Documentation Audit)**:
+  - Added automated stale `RUNNING` cohort detection and atomic recovery to `TERMINATED` state in `scripts/serve_dashboard.py`.
+  - Added UI indicator in `frontend/index.html` clarifying execution duration for canonical CC200 atlas mode on CPU.
+  - Added synthetic phantom data disclaimer to model output panel in `frontend/app.js`.
+  - Added formal documentation of unproven feature concordance on real participant data.
+  - Expanded test suite to 267 collected tests (260 passed, 7 skipped; 81% statement coverage across `src/`).
 
 - **2026-11-03 (Local MRI Intake UI & Validation)**:
   - Added the complete BIDS-style MRI session ZIP as the primary dashboard upload.
@@ -165,10 +200,10 @@ Detailed documentation is available in the `docs/` folder:
   - Enforced strict historical 0.96 tissue probability thresholding and 1-voxel 3D morphological erosion.
   - Updated nuisance model in `src/preprocessing/nuisance.py` with 5 aCompCor components extracted strictly from eroded anatomical tissue masks (31 confound columns total, GSR OFF, mean tissue signals OFF).
   - Implemented orthogonal slice contour inspection figure generator in `src/preprocessing/qc.py`.
-  - Created comprehensive test suite (34 tests, 89% coverage) covering registration, segmentation, nuisance regression, and an end-to-end synthetic pipeline.
+  - Created comprehensive test suite (initially 34 tests, now expanded to 267 collected tests: 260 passed, 7 skipped with 81% statement coverage as of November 2026).
   - Benchmarked peak RAM at 0.29 GB (well below the 2.50 GB ceiling).
   - Single-subject raw scan execution paused awaiting code review.
-- **2026-10-21 (Phase 1 Completed)**:
+- **2026-10-21 (Phase 1 Baseline Audit & Architecture)**:
   - Established isolated `NeuroADHD_RawMRI` project workspace.
   - Completed read-only audit of `NeuroADHD`, `NeuroADHD_ModelBenchmark`, `NeuroADHD_ModelDashboard`, and `ADHD200_Official`.
   - Cataloged historical C-PAC preprocessing parameters with strict status classifications (`VERIFIED`, `PROVISIONAL`, `NOT VERIFIED`).
