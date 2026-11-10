@@ -34,8 +34,7 @@ CHUNK_BYTES = 1024 * 1024
 SCAN_SUFFIXES = (".zip", ".nii.gz", ".nii", ".dcm", ".ima", ".json", ".tsv", ".bval", ".bvec", ".txt", ".csv")
 REPORT_SUFFIXES = (".pdf", ".jpg", ".jpeg", ".png")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_ROOT = Path(os.environ.get("NEUROADHD_DATA_ROOT") or (PROJECT_ROOT / "outputs" / "intake_data"))
+DEFAULT_DATA_ROOT = Path(os.environ.get("NEUROADHD_DATA_ROOT") or (Path.home() / "NeuroADHD_Data"))
 
 
 class IntakeError(RuntimeError):
@@ -119,11 +118,10 @@ class IntakeService:
         try:
             self.data_root.relative_to(project_root)
             allow_internal = os.environ.get("NEUROADHD_ALLOW_INTERNAL_ROOT") == "1"
-            is_default = (self.data_root == DEFAULT_DATA_ROOT.resolve())
-            if not (allow_internal or (is_default and os.environ.get("NEUROADHD_ALLOW_INTERNAL_ROOT") != "0")):
+            if not allow_internal:
                 raise IntakeError(
                     f"Data root cannot be inside the project repository directory ({project_root}). "
-                    "MRI data must be stored externally (e.g. NeuroADHD_Converted)."
+                    "MRI data must be stored externally (e.g. ~/NeuroADHD_Data)."
                 )
         except ValueError:
             pass

@@ -20,23 +20,21 @@ Inputs supported:
 All real participant data, uploaded DICOM studies, converted BIDS datasets, validated session ZIPs, and conversion audit logs are strictly stored **outside the project code repository**:
 
 ```bash
-export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
+export NEUROADHD_DATA_ROOT=~/NeuroADHD_Data
 ```
 
-If `NEUROADHD_DATA_ROOT` is unset, the pipeline defaults to `<your-project-folder>/outputs/intake_data`.
+If `NEUROADHD_DATA_ROOT` is unset, the pipeline defaults to `~/NeuroADHD_Data`.
 
 ### Directory Layout
 
 ```text
-2026-09-29/
-├── untitled folder/            <-- NeuroADHD codebase (NEVER holds real MRI data)
-│
-└── NeuroADHD_Converted/        <-- External storage root (excluded from Git)
-    ├── dicom_input/            <-- Uploaded raw DICOM studies & archives
-    ├── staged_sessions/        <-- Intake staging sessions (replaces outputs/intake_sessions)
-    ├── neuroadhd_bids/         <-- Converted BIDS datasets (sub-<id>/ses-<id>/...)
-    ├── validated_sessions/     <-- Packaged, downloadable BIDS session ZIPs
-    └── conversion_logs/        <-- Anonymized conversion audit logs (no patient identifiers)
+~                             <-- User home directory (outside the project repository)
+└── NeuroADHD_Data/           <-- External storage root (default when NEUROADHD_DATA_ROOT is unset)
+    ├── dicom_input/          <-- Uploaded raw DICOM studies & archives
+    ├── staged_sessions/      <-- Intake staging sessions (replaces outputs/intake_sessions)
+    ├── neuroadhd_bids/       <-- Converted BIDS datasets (sub-<id>/ses-<id>/...)
+    ├── validated_sessions/   <-- Packaged, downloadable BIDS session ZIPs
+    └── conversion_logs/      <-- Anonymized conversion audit logs (no patient identifiers)
 ```
 
 Directories are created with restrictive permissions (`0o700`) and files with (`0o600`). Path traversal and symlinks are strictly rejected.
@@ -92,7 +90,7 @@ After conversion (or upon direct upload), the session is validated:
 ## 5. Downloadable Validated BIDS Session ZIP
 
 Upon successful conversion and validation, the dashboard provides a **Download validated BIDS session ZIP** button.
-- The archive is saved under `NeuroADHD_Converted/validated_sessions/sub-<id>_bids.zip`.
+- The archive is saved under `~/NeuroADHD_Data/validated_sessions/sub-<id>_bids.zip` (or `$NEUROADHD_DATA_ROOT/validated_sessions/sub-<id>_bids.zip`).
 - Contains `dataset_description.json`, `anat/`, and `func/` NIfTI and sidecar files.
 - Original DICOM files and unredacted scanner metadata are strictly excluded.
 
@@ -103,7 +101,7 @@ Upon successful conversion and validation, the dashboard provides a **Download v
 ~~~bash
 cd "<your-project-folder>"
 source .venv/bin/activate
-export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
+export NEUROADHD_DATA_ROOT=~/NeuroADHD_Data
 python scripts/serve_dashboard.py
 ~~~
 
