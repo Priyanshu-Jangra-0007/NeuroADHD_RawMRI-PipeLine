@@ -8,7 +8,7 @@
 **Repository:** `Priyanshu-Jangra-0007/NeuroADHD_RawMRI-PipeLine`  
 **Branch:** `main`  
 **Review Target:** Primary Research Supervisor & Thesis Evaluation Committee  
-**Machine-Readable Twin:** [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)  
+**Machine-Readable Twin:** [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)  
 
 ---
 
@@ -17,7 +17,7 @@
 This register provides the formal, structured intake log for capturing, tracking, and auditing the Primary Research Supervisor's decisions regarding MRI preprocessing, parcellation, and quality control (QC) acceptance criteria for the NeuroADHD RawMRI PoC V2 pipeline.
 
 Under Phase A.6:
-- Every decision item is actively tracked in both human-readable Markdown (this document) and machine-readable JSON ([`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)).
+- Every decision item is actively tracked in both human-readable Markdown (this document) and machine-readable JSON ([`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)).
 - **Current Operational Status:** All items below remain strictly:
   $$\mathbf{PENDING}$$
 - No supervisor decision will be recorded as `APPROVED` without verified supporting evidence and formal sign-off.

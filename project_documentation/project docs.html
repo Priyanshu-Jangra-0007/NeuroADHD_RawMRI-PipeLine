@@ -824,7 +824,7 @@ This section assumes you have just cloned or opened the project folder for the v
 <h3>2.2 Step-by-Step Installation Commands</h3>
 
 <h4>Command 1: Navigate to the Project Root</h4>
-<pre><code>cd "/Users/apple/Documents/Codex/2026-09-29/untitled folder"</code></pre>
+<pre><code>cd "&lt;your-project-folder&gt;"</code></pre>
 <p>
 <strong>Where to execute:</strong> In your operating system Terminal.<br>
 <strong>What it does:</strong> Changes your active directory into the project root folder.<br>
@@ -1304,8 +1304,8 @@ To demonstrate end-to-end scientific correctness prior to human data execution, 
   <li>
     <strong>Ground-Truth Correlation Recovery:</strong> Known neurobiological correlation structures were injected into synthetic CC200 parcels to test whether filtering and parcellation preserve true functional connectivity:
     <ul>
-      <li><em>Positive Correlation Pair (Parcel 12 &amp; Parcel 45):</em> Injected $r &gt; 0.75$; recovered Pearson $r = 0.7788$ (successfully passes the $&gt; 0.70$ acceptance threshold).</li>
-      <li><em>Negative Correlation Pair (Parcel 70 &amp; Parcel 85):</em> Injected $r &lt; -0.70$; recovered Pearson $r = -0.7107$ (successfully passes the $&lt; -0.65$ acceptance threshold).</li>
+      <li><em>Positive Correlation Pair (Parcel 12 &amp; Parcel 45):</em> Injected $r &gt; 0.75$; recovered Pearson $r = +0.9794$ (reported as $+0.9794$ to $+0.9803$ from a synthetic seed-42 run, varying slightly by platform; successfully passes the $&gt; 0.70$ acceptance threshold).</li>
+      <li><em>Negative Correlation Pair (Parcel 70 &amp; Parcel 85):</em> Injected $r &lt; -0.70$; recovered Pearson $r = -0.9853$ (reported as $-0.9853$ to $-0.9856$ from a synthetic seed-42 run, varying slightly by platform; successfully passes the $&lt; -0.65$ acceptance threshold).</li>
       <li><em>Independent Parcels:</em> Background parcels exhibited near-zero cross-correlation, confirming no spurious signal bleeding across parcellation boundaries.</li>
     </ul>
   </li>
@@ -1313,10 +1313,10 @@ To demonstrate end-to-end scientific correctness prior to human data execution, 
     <strong>Full 19,900 Fisher-$z$ Vector Extraction:</strong> All 19 stage deliverables were generated and verified non-empty. The complete $19,900$-dimensional Fisher-$z$ connectivity vector was computed and validated with $100\%$ finite numerical values ($\text{NaN} = 0, \text{Inf} = 0$).
   </li>
   <li>
-    <strong>Numerical Determinism &amp; Reproducibility:</strong> Two back-to-back pipeline executions (Run 1 vs. Run 2) using identical random seeds yielded bitwise-reproducible outputs. Across all 200 CC200 ROI timeseries and all 19,900 connectivity edges, the absolute difference was strictly bounded by float64 machine epsilon ($|\text{Run 1} - \text{Run 2}| &lt; 10^{-7}$).
+    <strong>Numerical Determinism &amp; Reproducibility:</strong> Two back-to-back pipeline executions (Run 1 vs. Run 2) using identical random seeds yielded bitwise-reproducible outputs. Across all 200 CC200 ROI timeseries and all 19,900 connectivity edges, the maximum absolute difference was strictly $0.0$ ($|\text{Run 1} - \text{Run 2}| = 0.0 \le 10^{-7}$).
   </li>
   <li>
-    <strong>Resource &amp; Memory Bounds:</strong> Total execution runtime was $108.36\text{ s}$ (well within the $600\text{ s}$ 10-minute budget), and peak RSS memory was $0.46\text{ GB}$ (far below the strict $2.50\text{ GB}$ hardware ceiling).
+    <strong>Resource &amp; Memory Bounds:</strong> Execution runtime was $\approx 84.37\text{ s}$ (well within the $600\text{ s}$ 10-minute budget), and peak RSS memory was $\approx 0.92\text{ GB}$ (far below the strict $2.50\text{ GB}$ hardware ceiling; benchmark metrics are from a synthetic seed-42 run and vary slightly by platform).
   </li>
 </ul>
 
@@ -1408,7 +1408,7 @@ Landmark displacement evaluation uses DIPY's complete composed transformation ch
 <div class="note-box" style="margin: 16px 0; padding: 14px 18px; border-left: 4px solid var(--accent); background: #fdfaf2; border-radius: 4px;">
   <strong>CRITICAL SCIENTIFIC CAVEAT (SYNTHETIC PHANTOM EXPERIMENT ONLY):</strong>
   <p style="margin: 6px 0 0;">
-    <strong>Results are from a synthetic phantom only, not real human MRI data.</strong> The spatial accuracy metrics reported above (including mean TRE of $1.0624\text{ mm}$ and parcel Dice of $0.7562$) were obtained using a mathematically simulated digital phantom subjected to smooth, known synthetic deformations. Real participant anatomical data exhibits complex inter-subject morphological variability, gyrification patterns, skull thickness variations, and pathological tissue distortions that were not present in this synthetic experiment. These results demonstrate software execution and mathematical correctness of the SyN transformation chain, but do NOT prove clinical accuracy on real patient scans. Real-data processing remains strictly locked behind the research authorization register.
+    <strong>Results are from a synthetic phantom only, not real human MRI data.</strong> The spatial accuracy metrics reported above (including mean TRE of $1.0624\text{ mm}$ and parcel Dice of $0.7562$) were obtained using a mathematically simulated digital phantom subjected to smooth, known synthetic deformations (evaluated from a synthetic seed-42 run; values vary slightly by platform). Real participant anatomical data exhibits complex inter-subject morphological variability, gyrification patterns, skull thickness variations, and pathological tissue distortions that were not present in this synthetic experiment. These results demonstrate software execution and mathematical correctness of the SyN transformation chain, but do NOT prove clinical accuracy on real patient scans. Real-data processing remains strictly locked behind the research authorization register.
   </p>
 </div>
 
@@ -1708,7 +1708,7 @@ Evaluates the authorization register (<code>configs/research_authorization_regis
 
 <h4>B. Synthetic Pipeline Verification (<code>GET /api/pipeline/verification</code>)</h4>
 <p>
-Reads the cryptographic verification results produced by <code>scripts/validate_step3_pipeline.py</code>. Confirms that all 19 pipeline stages have executed successfully with validated ground-truth correlation recovery ($r_{\text{pos}} = 0.7788$, $r_{\text{neg}} = -0.7107$), bitwise reproducibility, and verified CC200 atlas geometry.
+Reads the cryptographic verification results produced by <code>scripts/validate_step3_pipeline.py</code>. Confirms that all 19 pipeline stages have executed successfully with validated ground-truth correlation recovery ($r_{\text{pos}} = +0.9794$, $r_{\text{neg}} = -0.9853$, from a synthetic seed-42 run and varying slightly by platform, e.g. $+0.9803$ and $-0.9856$), bitwise reproducibility (max absolute difference $0.0$), and verified CC200 atlas geometry.
 </p>
 </section>
 
@@ -1827,7 +1827,7 @@ This section follows a real-world scenario from start to finish:
 <h3>Phase 1: Starting the Platform</h3>
 <ol>
   <li>Dr. Sarah opens Terminal and runs:
-    <pre><code>cd "/Users/apple/Documents/Codex/2026-09-29/untitled folder"
+    <pre><code>cd "&lt;your-project-folder&gt;"
 source .venv/bin/activate
 export NEUROADHD_HMAC_KEY="sarah_key_2026"
 PYTHONPATH=. .venv/bin/python scripts/serve_dashboard.py</code></pre>

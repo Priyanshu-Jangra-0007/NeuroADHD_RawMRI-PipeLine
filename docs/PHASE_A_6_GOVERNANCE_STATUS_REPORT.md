@@ -28,7 +28,7 @@
 - **Applicable Standard:** ICMR National Ethical Guidelines for Biomedical and Health Research Involving Human Participants (2017), Section 5 (Vulnerable Populations - Pediatric Research).
 - **Current Status:** `PENDING`
 - **Current Findings:**
-  - A comprehensive study protocol for computational secondary analysis of pediatric neuroimaging data has been drafted in Phase A.5 ([`docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md)).
+  - A comprehensive study protocol for computational secondary analysis of pediatric neuroimaging data has been drafted in Phase A.5 ([`docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md`](<your-project-folder>/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md)).
   - Formal submission to the institutional ethics committee is awaiting Primary Research Supervisor sign-off on the Phase A.5 master review package.
   - Zero ethics clearance numbers, approval certificates, or validity windows currently exist.
 - **Prerequisite to Clear:** Formal institutional submission, committee review, and receipt of an authenticated written approval letter with registered protocol ID.

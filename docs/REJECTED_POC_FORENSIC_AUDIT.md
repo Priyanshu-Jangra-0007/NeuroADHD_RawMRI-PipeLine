@@ -29,17 +29,17 @@ A line-by-line inspection of `scripts/run_single_scan_poc.py`, helper modules un
 
 | Feature / Step | Claimed in Previous Reports | Actual Executed Code Evidence | Evidence Path & Line Reference |
 | :--- | :--- | :--- | :--- |
-| **`clean_img` Standardization** | Stated to use standard settings or unstandardized residuals | `clean_img` explicitly passed `standardize=False` | [`src/preprocessing/nuisance.py:L122`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L122) |
-| **Signal Standardization Timing** | Claimed standardized | Neither before nor after ROI averaging; `NiftiLabelsMasker` also set `standardize=False` | [`src/parcellation/extractor.py:L35`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/parcellation/extractor.py#L35) |
-| **Motion Realignment** | DIPY 3D rigid realignment with mean reference | **Verified executed**: Each volume was transformed via DIPY `AffineRegistration` using `RigidTransform3D`; reference volume was the temporal mean (`np.mean(data, axis=3)`) | [`src/preprocessing/motion.py:L99-L120`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/motion.py#L99-L120) |
-| **EPI-to-T1w Coregistration** | Stated to be part of normalization workflow | **Never executed**: `register_epi_to_t1w` was imported and `t1_img` was loaded, but the function was never called | [`scripts/run_single_scan_poc.py:L31,L99,L133`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L31-L133) |
-| **T1w-to-MNI Nonlinear Warp** | Described as SyN or affine to MNI152 | **Never executed**: No nonlinear warp (SyN/FNIRT/ANTs) was implemented or called | [`src/preprocessing/registration.py:L49-L80`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py#L49-L80) |
-| **Claimed MNI Normalization** | "Normalized to MNI152 standard space" | Consisted solely of `nilearn.image.resample_to_img(bold_4d, target_atlas_img, interpolation="continuous")` | [`src/preprocessing/registration.py:L72-L78`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py#L72-L78) |
-| **CompCor Masking** | Stated to match C-PAC aCompCor (WM/CSF) | Heuristic intensity threshold mask (`mean > 0.15 * max`), top 10% highest variance voxels across whole brain | [`scripts/run_single_scan_poc.py:L147`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L147), [`src/preprocessing/nuisance.py:L47-L50`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L47-L50) |
-| **Confound Matrix** | 24 motion + 5 CompCor + trends | 31 columns: 24 Friston regressors, 5 aCompCor components, 2 polynomial trends (linear, quadratic). GSR OFF. | [`src/preprocessing/nuisance.py:L68-L83`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L68-L83) |
-| **Bandpass Filtering** | 0.01 - 0.10 Hz simultaneous filtering | Simultaneously filtered in `clean_img(low_pass=0.10, high_pass=0.01, t_r=2.5)` | [`src/preprocessing/nuisance.py:L123-L125`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L123-L125) |
-| **ROI Extraction Dimensions** | 200 parcels, 152 timepoints | Shape: $(200, 153)$ (column 0: `node/volume`, columns 1..152: timepoints $0 \dots 151$) | [`src/parcellation/extractor.py:L62-L67`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/parcellation/extractor.py#L62-L67) |
-| **Feature Extraction** | 19,900 Fisher-z edges | Authoritative upper-triangle extraction ($k=1$), clipped to $[-1+\epsilon, 1-\epsilon]$, transformed via $\operatorname{arctanh}(r)$ | [`src/features/connectivity.py:L47-L56`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/features/connectivity.py#L47-L56) |
+| **`clean_img` Standardization** | Stated to use standard settings or unstandardized residuals | `clean_img` explicitly passed `standardize=False` | [`src/preprocessing/nuisance.py:L122`](<your-project-folder>/src/preprocessing/nuisance.py#L122) |
+| **Signal Standardization Timing** | Claimed standardized | Neither before nor after ROI averaging; `NiftiLabelsMasker` also set `standardize=False` | [`src/parcellation/extractor.py:L35`](<your-project-folder>/src/parcellation/extractor.py#L35) |
+| **Motion Realignment** | DIPY 3D rigid realignment with mean reference | **Verified executed**: Each volume was transformed via DIPY `AffineRegistration` using `RigidTransform3D`; reference volume was the temporal mean (`np.mean(data, axis=3)`) | [`src/preprocessing/motion.py:L99-L120`](<your-project-folder>/src/preprocessing/motion.py#L99-L120) |
+| **EPI-to-T1w Coregistration** | Stated to be part of normalization workflow | **Never executed**: `register_epi_to_t1w` was imported and `t1_img` was loaded, but the function was never called | [`scripts/run_single_scan_poc.py:L31,L99,L133`](<your-project-folder>/scripts/run_single_scan_poc.py#L31-L133) |
+| **T1w-to-MNI Nonlinear Warp** | Described as SyN or affine to MNI152 | **Never executed**: No nonlinear warp (SyN/FNIRT/ANTs) was implemented or called | [`src/preprocessing/registration.py:L49-L80`](<your-project-folder>/src/preprocessing/registration.py#L49-L80) |
+| **Claimed MNI Normalization** | "Normalized to MNI152 standard space" | Consisted solely of `nilearn.image.resample_to_img(bold_4d, target_atlas_img, interpolation="continuous")` | [`src/preprocessing/registration.py:L72-L78`](<your-project-folder>/src/preprocessing/registration.py#L72-L78) |
+| **CompCor Masking** | Stated to match C-PAC aCompCor (WM/CSF) | Heuristic intensity threshold mask (`mean > 0.15 * max`), top 10% highest variance voxels across whole brain | [`scripts/run_single_scan_poc.py:L147`](<your-project-folder>/scripts/run_single_scan_poc.py#L147), [`src/preprocessing/nuisance.py:L47-L50`](<your-project-folder>/src/preprocessing/nuisance.py#L47-L50) |
+| **Confound Matrix** | 24 motion + 5 CompCor + trends | 31 columns: 24 Friston regressors, 5 aCompCor components, 2 polynomial trends (linear, quadratic). GSR OFF. | [`src/preprocessing/nuisance.py:L68-L83`](<your-project-folder>/src/preprocessing/nuisance.py#L68-L83) |
+| **Bandpass Filtering** | 0.01 - 0.10 Hz simultaneous filtering | Simultaneously filtered in `clean_img(low_pass=0.10, high_pass=0.01, t_r=2.5)` | [`src/preprocessing/nuisance.py:L123-L125`](<your-project-folder>/src/preprocessing/nuisance.py#L123-L125) |
+| **ROI Extraction Dimensions** | 200 parcels, 152 timepoints | Shape: $(200, 153)$ (column 0: `node/volume`, columns 1..152: timepoints $0 \dots 151$) | [`src/parcellation/extractor.py:L62-L67`](<your-project-folder>/src/parcellation/extractor.py#L62-L67) |
+| **Feature Extraction** | 19,900 Fisher-z edges | Authoritative upper-triangle extraction ($k=1$), clipped to $[-1+\epsilon, 1-\epsilon]$, transformed via $\operatorname{arctanh}(r)$ | [`src/features/connectivity.py:L47-L56`](<your-project-folder>/src/features/connectivity.py#L47-L56) |
 
 ---
 
@@ -49,24 +49,24 @@ A line-by-line inspection of `scripts/run_single_scan_poc.py`, helper modules un
 The historical connectivity matrix contains $\binom{200}{2} = 19,900$ unique pairwise edges. A potential failure mode in functional connectivity pipelines is edge misalignment caused by row-major vs. column-major flattening, varying 0-based vs. 1-based indexing, or column positional mismatch.
 
 Static code inspection reveals:
-1. **Authoritative Edge Names**: [`get_feature_names()`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/features/connectivity.py#L13-L16) generates edge names using `itertools.combinations(range(1, 201), 2)`. This yields:
+1. **Authoritative Edge Names**: [`get_feature_names()`](<your-project-folder>/src/features/connectivity.py#L13-L16) generates edge names using `itertools.combinations(range(1, 201), 2)`. This yields:
    ```python
    ["ROI_001__ROI_002", "ROI_001__ROI_003", ..., "ROI_199__ROI_200"]
    ```
-2. **Matrix Extraction**: [`compute_connectivity_vector()`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/features/connectivity.py#L50-L52) extracts edges via:
+2. **Matrix Extraction**: [`compute_connectivity_vector()`](<your-project-folder>/src/features/connectivity.py#L50-L52) extracts edges via:
    ```python
    tri_i, tri_j = np.triu_indices(200, k=1)
    edge_corr = corr[tri_i, tri_j]
    ```
    In NumPy, `np.triu_indices(N, k=1)` traverses upper-triangle coordinates in strict row-major order: $(0, 1), (0, 2), \dots, (0, 199), (1, 2), \dots, (198, 199)$. This maps 1-to-1 to the pairs generated by `itertools.combinations(range(1, 201), 2)`.
-3. **Explicit Key-Based Matching**: In [`scripts/run_single_scan_poc.py:L198`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L198), edges are matched to the historical feature table using named column selection:
+3. **Explicit Key-Based Matching**: In [`scripts/run_single_scan_poc.py:L198`](<your-project-folder>/scripts/run_single_scan_poc.py#L198), edges are matched to the historical feature table using named column selection:
    ```python
    hist_table_edges = sub_row[edge_names].to_numpy(dtype=np.float64).flatten()
    ```
    The comparison does not rely on arbitrary column index positions; it indexes columns by exact string identity.
 
 ### 2.2 Numerical Proof of Mathematical Equivalence
-In [`scripts/run_single_scan_poc.py:L186-L202`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L186-L202), the pipeline re-extracted 19,900 Fisher-$z$ edges from the historical `roi_CC200.csv` using the Python feature extraction function and compared them directly against `sub_row[edge_names]` from `down/NeuroADHD/data/adhd200/features/cc200/cc200_connectivity_features.csv`:
+In [`scripts/run_single_scan_poc.py:L186-L202`](<your-project-folder>/scripts/run_single_scan_poc.py#L186-L202), the pipeline re-extracted 19,900 Fisher-$z$ edges from the historical `roi_CC200.csv` using the Python feature extraction function and compared them directly against `sub_row[edge_names]` from `down/NeuroADHD/data/adhd200/features/cc200/cc200_connectivity_features.csv`:
 ```
 Verification: Historical CSV re-extraction matches feature table (Max Abs Diff: 4.93e-10)
 ```
@@ -86,20 +86,20 @@ Verification: Historical CSV re-extraction matches feature table (Max Abs Diff: 
 The absolute paths, filesystem metadata, and historical manifests were checked without altering any file:
 
 1. **Target File Path**:
-   `/Users/apple/Documents/Codex/2026-09-29/down/outputs/ADHD200_RawDataBIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz`
+   `<external-reference-folder>/outputs/ADHD200_RawDataBIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz`
 2. **Current Filesystem Stat**:
    - Size: `60,405,324` bytes.
    - Last Modified Timestamp: September 29, 2026, 23:06.
    - SHA-256 Hash: `350615addd323635ef7f5691c8267df216743d661c8a0f19042e0e86f0f70ae8`.
 3. **Historical Manifest Check**:
    Searching pre-existing project backup manifests created on September 29, 2026 reveals:
-   - `/Users/apple/Documents/Codex/2026-09-29/down/BACKUP_MANIFEST.csv:1194`:
+   - `<external-reference-folder>/BACKUP_MANIFEST.csv:1194`:
      ```csv
      outputs/ADHD200_RawDataBIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz,60405324,350615addd323635ef7f5691c8267df216743d661c8a0f19042e0e86f0f70ae8,raw_data
      ```
-   - `/Users/apple/Documents/Codex/2026-09-29/down/NeuroADHD_NewPC_Transfer_manifest.csv:267`:
+   - `<external-reference-folder>/NeuroADHD_NewPC_Transfer_manifest.csv:267`:
      ```csv
-     ADHD200_RawDataBIDS_subset/BIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz,/Users/apple/Documents/Codex/2026-09-29/down/outputs/ADHD200_RawDataBIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz,60405324,350615addd323635ef7f5691c8267df216743d661c8a0f19042e0e86f0f70ae8,official_raw_bids_local_subset,...
+     ADHD200_RawDataBIDS_subset/BIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz,<external-reference-folder>/outputs/ADHD200_RawDataBIDS/KKI/sub-2344857/ses-1/func/sub-2344857_ses-1_task-rest_acq-1_run-1_bold.nii.gz,60405324,350615addd323635ef7f5691c8267df216743d661c8a0f19042e0e86f0f70ae8,official_raw_bids_local_subset,...
      ```
    - Pre-existing Anatomical Scan Manifest:
      Size: `5,834,214` bytes, SHA-256: `4e3de7bd16469b1588b02e97ca5ef124809629aa9d2112f7eae498e9bce18838`.
@@ -123,8 +123,8 @@ The rejected prototype recorded the following concordance metrics against the hi
 #### Rank 1 (Confirmed Root Cause): Complete Omission of Spatial Registration to MNI Template
 - **Evidence Strength**: **DEFINITIVE (Code Inspection & Behavioral Proof)**.
 - **Evidence**:
-  1. [`scripts/run_single_scan_poc.py:L31`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L31) imported `register_epi_to_t1w` and loaded `t1_img` (L99), but never called `register_epi_to_t1w`. The variable `t1_img` was never passed to any registration or transformation routine.
-  2. [`src/preprocessing/registration.py:L49-L80`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py#L49-L80) defined `normalize_to_mni` as a simple call to `nilearn.image.resample_to_img()`.
+  1. [`scripts/run_single_scan_poc.py:L31`](<your-project-folder>/scripts/run_single_scan_poc.py#L31) imported `register_epi_to_t1w` and loaded `t1_img` (L99), but never called `register_epi_to_t1w`. The variable `t1_img` was never passed to any registration or transformation routine.
+  2. [`src/preprocessing/registration.py:L49-L80`](<your-project-folder>/src/preprocessing/registration.py#L49-L80) defined `normalize_to_mni` as a simple call to `nilearn.image.resample_to_img()`.
   3. No affine transformation, no rigid EPI-to-T1w coregistration, and no nonlinear warp (SyN/FNIRT/ANTs) were ever computed or applied.
 - **Scientific Impact**:
   Resampling an image into an atlas bounding box with `resample_to_img` only interpolates voxels based on the existing NIfTI header affine. In raw BIDS data, the functional affine reflects scanner magnet bore coordinates. Standard space CC200 parcels were therefore placed over arbitrary brain structures, ventricles, or outside the skull entirely. This anatomical mismatch directly explains why the correlation between regional signals and historical signals collapsed to $r = 0.2512$.
@@ -132,7 +132,7 @@ The rejected prototype recorded the following concordance metrics against the hi
 #### Rank 2 (Strongly Supported Contributor): aCompCor Masking and Physiological Confound Extraction
 - **Evidence Strength**: **HIGH (Code Inspection)**.
 - **Evidence**:
-  In [`scripts/run_single_scan_poc.py:L147`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_single_scan_poc.py#L147), `brain_mask` was created using an intensity heuristic (`mean_norm > 0.15 * max`). In [`src/preprocessing/nuisance.py:L48-L53`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L48-L53), CompCor extracted the top 10% highest variance voxels across this entire brain mask.
+  In [`scripts/run_single_scan_poc.py:L147`](<your-project-folder>/scripts/run_single_scan_poc.py#L147), `brain_mask` was created using an intensity heuristic (`mean_norm > 0.15 * max`). In [`src/preprocessing/nuisance.py:L48-L53`](<your-project-folder>/src/preprocessing/nuisance.py#L48-L53), CompCor extracted the top 10% highest variance voxels across this entire brain mask.
 - **Scientific Impact**:
   Official C-PAC 0.3.9.1 aCompCor extracts components strictly from **eroded anatomical White Matter (WM) and Cerebrospinal Fluid (CSF)** masks derived from tissue segmentation of the anatomical T1w volume. Extracting principal components from the top 10% variance of the whole brain captures genuine cortical gray matter fluctuations, inappropriately regressing out neural signal.
 

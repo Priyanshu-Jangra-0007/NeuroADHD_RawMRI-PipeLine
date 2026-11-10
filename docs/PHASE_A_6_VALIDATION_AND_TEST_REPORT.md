@@ -14,9 +14,9 @@
 
 ## 1. Executive Summary
 
-This report documents the validation methodology, test scenarios, coverage metrics, and verification results for Phase A.6 of NeuroADHD RawMRI PoC V2. Phase A.6 implemented an automated, fail-closed Research Authorization Gate ([`src/validation/authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py)) and machine-readable authorization register ([`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)).
+This report documents the validation methodology, test scenarios, coverage metrics, and verification results for Phase A.6 of NeuroADHD RawMRI PoC V2. Phase A.6 implemented an automated, fail-closed Research Authorization Gate ([`src/validation/authorization_gate.py`](<your-project-folder>/src/validation/authorization_gate.py)) and machine-readable authorization register ([`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)).
 
-A dedicated test suite ([`tests/unit/test_phase_a6_authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a6_authorization_gate.py)) containing 16 rigorous unit tests was added, expanding the total automated test count from 179 to 195 tests.
+A dedicated test suite ([`tests/unit/test_phase_a6_authorization_gate.py`](<your-project-folder>/tests/unit/test_phase_a6_authorization_gate.py)) containing 16 rigorous unit tests was added, expanding the total automated test count from 179 to 195 tests.
 
 ### Overall Test Suite Results:
 - **Phase A.6 Authorization Tests:** 16 Passed, 0 Failed, 0 Skipped (100% pass rate).
@@ -99,8 +99,8 @@ TOTAL                                   1251    202    84%
 ## 6. Recommended Next Steps
 
 With Phase A.6 fully implemented and verified, the recommended progression is:
-1. Conduct formal presentation to the Primary Research Supervisor using [`docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md).
-2. Await supervisor review of [`docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md).
+1. Conduct formal presentation to the Primary Research Supervisor using [`docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md`](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md).
+2. Await supervisor review of [`docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md`](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md).
 3. Record supervisor decisions using `ResearchAuthorizationGate.record_audit_event()`.
 4. Submit formal ethics application to the Institutional Ethics Committee (IEC).
 5. Execute Data Use Agreement with NITRC/INDI for the ADHD-200 repository.

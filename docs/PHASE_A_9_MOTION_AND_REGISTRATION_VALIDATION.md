@@ -15,8 +15,8 @@
 ## 1. Executive Summary
 
 This report establishes the mathematical accuracy, parameter recovery error bounds, and coordinate transformation fidelity for:
-1. **3D Rigid Motion Realignment & Framewise Displacement:** Implemented in [`src/preprocessing/motion.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/motion.py).
-2. **Multi-Modal Coregistration & SyN Normalization:** Implemented in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/registration.py).
+1. **3D Rigid Motion Realignment & Framewise Displacement:** Implemented in [`src/preprocessing/motion.py`](<your-project-folder>/src/preprocessing/motion.py).
+2. **Multi-Modal Coregistration & SyN Normalization:** Implemented in [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py).
 
 All assertions have been empirically verified using synthetic geometric phantoms with known ground-truth rigid transformations.
 

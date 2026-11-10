@@ -1,7 +1,7 @@
 # PHASE 2 BLOCKER RESOLUTION & ARCHITECTURAL INVESTIGATION
 
 **Audit Date**: October 21, 2026  
-**Scope**: Read-only technical investigation addressing Phase 2 prerequisites within `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI`.  
+**Scope**: Read-only technical investigation addressing Phase 2 prerequisites within `<your-project-folder>`.  
 **Execution Directives**: No downloads, no installations, no preprocessing, no model retraining, and zero modifications to upstream repositories (`../down/`).
 
 ---

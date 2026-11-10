@@ -140,7 +140,7 @@ The pipeline is verified through automated test suites, container memory tests, 
 
 ## 6. Synthesis of Supervisor Decisions Required
 
-Full details and options are presented in [PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md). The four key technical decisions and eight QC thresholds are summarized below:
+Full details and options are presented in [PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md). The four key technical decisions and eight QC thresholds are summarized below:
 
 ### Technical Decisions Awaiting Direction:
 1. **Slice-Timing Correction:** Option B (BIDS-driven for $TR \ge 1.5\text{s}$) vs Option C (Adaptive fallback).
@@ -162,7 +162,7 @@ Full details and options are presented in [PHASE_A_5_SUPERVISOR_DECISION_REGISTE
 
 ## 7. Ethics, Privacy & Indian Regulatory Governance Synthesis
 
-Full details are presented in [PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md):
+Full details are presented in [PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md](<your-project-folder>/docs/PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md):
 - **Indian Institutional Context:** Compliance with **ICMR 2017 Guidelines** (pediatric vulnerability, essentiality, non-exploitation) and the **DPDP Act 2023** (Section 9 children's data obligations, fiduciary responsibilities).
 - **Public Data Governance:** Debunking the notion that ADHD-200 is public domain; a formal institutional Data Use Agreement (DUA) through NITRC/INDI is mandatory.
 - **De-Identification & Security:** 18 HIPAA Safe Harbor identifiers and Indian statutory identifiers stripped; AES-256 encryption at rest; air-gapped participant linkage key storage.
@@ -172,7 +172,7 @@ Full details are presented in [PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md](f
 
 ## 8. Proposed First Research Pilot Synthesis
 
-Full protocol is presented in [PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md):
+Full protocol is presented in [PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md](<your-project-folder>/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md):
 - **Cohort:** Minimal feasibility cohort of $N=6$ retrospective scans from ADHD-200 (3 TDC, 3 ADHD).
 - **Goal:** Stress-test memory isolation, SyN registration convergence, and 19-stage continuity under real biological data.
 - **Success Criteria:** 0% crashes, RAM $< 2.3\text{ GB}$, SyN Dice $\ge 0.85$, valid $19{,}900$ FC vector. Classification accuracy is explicitly not an evaluation metric.
@@ -182,7 +182,7 @@ Full protocol is presented in [PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md](file:
 
 ## 9. Master Governance Checklist Status
 
-Full checklist is presented in [PHASE_A_5_APPROVAL_CHECKLIST.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_APPROVAL_CHECKLIST.md):
+Full checklist is presented in [PHASE_A_5_APPROVAL_CHECKLIST.md](<your-project-folder>/docs/PHASE_A_5_APPROVAL_CHECKLIST.md):
 - All 10 mandatory governance items (`REQ-01` through `REQ-10`) are strictly marked:
   $$\mathbf{PENDING}$$
 - No fake approvals or dates are recorded. Real MRI processing remains blocked.

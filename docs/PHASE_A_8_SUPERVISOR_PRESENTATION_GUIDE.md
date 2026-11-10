@@ -184,7 +184,7 @@
   - Implemented Linux `cgroup v2` memory capping: `--memory=2560m --memory-swap=2560m`.
   - Kernel Out-Of-Memory (OOM) killer enabled to prevent uncontrolled paging to disk.
   - Memory-efficient chunking and intermediate cleanup ensure peak memory remains below 2.2 GB.
-  - Automated verification script ([`scripts/verify_container_memory.sh`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/verify_container_memory.sh)) validated in CI.
+  - Automated verification script ([`scripts/verify_container_memory.sh`](<your-project-folder>/scripts/verify_container_memory.sh)) validated in CI.
 - **Suggested Visual:** Memory consumption curve over the 19 pipeline stages peaking at 2.1 GB, comfortably beneath the 2.5 GB red ceiling line.
 - **Supervisor Question:** *What happens if a subject has unusually high resolution and spikes memory usage?*
   - *Response:* The Linux kernel OOM killer immediately terminates the container, and our memory guard script records a fatal quarantine event. The pipeline fails closed and logs the exact memory exhaustion point, preventing host system instability.
@@ -248,7 +248,7 @@
   - **Methodological Decisions:** Slice-timing policy (Option C), distortion correction (Syn-b0 fallback), facial defacing (`pydeface` + verification), prospective protocol.
   - **Quality Control:** 8 numerical thresholds covering head motion (Mean $\text{FD} \le 0.5\text{ mm}$), registration ($\text{Dice} \ge 0.85$), and signal quality.
   - **Phase A.9 Research Pilot:** A controlled $N=6$ retrospective feasibility trial (3 ADHD, 3 Control) designed strictly to evaluate pipeline stability under 2.5 GB RAM.
-  - Formal sign-off in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
+  - Formal sign-off in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](<your-project-folder>/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
 - **Suggested Visual:** Roadmap timeline: Phase A.8 (Handoff & Sign-off) ---> Institutional Clearances ---> Phase A.9 ($N=6$ Pilot) ---> Thesis Evaluation.
 - **Supervisor Question:** *Can we modify any of the 8 QC thresholds if we find them too strict or lenient?*
   - *Response:* Yes. The Decision Request Sheet explicitly provides modification fields for every metric. Any threshold changes will be logged in the machine-readable register with the supervisor's rationale and new cryptographic signatures.

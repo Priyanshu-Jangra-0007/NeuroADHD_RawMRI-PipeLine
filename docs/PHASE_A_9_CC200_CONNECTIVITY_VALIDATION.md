@@ -15,10 +15,10 @@
 ## 1. Executive Summary
 
 This report establishes the scientific validity, array orientation contracts, and numerical precision of:
-1. **Craddock CC200 Atlas Parcellation & Time-Series Extraction:** Implemented in [`src/parcellation/extractor.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/parcellation/extractor.py).
-2. **Fisher-z Functional Connectivity Feature Extraction:** Implemented in [`src/features/connectivity.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/features/connectivity.py).
+1. **Craddock CC200 Atlas Parcellation & Time-Series Extraction:** Implemented in [`src/parcellation/extractor.py`](<your-project-folder>/src/parcellation/extractor.py).
+2. **Fisher-z Functional Connectivity Feature Extraction:** Implemented in [`src/features/connectivity.py`](<your-project-folder>/src/features/connectivity.py).
 
-Every mathematical claim has been verified against independent numerical reference implementations and passing automated unit tests in [`tests/unit/test_phase_a9_scientific_hardening.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a9_scientific_hardening.py).
+Every mathematical claim has been verified against independent numerical reference implementations and passing automated unit tests in [`tests/unit/test_phase_a9_scientific_hardening.py`](<your-project-folder>/tests/unit/test_phase_a9_scientific_hardening.py).
 
 ---
 
@@ -83,7 +83,7 @@ This constrains the maximum dynamic range of $z$ to:
 $$|z_{\max}| = \operatorname{arctanh}(1.0 - 10^{-7}) \approx 8.4118$$
 
 ### 3.3 Verification Against Independent Numerical Reference
-In [`tests/unit/test_phase_a9_scientific_hardening.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a9_scientific_hardening.py), `compute_connectivity_vector` was benchmarked against an independent manual loop implementation computing the textbook formula without NumPy vectorization shortcuts:
+In [`tests/unit/test_phase_a9_scientific_hardening.py`](<your-project-folder>/tests/unit/test_phase_a9_scientific_hardening.py), `compute_connectivity_vector` was benchmarked against an independent manual loop implementation computing the textbook formula without NumPy vectorization shortcuts:
 - **Numerical Difference:** Absolute difference between pipeline output and textbook reference was **$< 1.0 \times 10^{-7}$**.
 - **Extreme Correlations Test:** Manually forced identical time-series ($r = +1.0$) and inverted time-series ($r = -1.0$) yielded finite values matching the theoretical bound ($z = \pm 8.412$) with zero NaNs or Infs.
 - **Zero-Variance Rejection:** Injecting a constant signal ($\sigma_t = 0.0$) in any parcel immediately raised `ValueError("Constant ROI signal detected; Pearson correlation undefined")`.

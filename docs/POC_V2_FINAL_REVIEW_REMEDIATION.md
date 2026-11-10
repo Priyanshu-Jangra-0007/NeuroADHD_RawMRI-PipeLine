@@ -78,13 +78,13 @@ $$P = M_{\text{T1w}\to\text{EPI}} \cdot M_{\text{MNI}\to\text{T1w}} = \text{rigi
 And the corresponding forward coordinate transformation is:
 $$F_{\text{EPI}\to\text{MNI}} = F_{\text{T1w}\to\text{MNI}} \cdot F_{\text{EPI}\to\text{T1w}} = (M_{\text{MNI}\to\text{T1w}})^{-1} \cdot (M_{\text{T1w}\to\text{EPI}})^{-1} = P^{-1}$$
 
-This resolves the inversion ambiguity completely. The previous code had inverted the order due to conflating forward coordinate mapping with pullback sampling matrices. Both formulas and their physical roles are now explicitly documented in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py#L237).
+This resolves the inversion ambiguity completely. The previous code had inverted the order due to conflating forward coordinate mapping with pullback sampling matrices. Both formulas and their physical roles are now explicitly documented in [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py#L237).
 
 ---
 
 ## 3. Priority 2: Independently Verified Landmark Tests
 
-To verify that coordinate transformations and single-step resampling operate correctly under non-trivial conditions, four new unit tests were added to [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py):
+To verify that coordinate transformations and single-step resampling operate correctly under non-trivial conditions, four new unit tests were added to [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py):
 
 ### 3.1 Landmark Test Implementations
 
@@ -142,7 +142,7 @@ In the previous integration test, eroded White Matter and CSF masks were resampl
 
 ### 4.2 Strict NIfTI Affine Verification in `extract_acompcor_components()`
 
-[`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py#L22) was enhanced to accept either `nib.Nifti1Image` or raw arrays with explicit affines:
+[`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py#L22) was enhanced to accept either `nib.Nifti1Image` or raw arrays with explicit affines:
 ```python
     # Priority 3: Strictly verify NIfTI grid affine alignment against BOLD image
     if bold_affine is not None and wm_affine is not None:
@@ -166,11 +166,11 @@ A unit test (`test_extract_acompcor_mismatched_mask_affine_fails`) verifies that
 
 ### 5.1 Realignment Center-of-Mass Initialization
 
-In [`src/preprocessing/motion.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/motion.py#L110), `c_of_mass.affine` was previously used as `starting_affine` only for volume 0. For volumes $t \ge 1$, optimization was uninitialized, which caused gradient descent to stall when translations exceeded $2\text{ mm}$. Center-of-mass initialization was extended to all volumes, enabling rapid and robust convergence for any physical movement.
+In [`src/preprocessing/motion.py`](<your-project-folder>/src/preprocessing/motion.py#L110), `c_of_mass.affine` was previously used as `starting_affine` only for volume 0. For volumes $t \ge 1$, optimization was uninitialized, which caused gradient descent to stall when translations exceeded $2\text{ mm}$. Center-of-mass initialization was extended to all volumes, enabling rapid and robust convergence for any physical movement.
 
 ### 5.2 Motion Direction & Analytical FD Unit Tests
 
-Added to [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_nuisance.py):
+Added to [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py):
 
 1. **`test_motion_parameter_translation_direction_and_units`**:
    - Synthesizes 4D series where Volume 1 has a known physical translation of $+2.0\text{ mm}$ along X, and Volume 2 has $-2.0\text{ mm}$ along Y.
@@ -230,7 +230,7 @@ for d in range(1, order + 1):
 
 ### 6.3 Benchmark & Full-Resolution Test
 
-Added `test_correct_bias_field_full_resolution_anatomical_memory` to [`tests/unit/test_segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_segmentation.py#L175):
+Added `test_correct_bias_field_full_resolution_anatomical_memory` to [`tests/unit/test_segmentation.py`](<your-project-folder>/tests/unit/test_segmentation.py#L175):
 - Tested on $176 \times 256 \times 256$ volume.
 - Runtime: **0.34 seconds**.
 - Peak Process RSS: **0.81 GB** (Memory delta: $+0.42\text{ GB}$, ceiling: $2.50\text{ GB}$).
@@ -256,8 +256,8 @@ Added `test_correct_bias_field_full_resolution_anatomical_memory` to [`tests/uni
 
 ```
 ============================= test session starts ==============================
-platform darwin -- Python 3.11.15, pytest-9.2.0, pluggy-1.7.0 -- /Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/.venv/bin/python3.11
-rootdir: /Users/apple/Documents/Codex/2026-09-29/untitled folder
+platform darwin -- Python 3.11.15, pytest-9.2.0, pluggy-1.7.0 -- <your-project-folder>/.venv/bin/python3.11
+rootdir: <your-project-folder>
 plugins: cov-7.1.0
 collected 55 items
 
@@ -362,15 +362,15 @@ All measurements taken on macOS Darwin ARM64 (Apple Silicon M2, 8 GB physical RA
 
 All modified files are located within the project repository:
 
-1. [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py): Corrected pullback prealign composition ($P = M_{\text{T1w}\to\text{EPI}} \cdot M_{\text{MNI}\to\text{T1w}}$) and forward coordinate derivation ($F = P^{-1}$); updated `resample_mask_to_target()` with dual `Union[DiffeomorphicMap, AffineMap]` support.
-2. [`src/preprocessing/segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/segmentation.py): Separable 1D broadcasting polynomial evaluation in `correct_bias_field()`.
-3. [`src/preprocessing/motion.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/motion.py): Center-of-mass initialization across all volumes in `realign_4d_bold()`.
-4. [`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py): Mask NIfTI shape and affine grid validation in `extract_acompcor_components()`.
-5. [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py): 18 unit tests including 4 independent landmark tests and corrected SyN displacement field fixtures.
-6. [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_nuisance.py): 18 unit tests including motion translation/rotation direction and analytical FD verification.
-7. [`tests/unit/test_segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_segmentation.py): 7 unit tests including full-resolution anatomical-size memory benchmark.
-8. [`tests/integration/test_pipeline_v2_synthetic.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/integration/test_pipeline_v2_synthetic.py): Decoupled tissue mask mapping using T1w SyN normalization transform.
-9. [`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_poc_v2.py): V2 pipeline runner stub with active `raise NotImplementedError` safety guard.
+1. [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py): Corrected pullback prealign composition ($P = M_{\text{T1w}\to\text{EPI}} \cdot M_{\text{MNI}\to\text{T1w}}$) and forward coordinate derivation ($F = P^{-1}$); updated `resample_mask_to_target()` with dual `Union[DiffeomorphicMap, AffineMap]` support.
+2. [`src/preprocessing/segmentation.py`](<your-project-folder>/src/preprocessing/segmentation.py): Separable 1D broadcasting polynomial evaluation in `correct_bias_field()`.
+3. [`src/preprocessing/motion.py`](<your-project-folder>/src/preprocessing/motion.py): Center-of-mass initialization across all volumes in `realign_4d_bold()`.
+4. [`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py): Mask NIfTI shape and affine grid validation in `extract_acompcor_components()`.
+5. [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py): 18 unit tests including 4 independent landmark tests and corrected SyN displacement field fixtures.
+6. [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py): 18 unit tests including motion translation/rotation direction and analytical FD verification.
+7. [`tests/unit/test_segmentation.py`](<your-project-folder>/tests/unit/test_segmentation.py): 7 unit tests including full-resolution anatomical-size memory benchmark.
+8. [`tests/integration/test_pipeline_v2_synthetic.py`](<your-project-folder>/tests/integration/test_pipeline_v2_synthetic.py): Decoupled tissue mask mapping using T1w SyN normalization transform.
+9. [`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py): V2 pipeline runner stub with active `raise NotImplementedError` safety guard.
 
 ---
 

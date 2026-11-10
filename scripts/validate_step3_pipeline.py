@@ -60,7 +60,7 @@ from scripts.run_poc_v2 import (
 )
 from src.features.connectivity import compute_connectivity_vector
 
-SYNTHETIC_ROOT = Path("/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Step3_Synthetic")
+SYNTHETIC_ROOT = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation"))
 
 
 def generate_step3_synthetic_dataset(

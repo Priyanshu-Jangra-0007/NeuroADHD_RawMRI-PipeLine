@@ -20,10 +20,10 @@ Inputs supported:
 All real participant data, uploaded DICOM studies, converted BIDS datasets, validated session ZIPs, and conversion audit logs are strictly stored **outside the project code repository**:
 
 ```bash
-export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
 ```
 
-If `NEUROADHD_DATA_ROOT` is unset, the pipeline defaults to `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted`.
+If `NEUROADHD_DATA_ROOT` is unset, the pipeline defaults to `<your-project-folder>/outputs/intake_data`.
 
 ### Directory Layout
 
@@ -101,9 +101,9 @@ Upon successful conversion and validation, the dashboard provides a **Download v
 ## 6. How to Start the Dashboard
 
 ~~~bash
-cd "/Users/apple/Documents/Codex/2026-09-29/untitled folder"
+cd "<your-project-folder>"
 source .venv/bin/activate
-export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
 python scripts/serve_dashboard.py
 ~~~
 

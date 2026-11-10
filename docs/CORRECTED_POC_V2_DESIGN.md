@@ -8,7 +8,7 @@
 
 ## 1. Executive Context & Objectives
 
-The forensic audit documented in [`docs/REJECTED_POC_FORENSIC_AUDIT.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/docs/REJECTED_POC_FORENSIC_AUDIT.md) definitively established why the initial Phase 2 proof-of-concept prototype failed to achieve feature concordance with historical C-PAC 0.3.9.1 derivatives ($r = 0.2512$):
+The forensic audit documented in [`docs/REJECTED_POC_FORENSIC_AUDIT.md`](<your-project-folder>/docs/REJECTED_POC_FORENSIC_AUDIT.md) definitively established why the initial Phase 2 proof-of-concept prototype failed to achieve feature concordance with historical C-PAC 0.3.9.1 derivatives ($r = 0.2512$):
 1. **Omitted Spatial Registration**: Functional volumes in native scanner coordinates were resampled directly into the standard space grid using `nilearn.image.resample_to_img()` without computing or applying rigid EPI-to-T1w coregistration or nonlinear T1w-to-MNI normalization. CC200 parcels were applied to mismatched anatomical tissue and non-brain regions.
 2. **Unsegmented aCompCor Masking**: Five CompCor components were derived from the top 10% variance voxels across an unsegmented whole-brain intensity mask, inappropriately regressing out cortical gray matter fluctuations.
 

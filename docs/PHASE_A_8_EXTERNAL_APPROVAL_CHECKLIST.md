@@ -20,7 +20,7 @@
 > This checklist tracks institutional, legal, and operational governance prerequisites. This document **does not constitute legal advice, statutory certification, or an official institutional approval letter**.  
 > In compliance with ICMR 2017 Guidelines for Biomedical Research and the Digital Personal Data Protection (DPDP) Act 2023, **no real participant MRI data may be downloaded, ingested, transferred, or processed** until authentic evidence files and written institutional approvals are secured and cryptographically verified.
 
-The checklist below consolidates all **eleven institutional and operational governance requirements** established across Phase A.5 and Phase A.6. Every item corresponds directly to an entry in the machine-readable authorization register ([`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)).
+The checklist below consolidates all **eleven institutional and operational governance requirements** established across Phase A.5 and Phase A.6. Every item corresponds directly to an entry in the machine-readable authorization register ([`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)).
 
 ---
 
@@ -91,7 +91,7 @@ The checklist below consolidates all **eleven institutional and operational gove
 When an external approval or evidence document is obtained:
 1. Place the final document into the repository's governance evidence directory: `docs/evidence/`.
 2. Compute its SHA-256 digest: `sha256sum docs/evidence/<filename>`.
-3. Update the corresponding entry in [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json):
+3. Update the corresponding entry in [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json):
    - Set `"status": "APPROVED"`
    - Set `"evidence_reference": "docs/evidence/<filename>"`
    - Set `"evidence_sha256": "<computed_64_hex_hash>"`

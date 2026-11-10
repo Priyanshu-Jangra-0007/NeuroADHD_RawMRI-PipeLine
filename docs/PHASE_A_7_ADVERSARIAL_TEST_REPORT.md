@@ -15,7 +15,7 @@
 ## 1. Executive Summary
 
 This report documents the execution results of the dedicated adversarial security and evidence integrity test suite engineered for Phase A.7:
-[`tests/security/test_phase_a7_adversarial_authorization.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/security/test_phase_a7_adversarial_authorization.py).
+[`tests/security/test_phase_a7_adversarial_authorization.py`](<your-project-folder>/tests/security/test_phase_a7_adversarial_authorization.py).
 
 The adversarial testing harness evaluated the pipeline against environment variable injection, CLI flag manipulation, symlink substitution, path traversal, documentary evidence tampering, audit-log injection, and alternate runner bypasses.
 

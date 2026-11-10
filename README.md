@@ -90,7 +90,7 @@ pip install -r requirements-lock.txt
 All real MRI data, staged uploads, converted BIDS datasets, downloadable ZIPs, and conversion logs are strictly saved outside the project code tree:
 
 ```bash
-export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
 ```
 
 The external directory structure consists of:
@@ -105,7 +105,7 @@ The external directory structure consists of:
 Start the local dashboard:
 
 ```bash
-export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
 python scripts/serve_dashboard.py
 ```
 

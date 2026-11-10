@@ -125,7 +125,8 @@ class DashboardApplication:
         }
 
     def pipeline_verification_status(self) -> Dict[str, Any]:
-        report_path = Path("/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Step3_Synthetic/step3_validation_report.json")
+        validation_root = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation"))
+        report_path = validation_root / "step3_validation_report.json"
         validation_report = None
         if report_path.is_file():
             try:

@@ -40,7 +40,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.preprocessing.qc import compute_registration_qc_metrics
 from src.preprocessing.registration import compute_spatial_dice, register_t1w_to_mni
 
-OUTPUT_DIR = Path("/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Step3_Synthetic/registration_experiment")
+OUTPUT_DIR = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation")) / "registration_experiment"
 
 
 def compute_jacobian_determinants(displacement_field: np.ndarray, voxel_spacing: Tuple[float, float, float] = (3.0, 3.0, 3.0)) -> np.ndarray:

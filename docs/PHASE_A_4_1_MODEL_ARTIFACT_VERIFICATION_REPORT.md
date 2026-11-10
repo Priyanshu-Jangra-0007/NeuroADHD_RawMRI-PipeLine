@@ -24,7 +24,7 @@ Phase A.4.1 resolves the model compatibility verification gap identified during 
 ## 2. Artifact Discovery & Cryptographic Verification
 
 ### 2.1 Dynamic Discovery Policy
-- Hardcoded machine-specific file paths (`/Users/apple/...`) were eliminated from test suites and code.
+- Hardcoded machine-specific file paths (`<your-project-folder>/...`) were eliminated from test suites and code.
 - Model discovery is mediated strictly by `NEUROADHD_MODEL_DIR` or the `--model-dir` CLI parameter.
 - When `NEUROADHD_MODEL_DIR` is unconfigured, artifact tests are explicitly skipped via `unittest.skipTest()` with clear diagnostics. Tests never silently pass without executing verification.
 

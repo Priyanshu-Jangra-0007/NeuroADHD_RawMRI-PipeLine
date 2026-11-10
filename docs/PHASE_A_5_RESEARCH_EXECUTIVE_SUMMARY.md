@@ -154,14 +154,14 @@ This summary introduces the complete Phase A.5 review package available in the `
 
 | Document ID | File Path | Scope and Purpose |
 |---|---|---|
-| `DOC-NA-A5-RES-001` | [PHASE_A_5_RESEARCH_EXECUTIVE_SUMMARY.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_RESEARCH_EXECUTIVE_SUMMARY.md) | High-level research summary for supervisors and reviewers (this document). |
-| `DOC-NA-A5-TR-001` | [PHASE_A_5_TECHNICAL_REVIEW.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_TECHNICAL_REVIEW.md) | Comprehensive stage-by-stage technical, mathematical, and algorithmic documentation. |
-| `DOC-NA-A5-SDR-001` | [PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md) | Formal register of preprocessing decisions and 8 QC thresholds awaiting supervisor approval. |
-| `DOC-NA-A5-EDG-001` | [PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md) | Detailed 15-point review of research ethics, ICMR 2017 guidelines, DPDP Act 2023, and DUAs. |
-| `DOC-NA-A5-FRP-001` | [PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md) | 10-stage execution protocol for an initial feasibility pilot on retrospective scans. |
-| `DOC-NA-A5-SPO-001` | [PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md) | 12-slide presentation deck outline for departmental thesis committee review. |
-| `DOC-NA-A5-AC-001` | [PHASE_A_5_APPROVAL_CHECKLIST.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_APPROVAL_CHECKLIST.md) | Actionable 10-point governance checklist tracking mandatory prerequisites prior to real data. |
-| `DOC-NA-A5-SRP-001` | [PHASE_A_5_SUPERVISOR_REVIEW_PACKAGE.md](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_REVIEW_PACKAGE.md) | Master review package consolidating all findings, evidence, and formal decision blocks. |
+| `DOC-NA-A5-RES-001` | [PHASE_A_5_RESEARCH_EXECUTIVE_SUMMARY.md](<your-project-folder>/docs/PHASE_A_5_RESEARCH_EXECUTIVE_SUMMARY.md) | High-level research summary for supervisors and reviewers (this document). |
+| `DOC-NA-A5-TR-001` | [PHASE_A_5_TECHNICAL_REVIEW.md](<your-project-folder>/docs/PHASE_A_5_TECHNICAL_REVIEW.md) | Comprehensive stage-by-stage technical, mathematical, and algorithmic documentation. |
+| `DOC-NA-A5-SDR-001` | [PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md) | Formal register of preprocessing decisions and 8 QC thresholds awaiting supervisor approval. |
+| `DOC-NA-A5-EDG-001` | [PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md](<your-project-folder>/docs/PHASE_A_5_ETHICS_AND_DATA_GOVERNANCE_REVIEW.md) | Detailed 15-point review of research ethics, ICMR 2017 guidelines, DPDP Act 2023, and DUAs. |
+| `DOC-NA-A5-FRP-001` | [PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md](<your-project-folder>/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md) | 10-stage execution protocol for an initial feasibility pilot on retrospective scans. |
+| `DOC-NA-A5-SPO-001` | [PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_PRESENTATION_OUTLINE.md) | 12-slide presentation deck outline for departmental thesis committee review. |
+| `DOC-NA-A5-AC-001` | [PHASE_A_5_APPROVAL_CHECKLIST.md](<your-project-folder>/docs/PHASE_A_5_APPROVAL_CHECKLIST.md) | Actionable 10-point governance checklist tracking mandatory prerequisites prior to real data. |
+| `DOC-NA-A5-SRP-001` | [PHASE_A_5_SUPERVISOR_REVIEW_PACKAGE.md](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_REVIEW_PACKAGE.md) | Master review package consolidating all findings, evidence, and formal decision blocks. |
 
 ---
 
