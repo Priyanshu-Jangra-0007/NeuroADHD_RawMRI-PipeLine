@@ -1,86 +1,118 @@
-# Local MRI upload and intake
+# Local MRI upload, DICOM-to-BIDS intake, and validation
 
-## Purpose
+## 1. Purpose
 
-The dashboard now supports a local upload-and-validation workflow. Its primary input is one complete BIDS-style MRI session ZIP. Individual NIfTI files and DICOM files can also be staged. PDF/JPEG/PNG reports use a separate text-extraction path and are never treated as fMRI inputs.
+The dashboard supports an automated local upload, DICOM inspection, DICOM-to-BIDS conversion, and validation workflow.
 
-This feature does **not** enable real-participant preprocessing. The research authorization register remains authoritative; the real-scan pipeline and model inference remain disabled until all required approvals and technical validation are complete.
+Inputs supported:
+1. Complete BIDS-style MRI session ZIP archives.
+2. Raw DICOM studies (ZIP or folders of `.dcm` / `.ima` files) converted automatically to BIDS via `dcm2niix`.
+3. Individual BIDS NIfTI (`_bold.nii.gz`, `_T1w.nii.gz`) and JSON sidecars.
+4. Separate radiology reports (PDF, JPEG, PNG) processed via local OCR tools.
 
-## Start the dashboard
+> [!IMPORTANT]
+> **Research Notice:** This feature does **not** enable real-participant preprocessing or CC200 feature extraction. The research authorization register remains authoritative; the real-scan pipeline and model inference remain strictly disabled until all institutional, ethics, and technical validation gates are approved.
+
+---
+
+## 2. External MRI Storage Configuration
+
+All real participant data, uploaded DICOM studies, converted BIDS datasets, validated session ZIPs, and conversion audit logs are strictly stored **outside the project code repository**:
+
+```bash
+export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+```
+
+If `NEUROADHD_DATA_ROOT` is unset, the pipeline defaults to `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted`.
+
+### Directory Layout
+
+```text
+2026-09-29/
+├── untitled folder/            <-- NeuroADHD codebase (NEVER holds real MRI data)
+│
+└── NeuroADHD_Converted/        <-- External storage root (excluded from Git)
+    ├── dicom_input/            <-- Uploaded raw DICOM studies & archives
+    ├── staged_sessions/        <-- Intake staging sessions (replaces outputs/intake_sessions)
+    ├── neuroadhd_bids/         <-- Converted BIDS datasets (sub-<id>/ses-<id>/...)
+    ├── validated_sessions/     <-- Packaged, downloadable BIDS session ZIPs
+    └── conversion_logs/        <-- Anonymized conversion audit logs (no patient identifiers)
+```
+
+Directories are created with restrictive permissions (`0o700`) and files with (`0o600`). Path traversal and symlinks are strictly rejected.
+
+---
+
+## 3. Automated DICOM-to-BIDS Ingestion Workflow
+
+### Step A: Upload DICOM Study
+Upload a ZIP containing scanner DICOM files or individual DICOM files (`.dcm`, `.ima`) into a scan intake session. Files are verified for cryptographic integrity.
+
+### Step B: Inspect Series (Inspect-Only)
+The pipeline runs `dcm2niix -n -1` and temporary metadata extraction:
+- Detects all series without converting images into NIfTI files.
+- Extracts series numbers, descriptions, protocols, image counts, dimensions, modality, and repetition time ($TR$).
+- **Strict Anonymization:** Patient name, Patient ID, date of birth, age, sex, institution address, and accession numbers are redacted and never returned or logged.
+- Identifies candidate scan types (`T1w`, `BOLD`, `LOCALIZER`, `DWI`, `OTHER`).
+- Flags ambiguous series (e.g. BOLD without explicit "rest" designation, or multiple BOLD runs).
+
+### Step C: Select Series & Convert
+- User selects one Anatomical T1-weighted series (T1w).
+- User selects one or more Resting-state BOLD functional series (supports multi-run acquisition: `run-01`, `run-02`, etc.).
+- User specifies de-identified BIDS identifiers (e.g. `sub-001`, optional `ses-01`).
+- User explicitly confirms any series with ambiguous classification.
+- Pipeline executes `dcm2niix` with gzip compression (`-z y`), BIDS sidecar generation (`-b y`), and anonymization (`-ba y`).
+- Generates valid BIDS layout:
+  ```text
+  neuroadhd_bids/
+  ├── dataset_description.json
+  └── sub-001/
+      └── ses-01/
+          ├── anat/
+          │   └── sub-001_ses-01_T1w.nii.gz
+          └── func/
+              ├── sub-001_ses-01_task-rest_run-01_bold.nii.gz
+              └── sub-001_ses-01_task-rest_run-01_bold.json
+  ```
+- Generates an anonymized conversion audit log in `conversion_logs/`.
+
+---
+
+## 4. BIDS Validation Rules
+
+After conversion (or upon direct upload), the session is validated:
+1. **BOLD NIfTI:** Valid 4D image with at least 50 time points (volumes).
+2. **T1w NIfTI:** Valid 3D image.
+3. **BOLD Sidecar:** Valid JSON containing `RepetitionTime` between 0.5 and 5.0 seconds. Missing parameters are never fabricated.
+4. **Subject/Session Matching:** Identifiers match across anatomical and functional scans.
+5. **BIDS Entities:** Filenames adhere strictly to BIDS specification (`sub-<id>_task-rest_bold.nii.gz`, `_T1w.nii.gz`).
+
+---
+
+## 5. Downloadable Validated BIDS Session ZIP
+
+Upon successful conversion and validation, the dashboard provides a **Download validated BIDS session ZIP** button.
+- The archive is saved under `NeuroADHD_Converted/validated_sessions/sub-<id>_bids.zip`.
+- Contains `dataset_description.json`, `anat/`, and `func/` NIfTI and sidecar files.
+- Original DICOM files and unredacted scanner metadata are strictly excluded.
+
+---
+
+## 6. How to Start the Dashboard
 
 ~~~bash
-python3 -m venv .venv
+cd "/Users/apple/Documents/Codex/2026-09-29/untitled folder"
 source .venv/bin/activate
-pip install -r requirements-lock.txt
+export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
 python scripts/serve_dashboard.py
 ~~~
 
-Open http://127.0.0.1:8765. The server must remain bound to loopback. Do not expose it to a LAN, public host, reverse proxy, or cloud deployment.
+Open **http://127.0.0.1:8765** in your browser.
 
-## Preferred upload: complete session ZIP
+---
 
-Upload one ZIP containing one participant/session. A typical BIDS-style layout is:
+## 7. Current Boundaries and Remaining Limitations
 
-~~~text
-session.zip
-└── sub-001/
-    ├── anat/
-    │   └── sub-001_T1w.nii.gz
-    └── func/
-        ├── sub-001_task-rest_bold.nii.gz
-        └── sub-001_task-rest_bold.json
-~~~
-
-The BOLD image must be 4D with at least 50 volumes. Its JSON sidecar must contain RepetitionTime between 0.5 and 5.0 seconds. The T1w image must be 3D. Use one participant/session per upload. The BOLD and T1w names must retain their BIDS suffixes (_bold and _T1w) so that the intake validator can identify them.
-
-## Individual scan uploads
-
-The individual-file picker accepts BIDS-named .nii, .nii.gz, associated .json sidecars, DICOM .dcm / .ima files, and common BIDS supporting files. Upload the BOLD image, its JSON sidecar, and the T1w image from the same session.
-
-DICOM files can be staged, but this release does not identify DICOM series or execute DICOM-to-NIfTI conversion. Convert and review the series with a trusted DICOM conversion workflow (for example, dcm2niix) and upload the resulting BIDS-compatible NIfTI files only after the research/data-handling requirements for that dataset are satisfied.
-
-## Report uploads
-
-PDF, JPEG and PNG reports are accepted separately. Text extraction uses available local tools:
-- pdftotext for text-layer PDFs;
-- optional pypdf if installed;
-- pdftoppm plus tesseract for OCR of the first five pages of scanned PDFs;
-- tesseract for JPEG/PNG images.
-
-Without those tools, the report is staged and the dashboard explains which extraction engine is unavailable. Install Poppler and Tesseract locally if OCR is required (for example, brew install poppler tesseract on macOS). Extracted text files are downloadable from the intake result. Report text is not passed to the BOLD preprocessing or ML model.
-
-## What intake validation checks
-
-- Allowed upload type and file size.
-- ZIP member count, expansion size, compression ratio, path traversal and symlinks.
-- NIfTI header readability and dimensionality.
-- BOLD time-point count and RepetitionTime sidecar value.
-- Presence of one matching BOLD and one T1w image.
-
-A successful scan intake status is VALIDATED_WAITING_FOR_RESEARCH_AUTHORIZATION. It means the required files passed the checks above; it does not mean the scan has passed image-registration QC or that real-data processing is authorized.
-
-## Atlas modes and execution performance
-
-The dashboard provides two atlas modes for synthetic cohort runs:
-- **Synthetic phantom atlas (`synthetic_phantom`)**: Fast demonstration mode taking ~10–16 seconds per subject.
-- **Canonical CC200 atlas (`canonical`)**: Uses the canonical Craddock CC200 reference atlas (`cc200_roi_atlas.nii.gz`). Mutual-information non-linear and affine registration on CPU is computationally intensive and can take many minutes per subject (e.g. ~5–6 minutes per subject on CPU). Note that selecting the canonical atlas changes only the reference atlas; the input data is still a synthetic phantom. Real-participant preprocessing remains strictly locked.
-
-## Storage and limits
-
-- Uploads are saved under outputs/intake_sessions/, which is excluded from version control.
-- The app writes staged files with owner-only permissions where supported.
-- The dashboard streams upload bodies to disk and does not buffer an entire MRI file in memory.
-- One scan file is limited to 2 GB; report files to 50 MB; total session uploads to 8 GB.
-- ZIP archives are limited to 5,000 entries and 8 GB uncompressed.
-- The local dashboard uses loopback-only binding. It has no user authentication; do not expose it to other machines or users.
-- Uploaded MRI and report data may contain sensitive health information. Use only data you are authorized to handle and remove local intake folders when no longer needed.
-
-## Not yet implemented / intentionally locked
-
-- Real-scan preprocessing and generation of roi_CC200.csv.
-- Automatic DICOM series detection and conversion.
-- Clinical or diagnostic interpretation of radiology reports.
-- Real-participant model inference.
-- Formal QC pass/fail thresholds.
-
-These are separate milestones and must not be inferred from a successful upload or file validation.
+* **DICOM-to-BIDS is ingestion only:** Conversion does not constitute authorization for real-participant processing.
+* **Research Gate Enforcement:** `processing_enabled` and `real_data_authorized` remain `false` across all intake and converted sessions until Phase 2 research authorization is complete.
+* **Synthetic Cohort Runs:** Pipeline runs launched from the dashboard continue to execute against deterministic synthetic phantoms only.

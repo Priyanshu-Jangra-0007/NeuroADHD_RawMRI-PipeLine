@@ -32,6 +32,10 @@ class AuthorizationBypassAttemptError(AuthorizationDeniedError):
     """Raised when an unauthorized environment variable or CLI bypass attempt is detected."""
 
 
+class AuthorizationSignatureError(AuthorizationError):
+    """Raised when an HMAC cryptographic signature is invalid, missing, or tampered."""
+
+
 # Canonical list of bypass environment variables to strictly detect and reject
 PROHIBITED_BYPASS_ENV_VARS = (
     "NEUROADHD_ALLOW_REAL_SCANS",
@@ -41,7 +45,41 @@ PROHIBITED_BYPASS_ENV_VARS = (
     "NEUROADHD_FORCE_REAL_DATA",
     "NEUROADHD_DISABLE_AUTH_GATE",
     "NEUROADHD_AUTH_OVERRIDE",
+    "NEUROADHD_BYPASS_IEC",
 )
+
+# Canonical environment variable names for HMAC integrity key
+HMAC_KEY_ENV_VARS = (
+    "NEUROADHD_HMAC_KEY",
+    "NEUROADHD_INTEGRITY_KEY",
+)
+
+# Canonical fields serialized deterministically for dataset authorization signatures
+CANONICAL_DATASET_FIELDS = (
+    "approval_date",
+    "approved_purpose",
+    "authorization_id",
+    "authorization_status",
+    "authorized_personnel",
+    "dataset_id",
+    "expiry_date",
+    "institutional_approval_reference",
+    "permitted_operations",
+    "project_id",
+)
+
+# Standard recognized processing operations
+PERMITTED_DATASET_OPERATIONS = {
+    "dicom_conversion",
+    "bids_validation",
+    "preprocessing",
+    "cc200_extraction",
+    "quality_control",
+    "motion_correction",
+    "tissue_segmentation",
+    "registration",
+    "connectivity_analysis",
+}
 
 # Core requirements that can NEVER be marked NOT_APPLICABLE
 NON_EXEMPT_REQUIREMENTS: Set[str] = {
@@ -95,6 +133,258 @@ class ResearchAuthorizationGate:
                         f"SAFETY VIOLATION: Unauthorized safety bypass attempt detected via environment variable '{env_k}={env_v}'. "
                         "Environment variable overrides are strictly prohibited. The authorization gate fails closed."
                     )
+
+    @staticmethod
+    def get_hmac_key(key: Optional[Union[str, bytes]] = None) -> bytes:
+        """Retrieve the HMAC key from argument or environment variables.
+
+        Fails closed if missing or empty. Never logs the key value.
+        """
+        if key is not None:
+            if isinstance(key, str):
+                key_bytes = key.strip().encode("utf-8")
+            elif isinstance(key, (bytes, bytearray)):
+                key_bytes = bytes(key).strip()
+            else:
+                raise AuthorizationError("HMAC key must be a valid string or bytes sequence.")
+            if not key_bytes:
+                raise AuthorizationError("HMAC key cannot be empty or whitespace.")
+            return key_bytes
+
+        for env_var in HMAC_KEY_ENV_VARS:
+            val = os.environ.get(env_var)
+            if val is not None and val.strip():
+                return val.strip().encode("utf-8")
+
+        raise AuthorizationError(
+            "SAFETY VIOLATION: Mandatory HMAC key not set in environment variable "
+            f"('{HMAC_KEY_ENV_VARS[0]}'). Real-data cryptographic verification cannot proceed."
+        )
+
+    @staticmethod
+    def build_canonical_authorization_payload(record: Dict[str, Any]) -> bytes:
+        """Construct deterministic canonical JSON serialization for dataset authorization HMAC computation."""
+        payload: Dict[str, Any] = {}
+        for field in sorted(CANONICAL_DATASET_FIELDS):
+            val = record.get(field)
+            if field == "permitted_operations":
+                if isinstance(val, (list, tuple, set)):
+                    payload[field] = sorted(str(op).strip() for op in val if str(op).strip())
+                else:
+                    payload[field] = []
+            else:
+                payload[field] = str(val).strip() if val is not None else None
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def compute_authorization_signature(
+        self,
+        record: Dict[str, Any],
+        key: Optional[Union[str, bytes]] = None,
+    ) -> str:
+        """Compute HMAC-SHA256 hex digest for an authorization record."""
+        key_bytes = self.get_hmac_key(key)
+        canonical_bytes = self.build_canonical_authorization_payload(record)
+        return hmac.new(key_bytes, canonical_bytes, hashlib.sha256).hexdigest().lower()
+
+    def verify_authorization_signature(
+        self,
+        record: Dict[str, Any],
+        key: Optional[Union[str, bytes]] = None,
+    ) -> bool:
+        """Verify HMAC-SHA256 signature of an authorization record in constant time."""
+        sig = record.get("cryptographic_signature")
+        if not sig or not isinstance(sig, str):
+            return False
+        sig_clean = sig.strip().lower()
+        if len(sig_clean) != 64:
+            return False
+        try:
+            int(sig_clean, 16)
+        except ValueError:
+            return False
+        try:
+            expected_sig = self.compute_authorization_signature(record, key=key)
+        except Exception:
+            return False
+        return hmac.compare_digest(sig_clean, expected_sig)
+
+    def verify_dataset_authorization(
+        self,
+        record: Dict[str, Any],
+        requested_dataset: Optional[str] = None,
+        requested_operation: Optional[str] = None,
+        key: Optional[Union[str, bytes]] = None,
+        current_date: Optional[Union[datetime.date, datetime.datetime]] = None,
+    ) -> Dict[str, Any]:
+        """Verify an individual dataset authorization record against cryptographic and governance rules."""
+        auth_id = str(record.get("authorization_id") or "UNKNOWN_AUTH_ID")
+        dataset_id = str(record.get("dataset_id") or "UNKNOWN_DATASET")
+        status = record.get("authorization_status", "UNKNOWN")
+        issues: List[str] = []
+
+        # Check required fields
+        for field in CANONICAL_DATASET_FIELDS:
+            if field not in record:
+                issues.append(f"Missing required field '{field}'.")
+
+        # Sanitize against PHI / PII in all textual fields
+        prohibited_phi_terms = [
+            "patient",
+            "hospital",
+            "mrn",
+            "birthdate",
+            "ssn",
+            "aadhaar",
+            "address",
+            "phone",
+            "clinical",
+            "physician",
+            "medical_record",
+            "diagnosis",
+            "sub-2344857",
+            "2344857",
+            "peking",
+            "kki",
+            "nyu",
+            "abide",
+            "adhd200",
+            "adhd-200",
+        ]
+        text_corpus = " ".join(
+            str(v) for k, v in record.items() if isinstance(v, (str, list))
+        ).lower()
+        for phi_term in prohibited_phi_terms:
+            if phi_term in text_corpus:
+                issues.append(
+                    f"PHI/PII violation: Restricted term or subject identifier '{phi_term}' detected in authorization record."
+                )
+
+        valid_statuses = {"PENDING", "APPROVED", "REVOKED", "REJECTED", "EXPIRED"}
+        if status not in valid_statuses:
+            issues.append(f"Invalid authorization status '{status}'. Must be one of {sorted(valid_statuses)}.")
+
+        # Institutional approval reference must be non-empty string
+        approval_ref = record.get("institutional_approval_reference")
+        if not approval_ref or not isinstance(approval_ref, str) or not approval_ref.strip():
+            issues.append("Missing mandatory 'institutional_approval_reference'.")
+
+        # Approval and Expiry dates validation
+        ref_date = current_date.date() if isinstance(current_date, datetime.datetime) else (current_date or datetime.date.today())
+
+        app_date_str = record.get("approval_date")
+        app_date: Optional[datetime.date] = None
+        if not app_date_str or not isinstance(app_date_str, str) or not app_date_str.strip():
+            issues.append("Missing mandatory 'approval_date'.")
+        else:
+            try:
+                app_date = datetime.date.fromisoformat(app_date_str.strip())
+                if app_date > ref_date:
+                    issues.append(f"Approval date '{app_date_str}' is in the future (reference date: {ref_date.isoformat()}).")
+            except ValueError:
+                issues.append(f"Invalid ISO format for 'approval_date': '{app_date_str}'.")
+
+        exp_date_str = record.get("expiry_date")
+        exp_date: Optional[datetime.date] = None
+        expiry_status = "NO_EXPIRY_DATE"
+        if not exp_date_str or not isinstance(exp_date_str, str) or not exp_date_str.strip():
+            issues.append("Missing mandatory 'expiry_date'.")
+        else:
+            try:
+                exp_date = datetime.date.fromisoformat(exp_date_str.strip())
+                if exp_date < ref_date:
+                    expiry_status = "EXPIRED"
+                    issues.append(f"Authorization has expired on '{exp_date_str}' (reference date: {ref_date.isoformat()}).")
+                elif app_date and exp_date < app_date:
+                    expiry_status = "INVALID_PERIOD"
+                    issues.append(f"Expiry date '{exp_date_str}' precedes approval date '{app_date_str}'.")
+                else:
+                    expiry_status = "VALID_PERIOD"
+            except ValueError:
+                expiry_status = "INVALID_FORMAT"
+                issues.append(f"Invalid ISO format for 'expiry_date': '{exp_date_str}'.")
+
+        # Permitted operations validation
+        ops = record.get("permitted_operations")
+        if not isinstance(ops, list) or len(ops) == 0:
+            issues.append("Permitted operations must be a non-empty list.")
+        else:
+            for op in ops:
+                if op not in PERMITTED_DATASET_OPERATIONS:
+                    issues.append(f"Unrecognized operation '{op}' in permitted_operations.")
+
+        # Target dataset matching
+        if requested_dataset is not None:
+            if str(requested_dataset).strip() != dataset_id:
+                issues.append(
+                    f"Dataset ID mismatch: requested '{requested_dataset}', but record authorizes '{dataset_id}'."
+                )
+
+        # Target operation matching
+        if requested_operation is not None:
+            if not isinstance(ops, list) or requested_operation not in ops:
+                issues.append(
+                    f"Operation '{requested_operation}' is not permitted for dataset '{dataset_id}'."
+                )
+
+        # Cryptographic Signature Verification
+        sig = record.get("cryptographic_signature")
+        signature_status = "UNVERIFIED"
+        if not sig or not isinstance(sig, str) or not sig.strip():
+            signature_status = "MISSING_SIGNATURE"
+            issues.append("Missing mandatory 'cryptographic_signature'.")
+        else:
+            sig_clean = sig.strip().lower()
+            if len(sig_clean) != 64:
+                signature_status = "INVALID_FORMAT"
+                issues.append(f"Invalid signature length {len(sig_clean)} (expected 64-character hex).")
+            else:
+                try:
+                    int(sig_clean, 16)
+                    is_hex = True
+                except ValueError:
+                    is_hex = False
+                if not is_hex:
+                    signature_status = "INVALID_FORMAT"
+                    issues.append("Signature contains non-hexadecimal characters.")
+                else:
+                    try:
+                        expected_sig = self.compute_authorization_signature(record, key=key)
+                        if hmac.compare_digest(sig_clean, expected_sig):
+                            signature_status = "VALID"
+                        else:
+                            signature_status = "INVALID_SIGNATURE"
+                            issues.append(
+                                "Cryptographic signature mismatch: record data may have been altered or signed with a different key."
+                            )
+                    except AuthorizationError as key_err:
+                        signature_status = "MISSING_KEY"
+                        issues.append(str(key_err))
+                    except Exception as sig_err:
+                        signature_status = "VERIFICATION_ERROR"
+                        issues.append(f"Failed to verify cryptographic signature: {sig_err}")
+
+        # Final authorization state check
+        is_approved = (status == "APPROVED")
+        if status != "APPROVED":
+            issues.append(f"Authorization status is '{status}', not 'APPROVED'.")
+
+        is_valid = is_approved and (signature_status == "VALID") and len(issues) == 0
+
+        return {
+            "authorization_id": auth_id,
+            "dataset_id": dataset_id,
+            "project_id": record.get("project_id"),
+            "status": status,
+            "is_valid": is_valid,
+            "signature_status": signature_status,
+            "institutional_approval_reference": approval_ref,
+            "approval_date": app_date_str,
+            "expiry_date": exp_date_str,
+            "expiry_status": expiry_status,
+            "permitted_operations": ops if isinstance(ops, list) else [],
+            "authorized_personnel": record.get("authorized_personnel"),
+            "issues": issues,
+        }
 
     def load_register(self, register_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """Load and parse the machine-readable authorization register."""
@@ -354,6 +644,21 @@ class ResearchAuthorizationGate:
                     global_issues.append(f"[{res['id']}] {iss}")
             item_evaluations.append(res)
 
+        # Dataset authorizations verification
+        dataset_auth_list = reg_dict.get("dataset_authorizations", [])
+        dataset_evaluations: List[Dict[str, Any]] = []
+        valid_datasets_count = 0
+
+        for ds_record in dataset_auth_list:
+            ds_res = self.verify_dataset_authorization(ds_record)
+            if ds_res["is_valid"]:
+                valid_datasets_count += 1
+            dataset_evaluations.append(ds_res)
+            # If the dataset claims to be APPROVED but fails verification, log as issue
+            if ds_record.get("authorization_status") == "APPROVED" and not ds_res["is_valid"]:
+                for ds_iss in ds_res["issues"]:
+                    global_issues.append(f"[{ds_res['authorization_id']}] {ds_iss}")
+
         # Conflict check between root flags and item states
         claimed_authorized = reg_dict.get("real_data_authorized", False)
         claimed_overall = reg_dict.get("overall_authorization_state", "NOT_AUTHORIZED")
@@ -367,6 +672,7 @@ class ResearchAuthorizationGate:
         # 5. Zero global issues or evidence failures
         # 6. overall_authorization_state == FULLY_AUTHORIZED
         # 7. execution_policy == AUTHORIZED_RESEARCH_ONLY or AUTHORIZED_PILOT_ONLY
+        # 8. At least one valid, approved dataset authorization with valid HMAC-SHA256 signature
         is_fully_authorized = (
             total_items > 0
             and status_counts["PENDING"] == 0
@@ -376,12 +682,13 @@ class ResearchAuthorizationGate:
             and claimed_authorized is True
             and claimed_overall == "FULLY_AUTHORIZED"
             and execution_policy in ("AUTHORIZED_RESEARCH_ONLY", "AUTHORIZED_PILOT_ONLY")
+            and valid_datasets_count > 0
         )
 
         if claimed_authorized and not is_fully_authorized:
             global_issues.append(
                 "CONFLICT DETECTED: Root claims 'real_data_authorized=true', but unresolved items, "
-                f"pending reviews ({status_counts['PENDING']}), or invalid evidence exist."
+                f"pending reviews ({status_counts['PENDING']}), or invalid evidence/dataset authorizations exist."
             )
 
         if claimed_overall == "FULLY_AUTHORIZED" and not is_fully_authorized:
@@ -402,6 +709,9 @@ class ResearchAuthorizationGate:
             "issues_count": len(global_issues),
             "issues": global_issues,
             "item_evaluations": item_evaluations,
+            "dataset_authorizations_count": len(dataset_auth_list),
+            "dataset_authorizations_approved": valid_datasets_count,
+            "dataset_evaluations": dataset_evaluations,
             "audit_trail_entries": len(reg_dict.get("audit_trail", [])),
         }
         return report
@@ -410,7 +720,10 @@ class ResearchAuthorizationGate:
         self,
         requested_mode: str = "synthetic",
         allow_real_scans: bool = False,
+        dataset_id: Optional[str] = None,
+        requested_operation: Optional[str] = None,
         register_path: Optional[Union[str, Path]] = None,
+        key: Optional[Union[str, bytes]] = None,
     ) -> Dict[str, Any]:
         """Enforce the fail-closed real-data authorization gate before pipeline execution."""
         # Step 1: Detect and reject any environment variable bypass attempt
@@ -436,6 +749,33 @@ class ResearchAuthorizationGate:
                     f"The Phase A.6 research authorization gate is NOT_AUTHORIZED. {pending_details} "
                     f"Specific blockers: {first_issues}"
                 )
+
+            # Condition 4: Specific dataset authorization check if dataset_id provided
+            if dataset_id:
+                matching = [
+                    d for d in report.get("dataset_evaluations", [])
+                    if d.get("dataset_id") == dataset_id and d.get("is_valid")
+                ]
+                if not matching:
+                    raise AuthorizationDeniedError(
+                        f"SAFETY VIOLATION: Dataset '{dataset_id}' does not have verified cryptographic authorization."
+                    )
+                if requested_operation:
+                    permitted_ops = matching[0].get("permitted_operations", [])
+                    if requested_operation not in permitted_ops:
+                        raise AuthorizationDeniedError(
+                            f"SAFETY VIOLATION: Operation '{requested_operation}' is not permitted for dataset '{dataset_id}'."
+                        )
+
+            return {
+                "authorized_mode": "real",
+                "real_data_authorized": True,
+                "overall_authorization_state": report["overall_authorization_state"],
+                "execution_policy": report["execution_policy"],
+                "dataset_id": dataset_id,
+                "requested_operation": requested_operation,
+                "register_id": report["register_id"],
+            }
 
         # Step 4: Synthetic execution is permitted
         return {

@@ -68,6 +68,10 @@
         }
       }
     },
+    "dataset_authorizations": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/dataset_authorization_record" }
+    },
     "audit_trail": {
       "type": "array",
       "items": {
@@ -153,6 +157,43 @@
             }
           }
         }
+      }
+    },
+    "dataset_authorization_record": {
+      "type": "object",
+      "required": [
+        "authorization_id",
+        "project_id",
+        "dataset_id",
+        "approved_purpose",
+        "institutional_approval_reference",
+        "approval_date",
+        "expiry_date",
+        "permitted_operations",
+        "authorized_personnel",
+        "authorization_status",
+        "cryptographic_signature"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "authorization_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "dataset_id": { "type": "string" },
+        "approved_purpose": { "type": "string" },
+        "institutional_approval_reference": { "type": ["string", "null"] },
+        "approval_date": { "type": ["string", "null"] },
+        "expiry_date": { "type": ["string", "null"] },
+        "permitted_operations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "authorized_personnel": { "type": "string" },
+        "authorization_status": {
+          "type": "string",
+          "enum": ["PENDING", "APPROVED", "REVOKED", "REJECTED", "EXPIRED"]
+        },
+        "cryptographic_signature": { "type": ["string", "null"] },
+        "notes": { "type": "string" }
       }
     }
   }

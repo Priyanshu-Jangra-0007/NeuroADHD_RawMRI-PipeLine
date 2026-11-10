@@ -109,6 +109,13 @@ def register_epi_to_t1w(
     static_data = np.asanyarray(t1w_brain.dataobj, dtype=np.float32)
     moving_data = np.asanyarray(mean_epi.dataobj, dtype=np.float32)
 
+    if static_data.ndim != 3 or moving_data.ndim != 3:
+        raise ValueError(
+            f"Expected 3D volumes for registration, got shapes static={static_data.shape}, moving={moving_data.shape}"
+        )
+    if np.sum(np.abs(static_data)) == 0.0 or np.sum(np.abs(moving_data)) == 0.0:
+        raise ValueError("Cannot perform registration with an empty or all-zero image")
+
     static_affine = t1w_brain.affine
     moving_affine = mean_epi.affine
 
@@ -175,6 +182,13 @@ def register_t1w_to_mni(
 
     static_data = np.asanyarray(mni_template.dataobj, dtype=np.float32)
     moving_data = np.asanyarray(t1w_brain.dataobj, dtype=np.float32)
+
+    if static_data.ndim != 3 or moving_data.ndim != 3:
+        raise ValueError(
+            f"Expected 3D volumes for registration, got shapes static={static_data.shape}, moving={moving_data.shape}"
+        )
+    if np.sum(np.abs(static_data)) == 0.0 or np.sum(np.abs(moving_data)) == 0.0:
+        raise ValueError("Cannot perform registration with an empty or all-zero image")
 
     static_affine = mni_template.affine
     moving_affine = t1w_brain.affine

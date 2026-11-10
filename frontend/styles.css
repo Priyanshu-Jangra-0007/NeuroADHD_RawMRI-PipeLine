@@ -34,3 +34,63 @@
 .intake-artifacts a:hover{text-decoration:underline}
 @media(max-width:1050px){.intake-grid{grid-template-columns:1fr 1fr}.intake-option.intake-featured{grid-column:1/-1}}
 @media(max-width:650px){.intake-grid{grid-template-columns:1fr}.intake-option.intake-featured{grid-column:auto}.intake-option p{min-height:0}.intake-safety{display:block}.intake-safety strong{display:block;margin-bottom:3px}}
+
+/* DICOM Conversion Workbench */
+.dicom-workbench{margin-top:15px;padding:16px;border:1px solid #3c5478;border-radius:9px;background:#091322}
+.dicom-workbench-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.dicom-step-tag{color:#79d2b9;font:600 9px 'DM Mono',monospace;letter-spacing:1px}
+.dicom-workbench-head h3{margin:4px 0 0;color:#e2edfd;font-size:15px}
+.dicom-series-table-container{overflow-x:auto;margin:12px 0;border:1px solid #23344d;border-radius:6px;background:#050b14}
+.dicom-table{width:100%;border-collapse:collapse;font-size:10px;color:#bad0ee}
+.dicom-table th,.dicom-table td{padding:8px 10px;border-bottom:1px solid #1a273b;text-align:left}
+.dicom-table th{background:#0c1829;color:#7991b5;font:600 9px 'DM Mono',monospace}
+.dicom-table tr:hover{background:#0d1e34}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font:600 8px 'DM Mono',monospace}
+.badge-t1{background:#17384a;color:#72d6ff;border:1px solid #285d7b}
+.badge-bold{background:#1a4234;color:#75ecb8;border:1px solid #29745a}
+.badge-ambiguous{background:#40321a;color:#ffd175;border:1px solid #755a29}
+.badge-other{background:#262c38;color:#9bb0ce;border:1px solid #3d475a}
+.dicom-config-box{margin-top:14px;padding:12px;border:1px solid #283a54;border-radius:7px;background:#0c182b}
+.dicom-config-box h4{margin:0 0 10px;color:#d8e6fa;font-size:12px}
+.dicom-form-row{display:flex;gap:14px;margin-bottom:12px}
+.dicom-form-row label{display:flex;flex-direction:column;gap:4px;font-size:10px;color:#9ab4d6}
+.dicom-form-row input[type="text"]{padding:6px 9px;border:1px solid #3b506e;border-radius:5px;background:#070e1a;color:#e0ecfd;font:11px 'DM Mono',monospace}
+.dicom-confirm-row{padding:8px 10px;margin-bottom:12px;border:1px solid #6b552c;border-radius:6px;background:#2b2315;color:#f7d28b;font-size:10px}
+.dicom-confirm-row strong{color:#ffe6ac}
+.dicom-actions{display:flex;gap:10px;margin-top:10px}
+.download-bids-btn{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:9px 14px;background:#1b4d3e;border:1px solid #348b6f;border-radius:6px;color:#8affd1;font-weight:700;font-size:11px;text-decoration:none;cursor:pointer}
+.download-bids-btn:hover{background:#236551;border-color:#4ed9ac}
+.crc-tag{font-family:'DM Mono',monospace;color:#9bc0eb;background:#0d1c32;padding:2px 6px;border-radius:4px;border:1px solid #1e3557;font-size:10px}
+.existing-sessions-bar{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 14px;border:1px solid #233752;border-radius:7px;background:#091424;font-size:11px;color:#9bb5d6}
+.existing-sessions-bar select{padding:6px 10px;background:#070d17;border:1px solid #354c6d;border-radius:5px;color:#d5e5f9;font:11px 'DM Mono',monospace}
+
+/* Research Authorization Gate Panel */
+.auth-panel{margin:18px 0 15px;scroll-margin-top:18px;border-color:#5c3e1e;background:linear-gradient(155deg,#1c1610,#10192b 60%)}
+.auth-locked-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid #9e6428;background:#382210;color:#ffbe6b;font:700 10px 'DM Mono',monospace;letter-spacing:1px;box-shadow:0 0 12px rgba(242,190,102,.25)}
+.auth-status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.auth-status-item{display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #28374e;border-radius:8px;background:#0c1626}
+.auth-item-label{color:#768ba9;font:500 9px 'DM Mono',monospace;letter-spacing:.8px;text-transform:uppercase}
+.auth-item-val{color:#e6f0ff;font:600 12px 'DM Mono',monospace;word-break:break-all}
+.auth-blockers-box{margin-top:14px;padding:14px;border:1px solid #54391a;border-radius:8px;background:#1a140f}
+.auth-blockers-head{display:flex;align-items:center;gap:8px;color:#f3c375;font-size:12px;margin-bottom:8px}
+.shield-mini{font-size:14px}
+.auth-blockers-list{margin:0;padding-left:18px;color:#c9baa0;font-size:11px;line-height:1.7}
+.auth-blockers-list li{margin-bottom:4px}
+@media(max-width:900px){.auth-status-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:550px){.auth-status-grid{grid-template-columns:1fr}}
+
+/* Step 3 Pipeline Verification Panel */
+.verification-panel{margin:18px 0 15px;scroll-margin-top:18px;border-color:#1c4d44;background:linear-gradient(155deg,#0c1d1a,#10192b 60%)}
+.auth-approved-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid #1e7e60;background:#10382b;color:#4eedb8;font:700 10px 'DM Mono',monospace;letter-spacing:1px;box-shadow:0 0 12px rgba(80,214,162,.25)}
+.verif-metrics-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px}
+.verif-metric-card{padding:14px;border:1px solid #23364f;border-radius:8px;background:#0b1525}
+.verif-card-title{font-size:12px;font-weight:700;color:#e1ebfb;margin-bottom:8px;border-bottom:1px solid #1a283e;padding-bottom:6px}
+.verif-card-body{display:grid;gap:5px;font-size:10px;color:#91a5c4}
+.verif-card-body div{display:flex;justify-content:space-between;align-items:center}
+.verif-card-body strong{color:#d6e4f8;font-family:'DM Mono',monospace}
+.badge-tag{padding:2px 7px;border-radius:4px;font:700 9px 'DM Mono',monospace}
+.badge-tag.green{background:#12392c;color:#50d6a2;border:1px solid #25664f}
+.badge-tag.amber{background:#382715;color:#f2be66;border:1px solid #6b4d24}
+.verif-stages-table-container{overflow-x:auto;margin-top:10px;border:1px solid #21324a;border-radius:7px;background:#08101e}
+
+
