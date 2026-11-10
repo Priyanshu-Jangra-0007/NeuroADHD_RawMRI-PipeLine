@@ -39,7 +39,7 @@ Hardware metrics were directly queried from the local operating system:
 > [!NOTE]
 > **Audit Note on Subject Counts and Test Suite Metrics (November 2026)**:
 > - **Subject Count Discrepancy**: Historical documentation cites "153 subjects" for full cohort scaling, whereas model training documentation references 114 training + 20 test subjects (134 total subjects). This subject count discrepancy is **unreconciled - needs the original split manifest** rather than guessing.
-> - **Current Test Suite**: 267 tests collected: 260 passed, 7 skipped (5 Docker tests, 2 requiring `NEUROADHD_MODEL_DIR`), with 81% statement coverage across `src/` as of November 2026.
+> - **Current Test Suite**: 343 tests collected: 336 passed, 7 skipped (5 Docker tests, 2 requiring `NEUROADHD_MODEL_DIR`), with 80% statement coverage across `src/` as of November 2026.
 
 - **Raw Data Requirements**: 153 subjects $\times \approx 100\text{ MB} \approx 15.3\text{ GB}$.
 - **Transient Intermediates**: $153 \times 1.5\text{ GB} \approx 230\text{ GB}$ if stored concurrently.

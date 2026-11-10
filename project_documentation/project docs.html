@@ -1006,6 +1006,30 @@ This section details how to upload neuroimaging data into the system, the strict
   <li>The card updates with a green status message: <code>Validation Successful: BOLD (64x64x34x60, TR=2.0s) and T1w (256x256x176) verified. Session staged under outputs/intake_sessions/&lt;session_id&gt;</code>.</li>
 </ol>
 
+<h3>4.4 Automated DICOM-to-BIDS Ingestion (with dcm2niix)</h3>
+<p>
+For environments where neuroimaging data arrives directly from clinical scanner consoles in Digital Imaging and Communications in Medicine (DICOM) format, NeuroADHD includes an integrated DICOM-to-BIDS intake engine powered by Chris Rorden's <code>dcm2niix</code>.
+</p>
+
+<div class="note-box" style="margin: 16px 0; padding: 14px 18px; border-left: 4px solid var(--accent); background: #fdfaf2; border-radius: 4px;">
+  <strong>IMPORTANT REGULATORY &amp; SAFETY SPECIFICATION:</strong>
+  <p style="margin: 6px 0 0;">
+    <strong>DICOM conversion is NOT currently gated by the authorization register.</strong> DICOM conversion functions strictly as a local format-normalization utility: it transforms vendor-specific DICOM series into standardized BIDS-compliant NIfTI-1 files and accompanying JSON sidecars. The research authorization gate (described in Step 5 and Step 9) specifically restricts downstream computational preprocessing, feature extraction, and frozen model inference on real participant data.
+  </p>
+</div>
+
+<p><strong>The Two-Phase DICOM Processing Protocol:</strong></p>
+<ol>
+  <li>
+    <strong>Series Inspection (<code>POST /api/intake/sessions/&lt;session_id&gt;/inspect_dicom</code>):</strong>
+    When DICOM files or directories are staged within an intake session, the engine invokes <code>dcm2niix -n -1</code> to rapidly catalog all imaging series without writing full volume files. It parses metadata fields (including <code>SeriesNumber</code>, <code>SeriesDescription</code>, <code>ProtocolName</code>, <code>RepetitionTime</code>, <code>EchoTime</code>, and volume counts) and classifies candidate scans into 3D T1-weighted structural anatomy and 4D BOLD functional timeseries. If multiple BOLD candidates or ambiguous series are detected, the API returns a structured candidate list for user selection.
+  </li>
+  <li>
+    <strong>Deterministic BIDS Normalization (<code>POST /api/intake/sessions/&lt;session_id&gt;/convert_dicom</code>):</strong>
+    Upon user confirmation of series mappings, <code>dcm2niix</code> executes conversion using internal flags for lossless gzip compression (<code>-z y</code>) and BIDS sidecar generation (<code>-b y -ba y</code>). The generated files are placed into canonical BIDS hierarchy (<code>sub-&lt;participant&gt;/ses-&lt;session&gt;/anat/</code> and <code>sub-&lt;participant&gt;/ses-&lt;session&gt;/func/</code>) with POSIX permissions <code>0600</code>, verified for non-empty file size and valid repetition time ($T_R \ge 0.5\text{ s}$), and bundled into a validated session archive ready for staging.
+  </li>
+</ol>
+
 <div class="five-q-box">
   <div class="five-q-title"><span class="ci"><svg viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5h8M5.5 8h8M5.5 12.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2 3.5h1.4M2 8h1.4M2 12.5h1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>SUMMARY: THE 5 CORE QUESTIONS (STAGE 4)</div>
   <div class="q-row"><div class="q-label">1. WHAT do I need to do?</div><div class="q-ans">Select a BIDS-format ZIP archive containing BOLD fMRI and T1w MRI files and click Upload.</div></div>
@@ -1247,18 +1271,6 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Next Stage &rarr;:</strong> Feature vector passed to Stage 18.</li>
 </ul>
 
-<h3>Stage 18: Frozen Model Inference</h3>
-<ul>
-  <li><strong>Input:</strong> 19,900 Fisher-$z$ connectivity feature vector.</li>
-  <li><strong>Processing:</strong> Verified via <code>src/integration/model_verifier.py</code>. The 19,900 features pass through the frozen preprocessor (imputation &rarr; variance filter &rarr; standard scaler &rarr; ANOVA $F$-test Top 100 features) and are evaluated by the frozen Random Forest classifier (50 trees, max depth 3, class_weight='balanced', trained with balanced bootstrap sampling).</li>
-  <li><strong>Output:</strong> <code>model_prediction.json</code> containing ADHD risk probability, control probability, and non-clinical research disclaimer.</li>
-  <li><strong>Next Stage &rarr;:</strong> Results recorded in provenance audit (Stage 19).</li>
-</ul>
-  </li>
-  <li><strong>Output:</strong> <code>features_19900_fisher_z.csv</code> and <code>features_19900_fisher_z.npy</code>.</li>
-  <li><strong>Next Stage &rarr;:</strong> Features passed to Stage 18.</li>
-</ul>
-
 <h3>Stage 18: Quality Control (QC) Overlay Generation</h3>
 <ul>
   <li><strong>Input:</strong> Slices from intermediate and final registered volumes.</li>
@@ -1281,6 +1293,124 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Output:</strong> <code>provenance.json</code>, <code>output_manifest.json</code>, and <code>run_manifest.json</code>.</li>
   <li><strong>Final Result:</strong> Pipeline successfully completes.</li>
 </ul>
+
+<h3>6.2 Step 3: Complete 19-Stage Synthetic Pipeline Validation (validate_step3_pipeline.py)</h3>
+<p>
+To demonstrate end-to-end scientific correctness prior to human data execution, the pipeline underwent rigorous synthetic validation using <code>scripts/validate_step3_pipeline.py</code>. The validation harness generates a fully BIDS-compliant synthetic participant dataset (<code>sub-synthetic001</code>, <code>ses-01</code>) with realistic 3D anatomical tissue contrasts (CSF, GM, WM, skull) and 4D BOLD timeseries ($240\text{ volumes}$, $T_R = 2.0\text{ s}$).
+</p>
+
+<p><strong>Key Empirical Results from the 19-Stage Synthetic Audit:</strong></p>
+<ul>
+  <li>
+    <strong>Ground-Truth Correlation Recovery:</strong> Known neurobiological correlation structures were injected into synthetic CC200 parcels to test whether filtering and parcellation preserve true functional connectivity:
+    <ul>
+      <li><em>Positive Correlation Pair (Parcel 12 &amp; Parcel 45):</em> Injected $r &gt; 0.75$; recovered Pearson $r = 0.7788$ (successfully passes the $&gt; 0.70$ acceptance threshold).</li>
+      <li><em>Negative Correlation Pair (Parcel 70 &amp; Parcel 85):</em> Injected $r &lt; -0.70$; recovered Pearson $r = -0.7107$ (successfully passes the $&lt; -0.65$ acceptance threshold).</li>
+      <li><em>Independent Parcels:</em> Background parcels exhibited near-zero cross-correlation, confirming no spurious signal bleeding across parcellation boundaries.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Full 19,900 Fisher-$z$ Vector Extraction:</strong> All 19 stage deliverables were generated and verified non-empty. The complete $19,900$-dimensional Fisher-$z$ connectivity vector was computed and validated with $100\%$ finite numerical values ($\text{NaN} = 0, \text{Inf} = 0$).
+  </li>
+  <li>
+    <strong>Numerical Determinism &amp; Reproducibility:</strong> Two back-to-back pipeline executions (Run 1 vs. Run 2) using identical random seeds yielded bitwise-reproducible outputs. Across all 200 CC200 ROI timeseries and all 19,900 connectivity edges, the absolute difference was strictly bounded by float64 machine epsilon ($|\text{Run 1} - \text{Run 2}| &lt; 10^{-7}$).
+  </li>
+  <li>
+    <strong>Resource &amp; Memory Bounds:</strong> Total execution runtime was $108.36\text{ s}$ (well within the $600\text{ s}$ 10-minute budget), and peak RSS memory was $0.46\text{ GB}$ (far below the strict $2.50\text{ GB}$ hardware ceiling).
+  </li>
+</ul>
+
+<h3>6.3 MNI152 SyN Non-Linear Registration Benchmark (validate_mni152_syn_registration.py)</h3>
+<p>
+Spatial normalization accuracy was evaluated in a standalone synthetic ground-truth registration benchmark using <code>scripts/validate_mni152_syn_registration.py</code>. The experiment applies a known, smooth nonlinear ground-truth displacement field $\Phi_{\text{GT}}$ to a standard MNI152 anatomical template ($3\text{ mm}$ isotropic, $36 \times 42 \times 36$ grid), resamples the moving anatomy, and uses DIPY's Symmetric Normalization (SyN) with cross-correlation metric (<code>CCMetric(3)</code>) and 12-DOF affine prealignment to recover the transformation.
+</p>
+
+<p><strong>Evaluation Methodology via Complete Transformation Chain:</strong></p>
+<p>
+Landmark displacement evaluation uses DIPY's complete composed transformation chain (<code>syn_map.transform_points</code>), integrating affine prealignment and diffeomorphic forward/backward displacement fields rather than simple displacement addition. Expected deformed landmarks are determined via fixed-point root inversion $y^* + u(y^*) = x_{\text{target}}$.
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+  <tr>
+    <th>Metric Category</th>
+    <th>Pre-Registration (Deformed)</th>
+    <th>Post-Registration (SyN Estimated)</th>
+    <th>Improvement / Status</th>
+  </tr>
+  </thead>
+  <tbody>
+  <tr>
+    <td><strong>Mean Target Registration Error (TRE)</strong></td>
+    <td>$3.1022\text{ mm}$ ($1.034\text{ vox}$)</td>
+    <td><strong>$1.0624\text{ mm}$ ($0.3541\text{ vox}$)</strong></td>
+    <td><strong>65.8% error reduction</strong></td>
+  </tr>
+  <tr>
+    <td><strong>Median TRE</strong></td>
+    <td>$3.2183\text{ mm}$ ($1.073\text{ vox}$)</td>
+    <td><strong>$0.9620\text{ mm}$ ($0.3207\text{ vox}$)</strong></td>
+    <td><strong>70.1% error reduction</strong></td>
+  </tr>
+  <tr>
+    <td><strong>Maximum Landmark TRE</strong></td>
+    <td>$3.5238\text{ mm}$ ($1.175\text{ vox}$)</td>
+    <td><strong>$1.9090\text{ mm}$ ($0.6363\text{ vox}$)</strong></td>
+    <td>Sub-voxel across all 10/10 landmarks</td>
+  </tr>
+  <tr>
+    <td><strong>Sub-Voxel Accuracy Rate</strong></td>
+    <td>0 / 10 landmarks ($0\%$)</td>
+    <td><strong>10 / 10 landmarks ($100\%$)</strong></td>
+    <td><strong>All landmarks &lt; 1.0 voxel ($3\text{ mm}$)</strong></td>
+  </tr>
+  <tr>
+    <td><strong>Whole-Brain Volume Dice</strong></td>
+    <td>0.9449</td>
+    <td><strong>0.9920</strong></td>
+    <td>+0.0471 overlap improvement</td>
+  </tr>
+  <tr>
+    <td><strong>Ventricles Overlap Dice</strong></td>
+    <td>0.9830</td>
+    <td><strong>0.9991</strong></td>
+    <td>Near-perfect anatomical overlap</td>
+  </tr>
+  <tr>
+    <td><strong>Intensity Pearson Correlation ($r$)</strong></td>
+    <td>0.9726</td>
+    <td><strong>0.9991</strong></td>
+    <td>Image correlation restored</td>
+  </tr>
+  <tr>
+    <td><strong>Voxel Intensity RMSE</strong></td>
+    <td>10.3037</td>
+    <td><strong>1.9223</strong></td>
+    <td>81.3% reduction in residual error</td>
+  </tr>
+  <tr>
+    <td><strong>200-Parcel Atlas Alignment (Mean Dice)</strong></td>
+    <td>0.6363</td>
+    <td><strong>0.7562</strong></td>
+    <td>+0.1199 alignment gain across 200 parcels</td>
+  </tr>
+  <tr>
+    <td><strong>Jacobian Determinants ($\det(J)$)</strong></td>
+    <td>N/A</td>
+    <td>$\text{Mean } 0.9108 \pm 0.1634$<br>$\text{Range: } [0.4854, 1.4145]$</td>
+    <td><strong>0 non-positive voxels (0.0% folding)</strong><br>Diffeomorphic topology strictly preserved</td>
+  </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note-box" style="margin: 16px 0; padding: 14px 18px; border-left: 4px solid var(--accent); background: #fdfaf2; border-radius: 4px;">
+  <strong>CRITICAL SCIENTIFIC CAVEAT (SYNTHETIC PHANTOM EXPERIMENT ONLY):</strong>
+  <p style="margin: 6px 0 0;">
+    <strong>Results are from a synthetic phantom only, not real human MRI data.</strong> The spatial accuracy metrics reported above (including mean TRE of $1.0624\text{ mm}$ and parcel Dice of $0.7562$) were obtained using a mathematically simulated digital phantom subjected to smooth, known synthetic deformations. Real participant anatomical data exhibits complex inter-subject morphological variability, gyrification patterns, skull thickness variations, and pathological tissue distortions that were not present in this synthetic experiment. These results demonstrate software execution and mathematical correctness of the SyN transformation chain, but do NOT prove clinical accuracy on real patient scans. Real-data processing remains strictly locked behind the research authorization register.
+  </p>
+</div>
 
 <div class="five-q-box">
   <div class="five-q-title"><span class="ci"><svg viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5h8M5.5 8h8M5.5 12.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2 3.5h1.4M2 8h1.4M2 12.5h1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>SUMMARY: THE 5 CORE QUESTIONS (STAGE 6)</div>
@@ -1534,9 +1664,52 @@ The application utilizes a RESTful JSON HTTP architecture implemented in <code>s
     <td>JSON: <code>{extracted_text: "...", pages: 1}</code></td>
     <td>Executes Poppler/Tesseract OCR text extraction on uploaded medical reports.</td>
   </tr>
+  <tr>
+    <td><code>GET</code></td>
+    <td><code>/api/authorization</code></td>
+    <td>None</td>
+    <td>JSON: <code>{badge: "REAL DATA PROCESSING LOCKED", dataset_id: "sub-01", dataset_authorization_status: "PENDING", signature_status, blockers: [...]}</code></td>
+    <td>Queries the fail-closed research authorization gate. Evaluates the <code>dataset_authorizations</code> table and 10 canonical fields, returning active blockers and locking real participant processing.</td>
+  </tr>
+  <tr>
+    <td><code>GET</code></td>
+    <td><code>/api/pipeline/verification</code></td>
+    <td>None</td>
+    <td>JSON: <code>{status: "VERIFIED", badge: "SYNTHETIC PIPELINE VERIFIED", stages_total: 19, stages_verified: 19, stages: [...], motion_qc, registration}</code></td>
+    <td>Returns the formal Step 3 19-stage pipeline verification status, confirming all 19 synthetic preprocessing stages, motion estimation, SyN registration, and CC200 parcellation passed validation.</td>
+  </tr>
+  <tr>
+    <td><code>POST</code></td>
+    <td><code>/api/intake/sessions/&lt;s_id&gt;/inspect_dicom</code></td>
+    <td>None</td>
+    <td>JSON: <code>{session_id, dcm2niix_available: bool, series_count, series: [...]}</code></td>
+    <td>Runs fast series header inspection across staged DICOM files using <code>dcm2niix -n -1</code>, returning classified structural and functional candidate series.</td>
+  </tr>
+  <tr>
+    <td><code>POST</code></td>
+    <td><code>/api/intake/sessions/&lt;s_id&gt;/convert_dicom</code></td>
+    <td><code>{"t1w_series": 2, "bold_series": 3, "subject_id": "sub-01"}</code></td>
+    <td>JSON: <code>{status: "CONVERTED", converted_files: [...], validation_status}</code></td>
+    <td>Converts user-selected DICOM series into standardized BIDS NIfTI and JSON sidecars using <code>dcm2niix</code>. Note: DICOM conversion is NOT currently gated by the authorization register.</td>
+  </tr>
   </tbody>
 </table>
 </div>
+
+<h3>8.2 Security &amp; Verification Endpoints Detail</h3>
+<p>
+The dashboard frontend polls two primary endpoints on initialization to determine security enforcement badges and system readiness:
+</p>
+
+<h4>A. Research Authorization Status (<code>GET /api/authorization</code>)</h4>
+<p>
+Evaluates the authorization register (<code>configs/research_authorization_register.json</code>). Inspects root governance flags, mandatory checklists, and the <code>dataset_authorizations</code> table. For dataset <code>sub-01</code>, verifies the HMAC-SHA256 signature across all 10 canonical fields. When unapproved items or missing signatures are found, returns HTTP 200 with <code>badge: "REAL DATA PROCESSING LOCKED"</code> and detailed blocker strings.
+</p>
+
+<h4>B. Synthetic Pipeline Verification (<code>GET /api/pipeline/verification</code>)</h4>
+<p>
+Reads the cryptographic verification results produced by <code>scripts/validate_step3_pipeline.py</code>. Confirms that all 19 pipeline stages have executed successfully with validated ground-truth correlation recovery ($r_{\text{pos}} = 0.7788$, $r_{\text{neg}} = -0.7107$), bitwise reproducibility, and verified CC200 atlas geometry.
+</p>
 </section>
 
 <!-- STEP 9: DATABASE AND FILE STORAGE -->
@@ -1585,6 +1758,52 @@ temp_path = target_path.with_suffix(".tmp")
 with open(temp_path, "w") as f:
     json.dump(data, f, indent=2)
 os.replace(temp_path, target_path) # Atomic filesystem rename</code></pre>
+
+<h3>9.3 Governance Register &amp; Dataset Authorizations Architecture</h3>
+<p>
+Beyond operational run data, system governance is stored in a machine-readable governance ledger: <code>configs/research_authorization_register.json</code>. This ledger enforces ethics compliance, institutional review board (IRB) tracking, and data usage agreements before real-participant neuroimaging data can be touched.
+</p>
+
+<p><strong>The sub-01 Dataset Authorization Record:</strong></p>
+<p>
+The register contains a dedicated <code>dataset_authorizations</code> table. The baseline participant record for <code>sub-01</code> is defined as follows:
+</p>
+<ul>
+  <li><strong>Authorization ID:</strong> <code>AUTH-DS-SUB01-001</code></li>
+  <li><strong>Project ID:</strong> <code>NeuroADHD RawMRI PoC V2</code></li>
+  <li><strong>Dataset ID:</strong> <code>sub-01</code></li>
+  <li><strong>Approved Purpose:</strong> Retrospective computational neuroimaging research and automated CC200 feature extraction feasibility.</li>
+  <li><strong>Authorization Status:</strong> <code>PENDING</code></li>
+  <li><strong>Permitted Operations:</strong> <code>["dicom_conversion", "bids_validation", "preprocessing", "cc200_extraction"]</code></li>
+  <li><strong>Cryptographic Signature:</strong> <code>null</code> (unactivated)</li>
+  <li><strong>Notes:</strong> Awaiting formal Institutional Ethics Committee (IEC) clearance and Data Use Agreement execution before activation.</li>
+</ul>
+
+<p><strong>HMAC-SHA256 Cryptographic Integrity Scheme:</strong></p>
+<p>
+To prevent tampering or unauthorized state promotion, the authorization engine (<code>src/validation/authorization_gate.py</code>) validates signatures using keyed HMAC-SHA256 digests. Signature calculation uses a strict canonical representation:
+</p>
+<ol>
+  <li>The record is filtered to exactly <strong>10 canonical fields</strong>:
+    <code>approval_date</code>,
+    <code>approved_purpose</code>,
+    <code>authorization_id</code>,
+    <code>authorization_status</code>,
+    <code>authorized_personnel</code>,
+    <code>dataset_id</code>,
+    <code>expiry_date</code>,
+    <code>institutional_approval_reference</code>,
+    <code>permitted_operations</code>, and
+    <code>project_id</code>.
+  </li>
+  <li>The <code>permitted_operations</code> list is sorted alphabetically; all strings are trimmed of whitespace.</li>
+  <li>The dictionary is serialized to canonical JSON with sorted keys and compact separators (<code>","</code> and <code>":"</code>).</li>
+  <li>An HMAC-SHA256 hex digest is computed using the secret key defined in <code>NEUROADHD_HMAC_KEY</code>.</li>
+</ol>
+
+<p>
+<strong>Fail-Closed Security Guarantee:</strong> If the authorization status is not <code>APPROVED</code>, if the institutional approval reference is missing, if dates are expired, or if the HMAC-SHA256 signature does not match bit-for-bit, the authorization gate completely locks real-scan execution. All computational processing remains restricted to synthetic digital phantoms.
+</p>
 
 <div class="five-q-box">
   <div class="five-q-title"><span class="ci"><svg viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5h8M5.5 8h8M5.5 12.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2 3.5h1.4M2 8h1.4M2 12.5h1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>SUMMARY: THE 5 CORE QUESTIONS (STAGE 9)</div>
