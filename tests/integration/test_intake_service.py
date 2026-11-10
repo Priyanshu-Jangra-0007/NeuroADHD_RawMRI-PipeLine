@@ -18,8 +18,9 @@ from src.intake.service import IntakeError, IntakeService
 class TestIntakeService(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name) / "intake"
-        self.service = IntakeService(self.root)
+        self.data_root = Path(self.temp.name) / "NeuroADHD_Converted"
+        self.service = IntakeService(self.data_root)
+        self.root = self.service.root
 
     def tearDown(self):
         self.temp.cleanup()

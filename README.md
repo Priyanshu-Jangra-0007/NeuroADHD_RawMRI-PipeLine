@@ -20,14 +20,16 @@ Ingesting raw 4D resting-state fMRI scans in BIDS format, executing standardized
 
 ---
 
-## 2. Current Status: SYNTHETIC PIPELINE + LOCAL MRI INTAKE
+## 2. Current Status: SYNTHETIC PIPELINE + AUTOMATED DICOM-TO-BIDS INTAKE
 
 > [!IMPORTANT]
-> **STATUS: Synthetic preprocessing demonstration and local upload validation are implemented; real-participant processing remains locked.**
+> **STATUS: Synthetic preprocessing demonstration and automated DICOM-to-BIDS ingestion are implemented; real-participant preprocessing remains locked.**
 >
-> The local dashboard accepts complete BIDS-style MRI session ZIP files, individual NIfTI/DICOM files, and separate PDF/JPEG/PNG report uploads. It validates scan structure, NIfTI dimensions and BOLD JSON metadata. Report text extraction uses optional local PDF/OCR tools.
+> The local dashboard accepts complete BIDS-style MRI session ZIP files, raw DICOM studies, and separate radiology reports. It automates DICOM series inspection and de-identification via `dcm2niix`, enables explicit T1w and BOLD series selection (with multi-run support), generates standardized BIDS NIfTI datasets, and provides downloadable validated BIDS session ZIPs.
 >
-> **A successful upload validation is not a successful preprocessing run.** Real-scan preprocessing, DICOM conversion, and real-participant model inference remain disabled by the research authorization gate. The synthetic runner continues to process generated synthetic data only.
+> **All MRI data and conversion artifacts are stored strictly outside the repository** in `NEUROADHD_DATA_ROOT` (default: `../NeuroADHD_Converted`).
+>
+> **A successful BIDS conversion is an ingestion stage, not a preprocessing run.** Real-scan preprocessing, CC200 feature extraction, and real-participant model inference remain disabled by the research authorization gate (`processing_enabled = false`, `real_data_authorized = false`). The synthetic runner continues to process generated synthetic data only.
 
 ---
 
@@ -83,17 +85,38 @@ source .venv/bin/activate
 pip install -r requirements-lock.txt
 ```
 
-### 4.3 Local Dashboard and MRI Intake
+### 4.3 External MRI Storage Configuration
+
+All real MRI data, staged uploads, converted BIDS datasets, downloadable ZIPs, and conversion logs are strictly saved outside the project code tree:
+
+```bash
+export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
+```
+
+The external directory structure consists of:
+- `dicom_input/`: Staged DICOM studies and uploads.
+- `staged_sessions/`: Intake staging sessions.
+- `neuroadhd_bids/`: Converted BIDS datasets (`sub-<id>/ses-<id>/...`).
+- `validated_sessions/`: Downloadable validated BIDS session ZIPs.
+- `conversion_logs/`: Anonymized conversion audit logs.
+
+### 4.4 Local Dashboard and Automated DICOM Intake
 
 Start the local dashboard:
 
 ```bash
+export NEUROADHD_DATA_ROOT="/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Converted"
 python scripts/serve_dashboard.py
 ```
 
-Open http://127.0.0.1:8765. The preferred upload is one complete BIDS-style session ZIP containing a 4D resting-state BOLD NIfTI, its JSON sidecar, and a 3D T1w NIfTI. Individual NIfTI/DICOM files and separate PDF/JPEG/PNG reports are also accepted. See [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md) for input structure, validation rules, report extraction prerequisites, limits, and safety boundaries.
+Open http://127.0.0.1:8765. The dashboard supports:
+1. Automated DICOM inspection (detects series, dimensions, TR, and modality without image conversion).
+2. De-identification (strips patient names, IDs, DOB, etc.).
+3. Explicit series selection (T1w and single/multi-run BOLD).
+4. Automated `dcm2niix` conversion to BIDS format (`.nii.gz` and `.json`).
+5. BIDS session validation and downloadable validated session ZIPs.
 
-Uploads are staged locally under outputs/intake_sessions/. This local intake feature does not authorize or launch real-scan preprocessing.
+See [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md) for detailed workflow instructions, BIDS layout, validation rules, and safety boundaries.
 
 ---
 

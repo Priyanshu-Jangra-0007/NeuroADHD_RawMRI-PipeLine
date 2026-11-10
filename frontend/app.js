@@ -303,12 +303,25 @@ function drawHeatmap(canvas, matrix) {
   ctx.drawImage(temp, 0, 0, canvas.width, canvas.height);
 }
 
+let currentDicomSessionId = null;
+
 function renderIntakeResult(sessionId, result) {
   $("intakeResult").classList.remove("hidden");
   $("intakeResultTitle").textContent = `${result.kind === "report" ? "Report extraction" : "MRI scan validation"} · ${result.status || result.validation?.status || result.report_extraction?.status || "COMPLETE"}`;
   $("intakeResultText").textContent = JSON.stringify({ session_id: sessionId, ...result }, null, 2);
   const links = $("intakeArtifactLinks");
   links.replaceChildren();
+
+  // If BIDS conversion ZIP is available, offer direct download
+  const downloadZip = result.download_zip_filename || result.dicom_conversion?.download_zip_filename;
+  if (downloadZip) {
+    const zipBtn = document.createElement("a");
+    zipBtn.className = "download-bids-btn";
+    zipBtn.href = `/api/intake/sessions/${encodeURIComponent(sessionId)}/download_bids`;
+    zipBtn.textContent = `⬇ Download validated BIDS session ZIP (${downloadZip})`;
+    links.appendChild(zipBtn);
+  }
+
   const reports = result.report_extraction?.files || [];
   reports.filter((item) => item.text_artifact).forEach((item) => {
     const link = document.createElement("a");
@@ -320,6 +333,136 @@ function renderIntakeResult(sessionId, result) {
     links.appendChild(link);
   });
   $("intakeResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function renderDicomInspection(sessionId, data) {
+  currentDicomSessionId = sessionId;
+  const workbench = $("dicomWorkbench");
+  workbench.classList.remove("hidden");
+  $("dicomSessionInfo").textContent = `Session: ${sessionId} · Detected ${data.series_count || 0} series (dcm2niix: ${data.dcm2niix_version || "available"}).`;
+
+  const tbody = $("dicomSeriesTableBody");
+  tbody.replaceChildren();
+
+  let hasAmbiguous = false;
+  const ambiguityReasons = [];
+
+  const seriesList = data.series || [];
+  seriesList.forEach((s) => {
+    const tr = document.createElement("tr");
+
+    let badgeClass = "badge-other";
+    if (s.candidate_scan_type === "T1w") badgeClass = "badge-t1";
+    else if (s.candidate_scan_type === "BOLD") badgeClass = "badge-bold";
+    if (s.classification_ambiguous) {
+      badgeClass = "badge-ambiguous";
+      hasAmbiguous = true;
+      ambiguityReasons.push(`Series ${s.series_number || s.series_id}: ${s.ambiguity_reason || "classification ambiguous"}`);
+    }
+
+    const dimsText = s.dimensions && s.dimensions.length ? s.dimensions.join(" × ") : "—";
+    const trText = s.repetition_time != null ? `${s.repetition_time} s` : "—";
+
+    tr.innerHTML = `
+      <td><strong>${s.series_number || s.series_id}</strong></td>
+      <td><div><strong>${s.series_description || "Series"}</strong></div><small style="color:#788ea8">${s.protocol_name || ""}</small></td>
+      <td>${s.image_count || 1}</td>
+      <td>${dimsText}</td>
+      <td>${s.modality || "MR"}</td>
+      <td>${trText}</td>
+      <td><span class="badge ${badgeClass}">${s.candidate_scan_type}</span></td>
+      <td style="text-align:center"><input type="radio" name="dicomT1wRadio" value="${s.series_id}" ${s.candidate_scan_type === "T1w" && !s.classification_ambiguous ? "checked" : ""}></td>
+      <td style="text-align:center"><input type="checkbox" name="dicomBoldCheckbox" value="${s.series_id}" ${s.candidate_scan_type === "BOLD" ? "checked" : ""}></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  if (hasAmbiguous) {
+    $("dicomConfirmRow").classList.remove("hidden");
+    $("dicomAmbiguityText").textContent = ambiguityReasons.join(" · ");
+    $("dicomConfirmCheckbox").checked = false;
+  } else {
+    $("dicomConfirmRow").classList.add("hidden");
+    $("dicomConfirmCheckbox").checked = true;
+  }
+
+  workbench.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function inspectDicom(sessionId) {
+  const progress = $("intakeProgress");
+  progress.classList.remove("hidden");
+  progress.textContent = "Inspecting DICOM files with dcm2niix (inspect-only, no images converted)…";
+  try {
+    const data = await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/inspect_dicom`, {
+      method: "POST",
+    });
+    if (data.errors && data.errors.length) {
+      showToast(data.errors.join("; "));
+    }
+    renderDicomInspection(sessionId, data);
+    progress.textContent = `DICOM inspection complete · ${data.series_count || 0} series identified.`;
+  } catch (err) {
+    progress.textContent = `DICOM inspection failed: ${err.message}`;
+    showToast(err.message);
+  }
+}
+
+async function convertDicom() {
+  if (!currentDicomSessionId) {
+    return showToast("No active DICOM session selected.");
+  }
+  const t1Radio = document.querySelector('input[name="dicomT1wRadio"]:checked');
+  if (!t1Radio) {
+    return showToast("Select one anatomical T1w series.");
+  }
+  const boldCheckboxes = Array.from(document.querySelectorAll('input[name="dicomBoldCheckbox"]:checked'));
+  if (!boldCheckboxes.length) {
+    return showToast("Select at least one resting-state BOLD series.");
+  }
+
+  const subjectId = ($("bidsSubjectInput").value || "").trim();
+  if (!subjectId) {
+    return showToast("Enter a BIDS Subject ID (e.g. sub-001).");
+  }
+  const sessionIdLabel = ($("bidsSessionInput").value || "").trim();
+  const confirmAmbiguous = $("dicomConfirmCheckbox").checked;
+
+  const boldSeries = boldCheckboxes.map((cb, idx) => ({
+    series_id: cb.value,
+    run: boldCheckboxes.length > 1 ? idx + 1 : null,
+    task: "rest",
+  }));
+
+  const payload = {
+    subject_id: subjectId,
+    session_id_label: sessionIdLabel || null,
+    t1w_series: t1Radio.value,
+    bold_series: boldSeries,
+    confirm_ambiguous: confirmAmbiguous,
+  };
+
+  const progress = $("intakeProgress");
+  progress.classList.remove("hidden");
+  progress.textContent = `Converting series to BIDS (${subjectId}): executing dcm2niix anonymization and NIfTI compression…`;
+
+  const btn = $("convertDicomButton");
+  btn.disabled = true;
+  try {
+    const result = await api(`/api/intake/sessions/${encodeURIComponent(currentDicomSessionId)}/convert_dicom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    renderIntakeResult(currentDicomSessionId, result);
+    progress.textContent = `Conversion and BIDS validation complete · ${subjectId}`;
+    showToast("DICOM converted to valid BIDS session successfully!");
+  } catch (err) {
+    progress.textContent = `Conversion stopped: ${err.message}`;
+    showToast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function uploadIntake(kind, files, button) {
@@ -339,8 +482,13 @@ async function uploadIntake(kind, files, button) {
       body: JSON.stringify({ kind }),
     });
     sessionId = created.session_id;
+    let hasDicom = false;
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
+      const fnameLower = file.name.toLowerCase();
+      if (fnameLower.endsWith(".dcm") || fnameLower.endsWith(".ima") || fnameLower.endsWith(".zip")) {
+        hasDicom = true;
+      }
       progress.textContent = `Uploading ${index + 1} of ${files.length}: ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`;
       await api(`/api/intake/sessions/${encodeURIComponent(sessionId)}/files`, {
         method: "POST",
@@ -359,6 +507,12 @@ async function uploadIntake(kind, files, button) {
       method: "POST",
     });
     renderIntakeResult(sessionId, result);
+
+    // If DICOM series were staged, automatically trigger DICOM inspection
+    if (kind === "scan" && (hasDicom || result.validation?.dicom_file_count > 0 || result.validation?.status === "DICOM_SERIES_STAGED")) {
+      await inspectDicom(sessionId);
+    }
+
     progress.textContent = `Intake complete · session ${sessionId}`;
     showToast(kind === "scan" ? "MRI files uploaded and validation completed." : "Report upload and extraction completed.");
   } catch (error) {
@@ -437,6 +591,11 @@ $("uploadFilesButton").addEventListener("click", () => {
 });
 $("uploadReportsButton").addEventListener("click", () => {
   uploadIntake("report", $("reportFilesInput").files, $("uploadReportsButton"));
+});
+$("closeDicomWorkbench").addEventListener("click", () => $("dicomWorkbench").classList.add("hidden"));
+$("convertDicomButton").addEventListener("click", convertDicom);
+$("inspectDicomAgainButton").addEventListener("click", () => {
+  if (currentDicomSessionId) inspectDicom(currentDicomSessionId);
 });
 $("closeIntakeResult").addEventListener("click", () => $("intakeResult").classList.add("hidden"));
 $("refreshRuns").addEventListener("click", refreshRuns);

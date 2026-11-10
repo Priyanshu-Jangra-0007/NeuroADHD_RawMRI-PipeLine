@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from src.intake.service import IntakeError, IntakeService
+from src.intake.service import IntakeError, IntakeService, get_data_root
 
 _REAL_POPEN = subprocess.Popen
 
@@ -29,7 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 OUTPUT_ROOT = PROJECT_ROOT / "outputs" / "dashboard_cohorts"
-INTAKE_ROOT = PROJECT_ROOT / "outputs" / "intake_sessions"
+INTAKE_ROOT = get_data_root()
 RUNNER = PROJECT_ROOT / "scripts" / "run_synthetic_cohort.py"
 MAX_REQUEST_BYTES = 4096
 
@@ -444,6 +444,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             parts = [unquote(part) for part in route.strip("/").split("/") if part]
             if len(parts) == 4 and parts[:2] == ["api", "intake"] and parts[2] == "sessions":
                 return self._send_json(APP.intake.get_session(parts[3]))
+            if len(parts) == 5 and parts[:3] == ["api", "intake", "sessions"] and parts[4] == "download_bids":
+                data, content_type, filename = APP.intake.get_bids_session_zip(parts[3])
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if len(parts) == 6 and parts[:3] == ["api", "intake", "sessions"] and parts[4] == "artifacts":
                 data, content_type = APP.intake.get_report_artifact(parts[3], parts[5])
                 return self._send_bytes(data, content_type)
@@ -537,6 +547,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     return self._send_json(result, status=201)
                 if action == "validate":
                     result = APP.intake.validate_scan_session(session_id)
+                    return self._send_json(result)
+                if action == "inspect_dicom":
+                    result = APP.intake.inspect_dicom_series(session_id)
+                    return self._send_json(result)
+                if action == "convert_dicom":
+                    length = self._content_length(MAX_REQUEST_BYTES)
+                    if length is None:
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                    result = APP.intake.convert_dicom_to_bids(session_id, payload)
                     return self._send_json(result)
                 if action == "process-reports":
                     result = APP.intake.process_report_session(session_id)

@@ -91,14 +91,14 @@
           </article>
           <article class="intake-option">
             <div class="intake-option-icon">▤</div>
-            <div class="intake-option-tag">INDIVIDUAL FILES</div>
-            <h3>MRI / fMRI files</h3>
-            <p>Select BIDS-named NIfTI files and sidecars, or stage a DICOM series. BOLD and T1w must belong to the same session.</p>
-            <label class="file-picker">Choose scan files
-              <input id="scanFilesInput" type="file" multiple accept=".nii,.gz,.dcm,.ima,.json,.tsv,.bval,.bvec,.txt,.csv">
+            <div class="intake-option-tag">DICOM STUDY / SCAN FILES</div>
+            <h3>DICOM study & scan files</h3>
+            <p>Upload a DICOM study ZIP or individual DICOM/NIfTI files. Automatically inspect series and convert to BIDS using dcm2niix.</p>
+            <label class="file-picker">Choose scan / DICOM files
+              <input id="scanFilesInput" type="file" multiple accept=".zip,.nii,.gz,.dcm,.ima,.json,.tsv,.bval,.bvec,.txt,.csv">
             </label>
-            <button class="secondary-button" id="uploadFilesButton" type="button">Upload selected files</button>
-            <small>Use filenames ending in <code>_bold.nii.gz</code> and <code>_T1w.nii.gz</code>. DICOM conversion is not executed in this intake-only release.</small>
+            <button class="secondary-button" id="uploadFilesButton" type="button">Upload and inspect series</button>
+            <small>Supports DICOM folders/ZIPs and NIfTI pairs. Automated dcm2niix inspection and BIDS formatting.</small>
           </article>
           <article class="intake-option">
             <div class="intake-option-icon">▧</div>
@@ -111,6 +111,57 @@
             <button class="secondary-button" id="uploadReportsButton" type="button">Upload and extract text</button>
             <small>Reports are stored separately and are never treated as BOLD input or model features.</small>
           </article>
+        </div>
+        <div class="dicom-workbench hidden" id="dicomWorkbench">
+          <div class="dicom-workbench-head">
+            <div>
+              <span class="dicom-step-tag">AUTOMATED DICOM CONVERTER</span>
+              <h3 id="dicomWorkbenchTitle">Step B & C: Inspect Series & Convert to BIDS</h3>
+            </div>
+            <button class="ghost-button" id="closeDicomWorkbench" type="button">Close</button>
+          </div>
+          <p class="panel-desc" id="dicomSessionInfo" style="margin-bottom:8px">Select one Anatomical T1w series and one or more Resting-state BOLD series for automated BIDS conversion.</p>
+          <div class="dicom-series-table-container">
+            <table class="dicom-table" id="dicomSeriesTable">
+              <thead>
+                <tr>
+                  <th>Series #</th>
+                  <th>Description / Protocol</th>
+                  <th>Image Count</th>
+                  <th>Dimensions</th>
+                  <th>Modality</th>
+                  <th>TR (s)</th>
+                  <th>Candidate Type</th>
+                  <th>T1w (Select 1)</th>
+                  <th>BOLD (Select)</th>
+                </tr>
+              </thead>
+              <tbody id="dicomSeriesTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+          <div class="dicom-config-box">
+            <h4>BIDS Identity & Conversion Options</h4>
+            <div class="dicom-form-row">
+              <label>BIDS Subject ID:
+                <input type="text" id="bidsSubjectInput" placeholder="sub-001" value="sub-001">
+              </label>
+              <label>Optional Session ID:
+                <input type="text" id="bidsSessionInput" placeholder="ses-01" value="">
+              </label>
+            </div>
+            <div class="dicom-confirm-row hidden" id="dicomConfirmRow">
+              <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="dicomConfirmCheckbox">
+                <span><strong>I confirm ambiguous series classification:</strong> <span id="dicomAmbiguityText"></span></span>
+              </label>
+            </div>
+            <div class="dicom-actions">
+              <button class="primary-button" id="convertDicomButton" type="button">Convert selected series to BIDS →</button>
+              <button class="secondary-button" id="inspectDicomAgainButton" type="button">Re-inspect DICOM files</button>
+            </div>
+          </div>
         </div>
         <div class="intake-progress hidden" id="intakeProgress" aria-live="polite">Preparing upload…</div>
         <div class="intake-result hidden" id="intakeResult">
