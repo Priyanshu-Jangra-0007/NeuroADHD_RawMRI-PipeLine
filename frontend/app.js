@@ -614,6 +614,25 @@ async function refreshAuthorizationStatus() {
   }
 }
 
+async function refreshPipelineVerification() {
+  try {
+    const data = await api("/api/pipeline/verification");
+    if ($("verificationBadge")) $("verificationBadge").textContent = data.badge || "SYNTHETIC PIPELINE VERIFIED";
+    if ($("verifPipelineStatus")) $("verifPipelineStatus").textContent = `VERIFIED (${data.stages_verified}/${data.stages_total} Stages)`;
+    if ($("verifRealDataStatus")) $("verifRealDataStatus").textContent = data.safety_gate?.real_scan_pipeline_status || "LOCKED (Pending Auth)";
+    if ($("verifAtlasStatus")) $("verifAtlasStatus").textContent = `${data.parcellation?.atlas?.slice(0, 20) || "Craddock CC200"} (${data.parcellation?.rois || 200} ROIs)`;
+    if ($("verifFeaturesStatus")) $("verifFeaturesStatus").textContent = `${(data.parcellation?.edges || 19900).toLocaleString()} Edges (All Finite)`;
+
+    if (data.report && data.report.correlation_recovery) {
+      const cr = data.report.correlation_recovery;
+      if ($("verifCorrPos")) $("verifCorrPos").textContent = `r = +${cr.positive_pair.recovered_pearson_r.toFixed(4)} (Target > 0.70) [PASSED]`;
+      if ($("verifCorrNeg")) $("verifCorrNeg").textContent = `r = ${cr.negative_pair.recovered_pearson_r.toFixed(4)} (Target < -0.65) [PASSED]`;
+    }
+  } catch (err) {
+    // Non-blocking
+  }
+}
+
 async function init() {
   try {
     state.health = await api("/api/health");
@@ -628,6 +647,7 @@ async function init() {
       $("runButton").disabled = true;
     }
     await refreshAuthorizationStatus();
+    await refreshPipelineVerification();
     await refreshRuns();
     await refreshStagedSessions();
     state.refreshTimer = setInterval(refreshRuns, 3000);

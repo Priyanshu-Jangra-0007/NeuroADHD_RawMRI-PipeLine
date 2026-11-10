@@ -535,18 +535,16 @@ def generate_synthetic_phantom_session(
         target_affine = CANONICAL_CC200_AFFINE
         brain_mask = canonical_atlas_data > 0
 
-        # Regenerate BOLD data matching canonical atlas space and all 200 parcels
+        # Regenerate BOLD data matching canonical atlas space and all 200 parcels (vectorized)
         bold_data = np.zeros((*target_shape, t_vol), dtype=np.float32)
+        t_arr = np.arange(t_vol, dtype=np.float32)
         for i in range(1, 201):
             mask_i = (canonical_atlas_data == i)
             n_vox = int(np.sum(mask_i))
             if n_vox > 0:
-                for t in range(t_vol):
-                    bold_data[mask_i, t] = (
-                        100.0
-                        + np.sin(0.08 * t + i * 0.05) * 10.0
-                        + np.random.normal(0, 1.0, n_vox).astype(np.float32)
-                    )
+                base_signal = (100.0 + np.sin(0.08 * t_arr + i * 0.05) * 10.0)[None, :]
+                noise = np.random.normal(0, 1.0, (n_vox, t_vol)).astype(np.float32)
+                bold_data[mask_i, :] = base_signal + noise
         nib.save(nib.Nifti1Image(bold_data, target_affine), str(bold_nii_path))
 
         # Regenerate T1w data matching canonical atlas space
@@ -664,12 +662,12 @@ def generate_synthetic_phantom_session(
 
 
 def run_poc_v2_pipeline(
-    bold_path: Path,
-    bold_json_path: Path,
-    t1w_path: Path,
-    atlas_path: Path,
-    template_path: Path,
-    output_dir: Path,
+    bold_path: Union[str, Path],
+    bold_json_path: Union[str, Path],
+    t1w_path: Union[str, Path],
+    atlas_path: Union[str, Path],
+    template_path: Union[str, Path],
+    output_dir: Union[str, Path],
     subject_id: str = "sub-synthetic001",
     session_id: str = "ses-1",
     max_memory_gb: float = 2.5,
@@ -681,6 +679,15 @@ def run_poc_v2_pipeline(
     require_model_inference: bool = False,
 ) -> Dict[str, Any]:
     """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
+    bold_path = Path(bold_path)
+    bold_json_path = Path(bold_json_path)
+    t1w_path = Path(t1w_path)
+    atlas_path = Path(atlas_path)
+    template_path = Path(template_path)
+    output_dir = Path(output_dir)
+    if manifest_path is not None:
+        manifest_path = Path(manifest_path)
+
     start_time = time.time()
     start_rss = check_process_memory_gb()
 

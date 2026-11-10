@@ -34,6 +34,21 @@ class TestDashboardAuthorizationEndpoint(unittest.TestCase):
         self.assertGreater(len(status["blockers"]), 0)
         self.assertTrue(any("pending formal approval" in b for b in status["blockers"]))
 
+    def test_pipeline_verification_endpoint(self):
+        """Dashboard verification endpoint must return verified status for synthetic pipeline while real data remains locked."""
+        status = self.app.pipeline_verification_status()
+        self.assertEqual(status["status"], "VERIFIED")
+        self.assertEqual(status["badge"], "SYNTHETIC PIPELINE VERIFIED")
+        self.assertEqual(status["stages_total"], 19)
+        self.assertEqual(status["stages_verified"], 19)
+        self.assertFalse(status["safety_gate"]["real_data_authorized"])
+        self.assertEqual(status["safety_gate"]["execution_policy"], "STRICTLY_SYNTHETIC_ONLY")
+        self.assertEqual(status["safety_gate"]["authorization_status"], "NOT_AUTHORIZED")
+        self.assertIn("LOCKED", status["safety_gate"]["real_scan_pipeline_status"])
+        self.assertEqual(len(status["stages"]), 19)
+        self.assertEqual(status["parcellation"]["rois"], 200)
+        self.assertEqual(status["parcellation"]["edges"], 19900)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -145,6 +145,12 @@ def extract_cc200_timeseries(
             "Cleaned BOLD data must be resampled to the exact CC200 reference grid before extraction."
         )
 
+    # Validate CC200 atlas ROI count upfront to fail closed on empty/incomplete atlases
+    atlas_data = np.asanyarray(atlas_img.dataobj, dtype=np.int32)
+    unique_labels = np.unique(atlas_data[atlas_data > 0])
+    if len(unique_labels) != 200:
+        raise ValueError(f"Expected exactly 200 ROIs from CC200 atlas, found {len(unique_labels)}")
+
     # Use nilearn NiftiLabelsMasker for spatial mean extraction per label
     # Setting resampling_target=None ensures unexpected geometry mismatches raise an error
     # instead of silently triggering internal interpolation
