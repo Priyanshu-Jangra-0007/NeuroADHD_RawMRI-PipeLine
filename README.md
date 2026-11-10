@@ -27,7 +27,7 @@ Ingesting raw 4D resting-state fMRI scans in BIDS format, executing standardized
 >
 > The local dashboard accepts complete BIDS-style MRI session ZIP files, raw DICOM studies, and separate radiology reports. It automates DICOM series inspection and de-identification via `dcm2niix`, enables explicit T1w and BOLD series selection (with multi-run support), generates standardized BIDS NIfTI datasets, and provides downloadable validated BIDS session ZIPs.
 >
-> **All MRI data and conversion artifacts are stored strictly outside the repository** in `NEUROADHD_DATA_ROOT` (default: `../NeuroADHD_Converted`).
+> **All MRI data and conversion artifacts are stored strictly outside the repository** in `NEUROADHD_DATA_ROOT` (default: `~/NeuroADHD_Data`).
 >
 > **A successful BIDS conversion is an ingestion stage, not a preprocessing run.** Real-scan preprocessing, CC200 feature extraction, and real-participant model inference remain disabled by the research authorization gate (`processing_enabled = false`, `real_data_authorized = false`). The synthetic runner continues to process generated synthetic data only.
 
@@ -87,10 +87,10 @@ pip install -r requirements-lock.txt
 
 ### 4.3 External MRI Storage Configuration
 
-All real MRI data, staged uploads, converted BIDS datasets, downloadable ZIPs, and conversion logs are strictly saved outside the project code tree:
+All real MRI data, staged uploads, converted BIDS datasets, downloadable ZIPs, and conversion logs are strictly saved outside the project code tree (default: `~/NeuroADHD_Data` when `NEUROADHD_DATA_ROOT` is unset):
 
 ```bash
-export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
+export NEUROADHD_DATA_ROOT=~/NeuroADHD_Data
 ```
 
 The external directory structure consists of:
@@ -105,7 +105,7 @@ The external directory structure consists of:
 Start the local dashboard:
 
 ```bash
-export NEUROADHD_DATA_ROOT="<your-project-folder>/outputs/intake_data"
+export NEUROADHD_DATA_ROOT=~/NeuroADHD_Data
 python scripts/serve_dashboard.py
 ```
 
