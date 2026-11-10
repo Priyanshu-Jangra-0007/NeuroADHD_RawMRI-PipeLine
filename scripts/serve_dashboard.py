@@ -71,6 +71,59 @@ class DashboardApplication:
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
 
+    def authorization_status(self) -> Dict[str, Any]:
+        from src.validation.authorization_gate import ResearchAuthorizationGate
+
+        try:
+            gate = ResearchAuthorizationGate(base_dir=PROJECT_ROOT)
+            report = gate.evaluate_register()
+        except Exception as exc:
+            report = {
+                "overall_authorization_state": "NOT_AUTHORIZED",
+                "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+                "real_data_authorized": False,
+                "issues": [str(exc)],
+                "status_counts": {"PENDING": 23},
+                "dataset_evaluations": [],
+                "total_items": 23,
+            }
+
+        dataset_evals = report.get("dataset_evaluations", [])
+        first_ds = dataset_evals[0] if dataset_evals else {}
+
+        blockers = []
+        pending_cnt = report.get("status_counts", {}).get("PENDING", 0)
+        if pending_cnt > 0:
+            blockers.append(f"{pending_cnt} supervisor and governance requirements pending formal approval.")
+        if first_ds:
+            if first_ds.get("status") != "APPROVED":
+                blockers.append(f"Dataset '{first_ds.get('dataset_id', 'sub-01')}' authorization status is {first_ds.get('status')}.")
+            if not first_ds.get("institutional_approval_reference"):
+                blockers.append(f"Dataset '{first_ds.get('dataset_id', 'sub-01')}' missing Institutional Ethics Committee (IEC) clearance reference.")
+            if first_ds.get("signature_status") != "VALID":
+                blockers.append(f"Dataset '{first_ds.get('dataset_id', 'sub-01')}' cryptographic signature is {first_ds.get('signature_status')}.")
+        if not blockers:
+            blockers = report.get("issues", [])[:5]
+
+        return {
+            "execution_policy": report.get("execution_policy", "STRICTLY_SYNTHETIC_ONLY"),
+            "authorization_status": report.get("overall_authorization_state", "NOT_AUTHORIZED"),
+            "real_data_authorized": False,
+            "badge": "REAL DATA PROCESSING LOCKED",
+            "dataset_id": first_ds.get("dataset_id", "sub-01"),
+            "dataset_authorization_status": first_ds.get("status", "PENDING"),
+            "signature_status": first_ds.get("signature_status", "MISSING_SIGNATURE"),
+            "approval_reference_status": "PENDING_APPROVAL_REFERENCE" if not first_ds.get("institutional_approval_reference") else "PROVIDED",
+            "institutional_approval_reference": first_ds.get("institutional_approval_reference"),
+            "expiry_status": first_ds.get("expiry_status", "NO_EXPIRY_DATE"),
+            "approval_date": first_ds.get("approval_date"),
+            "expiry_date": first_ds.get("expiry_date"),
+            "permitted_operations": first_ds.get("permitted_operations", []),
+            "pending_items_count": pending_cnt,
+            "total_items_count": report.get("total_items", 23),
+            "blockers": blockers,
+        }
+
     def _get_pid_start_marker(self, pid: int) -> Optional[str]:
         if not isinstance(pid, int) or pid <= 0:
             return None
@@ -437,6 +490,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             if route == "/api/health":
                 return self._send_json(APP.health())
+            if route == "/api/authorization":
+                return self._send_json(APP.authorization_status())
             if route == "/api/intake/sessions":
                 return self._send_json({"sessions": APP.intake.list_sessions()})
             if route == "/api/runs":

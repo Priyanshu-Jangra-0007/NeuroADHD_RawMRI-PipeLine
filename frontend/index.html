@@ -19,6 +19,7 @@
       <div class="workspace-label">WORKSPACE</div>
       <nav class="nav">
         <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> Overview</a>
+        <a class="nav-link" href="#authorization"><span class="nav-icon">🔒</span> Authorization</a>
         <a class="nav-link" href="#upload"><span class="nav-icon">⇧</span> MRI uploads</a>
         <a class="nav-link" href="#runs"><span class="nav-icon">⌁</span> Pipeline runs</a>
         <a class="nav-link" href="#quality"><span class="nav-icon">⌗</span> Quality control</a>
@@ -65,9 +66,57 @@
           <div class="stat-foot"><span class="stat-symbol violet">◈</span> CC200 ROI pairs</div>
         </article>
         <article class="stat-card">
-          <div class="stat-label">REAL-DATA AUTHORIZATION</div><div class="stat-value locked">LOCKED</div>
-          <div class="stat-foot"><span class="stat-symbol amber">⬡</span> 23 requirements pending</div>
+          <div class="stat-label">REAL-DATA AUTHORIZATION</div><div class="stat-value locked" id="statRealDataAuth">LOCKED</div>
+          <div class="stat-foot"><span class="stat-symbol amber">⬡</span> <span id="statPendingCount">23</span> requirements pending</div>
         </article>
+      </section>
+
+      <section class="panel auth-panel" id="authorization">
+        <div class="panel-head">
+          <div>
+            <div class="panel-kicker">GOVERNANCE & CRYPTOGRAPHIC VERIFICATION</div>
+            <h2>Research authorization gate</h2>
+          </div>
+          <span class="auth-locked-badge" id="authBadge">REAL DATA PROCESSING LOCKED</span>
+        </div>
+        <p class="panel-desc">All real participant MRI processing remains strictly fail-closed until external Institutional Ethics Committee (IEC) clearance, Data Use Agreements (DUA), and cryptographic dataset signatures are verified.</p>
+
+        <div class="auth-status-grid">
+          <div class="auth-status-item">
+            <span class="auth-item-label">Execution Policy</span>
+            <strong class="auth-item-val" id="authExecPolicy">STRICTLY_SYNTHETIC_ONLY</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Register State</span>
+            <strong class="auth-item-val" id="authOverallState">NOT_AUTHORIZED</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Dataset Authorization</span>
+            <strong class="auth-item-val" id="authDatasetStatus">PENDING (sub-01)</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">HMAC-SHA256 Signature</span>
+            <strong class="auth-item-val" id="authSignatureStatus">MISSING_SIGNATURE</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Approval Reference</span>
+            <strong class="auth-item-val" id="authApprovalRef">PENDING_APPROVAL_REFERENCE</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Validity Period</span>
+            <strong class="auth-item-val" id="authExpiryStatus">NO_EXPIRY_DATE</strong>
+          </div>
+        </div>
+
+        <div class="auth-blockers-box">
+          <div class="auth-blockers-head">
+            <span class="shield-mini">🔒</span>
+            <strong>Active Real-Data Execution Blockers</strong>
+          </div>
+          <ul class="auth-blockers-list" id="authBlockersList">
+            <li>Loading authorization status…</li>
+          </ul>
+        </div>
       </section>
 
       <section class="panel intake-panel" id="upload">

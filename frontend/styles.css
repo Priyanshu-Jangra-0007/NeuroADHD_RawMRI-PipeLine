@@ -64,3 +64,18 @@
 .existing-sessions-bar{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 14px;border:1px solid #233752;border-radius:7px;background:#091424;font-size:11px;color:#9bb5d6}
 .existing-sessions-bar select{padding:6px 10px;background:#070d17;border:1px solid #354c6d;border-radius:5px;color:#d5e5f9;font:11px 'DM Mono',monospace}
 
+/* Research Authorization Gate Panel */
+.auth-panel{margin:18px 0 15px;scroll-margin-top:18px;border-color:#5c3e1e;background:linear-gradient(155deg,#1c1610,#10192b 60%)}
+.auth-locked-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid #9e6428;background:#382210;color:#ffbe6b;font:700 10px 'DM Mono',monospace;letter-spacing:1px;box-shadow:0 0 12px rgba(242,190,102,.25)}
+.auth-status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.auth-status-item{display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid #28374e;border-radius:8px;background:#0c1626}
+.auth-item-label{color:#768ba9;font:500 9px 'DM Mono',monospace;letter-spacing:.8px;text-transform:uppercase}
+.auth-item-val{color:#e6f0ff;font:600 12px 'DM Mono',monospace;word-break:break-all}
+.auth-blockers-box{margin-top:14px;padding:14px;border:1px solid #54391a;border-radius:8px;background:#1a140f}
+.auth-blockers-head{display:flex;align-items:center;gap:8px;color:#f3c375;font-size:12px;margin-bottom:8px}
+.shield-mini{font-size:14px}
+.auth-blockers-list{margin:0;padding-left:18px;color:#c9baa0;font-size:11px;line-height:1.7}
+.auth-blockers-list li{margin-bottom:4px}
+@media(max-width:900px){.auth-status-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:550px){.auth-status-grid{grid-template-columns:1fr}}
+

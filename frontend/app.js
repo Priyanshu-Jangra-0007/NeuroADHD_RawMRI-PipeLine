@@ -591,6 +591,29 @@ async function refreshStagedSessions() {
   }
 }
 
+async function refreshAuthorizationStatus() {
+  try {
+    const auth = await api("/api/authorization");
+    if ($("authExecPolicy")) $("authExecPolicy").textContent = auth.execution_policy || "STRICTLY_SYNTHETIC_ONLY";
+    if ($("authOverallState")) $("authOverallState").textContent = auth.authorization_status || "NOT_AUTHORIZED";
+    if ($("authDatasetStatus")) $("authDatasetStatus").textContent = `${auth.dataset_authorization_status || "PENDING"} (${auth.dataset_id || "sub-01"})`;
+    if ($("authSignatureStatus")) $("authSignatureStatus").textContent = auth.signature_status || "MISSING_SIGNATURE";
+    if ($("authApprovalRef")) $("authApprovalRef").textContent = auth.institutional_approval_reference || auth.approval_reference_status || "PENDING_APPROVAL_REFERENCE";
+    if ($("authExpiryStatus")) $("authExpiryStatus").textContent = auth.expiry_status || "NO_EXPIRY_DATE";
+    if ($("statPendingCount")) $("statPendingCount").textContent = auth.pending_items_count ?? 23;
+    if ($("authBadge")) $("authBadge").textContent = auth.badge || "REAL DATA PROCESSING LOCKED";
+
+    const blockersList = $("authBlockersList");
+    if (blockersList && auth.blockers) {
+      blockersList.innerHTML = auth.blockers.map((b) => `<li>${escapeHtml(b)}</li>`).join("");
+    }
+  } catch (err) {
+    if ($("authBlockersList")) {
+      $("authBlockersList").innerHTML = "<li>Could not fetch research authorization status from server.</li>";
+    }
+  }
+}
+
 async function init() {
   try {
     state.health = await api("/api/health");
@@ -604,6 +627,7 @@ async function init() {
       showToast("Unexpected server safety configuration. Run controls remain unavailable.");
       $("runButton").disabled = true;
     }
+    await refreshAuthorizationStatus();
     await refreshRuns();
     await refreshStagedSessions();
     state.refreshTimer = setInterval(refreshRuns, 3000);

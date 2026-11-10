@@ -337,6 +337,27 @@
       }
     ]
   },
+  "dataset_authorizations": [
+    {
+      "authorization_id": "AUTH-DS-SUB01-001",
+      "project_id": "NeuroADHD RawMRI PoC V2",
+      "dataset_id": "sub-01",
+      "approved_purpose": "Retrospective computational neuroimaging research and automated CC200 feature extraction feasibility.",
+      "institutional_approval_reference": null,
+      "approval_date": null,
+      "expiry_date": null,
+      "permitted_operations": [
+        "dicom_conversion",
+        "bids_validation",
+        "preprocessing",
+        "cc200_extraction"
+      ],
+      "authorized_personnel": "Principal Investigator & Authorized Research Personnel",
+      "authorization_status": "PENDING",
+      "cryptographic_signature": null,
+      "notes": "Awaiting formal Institutional Ethics Committee (IEC) clearance and Data Use Agreement execution before activation."
+    }
+  ],
   "audit_trail": [
     {
       "timestamp": "2026-11-02T19:30:00Z",
