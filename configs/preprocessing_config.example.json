@@ -13,7 +13,7 @@
     "expected_rois": 200,
     "feature_dimensions": 19900,
     "selected_features": 100,
-    "reference_training_cohort": "ADHD-200 (153 curated subjects)"
+    "reference_training_cohort": "ADHD-200 historical cohort (training subject count unresolved: 114 in model audit vs 153 in historical docs, see docs/FEATURE_COMPATIBILITY_PLAN.md)"
   },
   "raw_input_specification": {
     "format": "BIDS",
