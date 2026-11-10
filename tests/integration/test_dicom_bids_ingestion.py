@@ -306,15 +306,35 @@ class TestDicomBidsIngestion(unittest.TestCase):
 
     # 13. Path traversal protection
     def test_13_path_traversal_protection(self):
-        session_id, _, _ = self._create_mock_dicom_session()
+        session_id, session_dir, _ = self._create_mock_dicom_session()
+        temp_root = Path(self.temp_dir.name)
+        before_entries = set(temp_root.iterdir())
+
+        def fake_run(args, **kwargs):
+            out_dir = Path(args[args.index("-o") + 1])
+            prefix = args[args.index("-f") + 1]
+            if "T1w" in prefix:
+                self._create_synthetic_nifti_gz(out_dir / f"{prefix}.nii.gz", (20, 20, 20))
+            elif "bold" in prefix:
+                self._create_synthetic_nifti_gz(out_dir / f"{prefix}.nii.gz", (10, 10, 10, 60))
+                (out_dir / f"{prefix}.json").write_text(json.dumps({"RepetitionTime": 2.0, "TaskName": "rest"}), encoding="utf-8")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
         with mock.patch("src.intake.service.shutil.which", return_value="/opt/homebrew/bin/dcm2niix"):
-            # Empty / invalid subject
-            with self.assertRaises(IntakeError):
-                self.service.convert_dicom_to_bids(session_id, {
+            with mock.patch("src.intake.service.subprocess.run", side_effect=fake_run):
+                result = self.service.convert_dicom_to_bids(session_id, {
                     "subject_id": "../../../escaped",
                     "t1w_series": "1",
                     "bold_series": "2",
                 })
+
+        # The sanitizer turns "../../../escaped" into "sub-escaped" and does not raise
+        self.assertEqual(result["subject_id"], "sub-escaped")
+        self.assertEqual(result["status"], "CONVERSION_SUCCESSFUL")
+        after_entries = set(temp_root.iterdir())
+        self.assertEqual(before_entries, after_entries)
+        self.assertFalse((temp_root / "escaped").exists())
+        self.assertFalse((temp_root / "sub-escaped").exists())
 
         # Test download zip traversal
         with self.assertRaises(IntakeError):
