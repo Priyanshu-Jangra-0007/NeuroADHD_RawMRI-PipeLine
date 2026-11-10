@@ -30,6 +30,12 @@ from src.features.connectivity import get_feature_names
 
 class TestRunnerPoCV2Synthetic(unittest.TestCase):
     def setUp(self):
+        env = os.environ.copy()
+        env.pop("NEUROADHD_MODEL_DIR", None)
+        env_patcher = mock.patch.dict(os.environ, env, clear=True)
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
         os.environ["NEUROADHD_HMAC_KEY"] = "test_synthetic_integrity_key_phase_a11_internal"
         np.random.seed(42)
         self.tmp_dir = tempfile.TemporaryDirectory()
@@ -55,21 +61,18 @@ class TestRunnerPoCV2Synthetic(unittest.TestCase):
 
     def test_runner_poc_v2_synthetic_end_to_end(self):
         """Invoke the actual runner orchestrator and verify all 19 stages and output artifacts."""
-        env = os.environ.copy()
-        env.pop("NEUROADHD_MODEL_DIR", None)
-        with mock.patch.dict(os.environ, env, clear=True):
-            res = run_poc_v2_pipeline(
-                bold_path=self.synth_paths["bold_nii"],
-                bold_json_path=self.synth_paths["bold_json"],
-                t1w_path=self.synth_paths["t1w_nii"],
-                atlas_path=self.synth_paths["cc200_atlas"],
-                template_path=self.synth_paths["mni_template"],
-                output_dir=self.output_dir,
-                subject_id=self.subject_id,
-                session_id=self.session_id,
-                max_memory_gb=2.5,
-                allow_real_scans=False,
-            )
+        res = run_poc_v2_pipeline(
+            bold_path=self.synth_paths["bold_nii"],
+            bold_json_path=self.synth_paths["bold_json"],
+            t1w_path=self.synth_paths["t1w_nii"],
+            atlas_path=self.synth_paths["cc200_atlas"],
+            template_path=self.synth_paths["mni_template"],
+            output_dir=self.output_dir,
+            subject_id=self.subject_id,
+            session_id=self.session_id,
+            max_memory_gb=2.5,
+            allow_real_scans=False,
+        )
 
         self.assertEqual(res["status"], "SUCCESS")
         self.assertEqual(res["subject_id"], self.subject_id)
