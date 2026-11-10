@@ -1,8 +1,8 @@
 # PoC V2 Remediation Report
 
 > [!WARNING]
-> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
-> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
+> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](<your-project-folder>/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
+> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](<your-project-folder>/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
 
 **Date**: 2026-11-01  
 **Project**: NeuroADHD_RawMRI  
@@ -30,13 +30,13 @@ All 47 unit and integration tests are passing with 86% overall codebase coverage
 
 | File Path | Nature of Change | Priority | Before Behavior | Remediated Behavior |
 |:---|:---|:---:|:---|:---|
-| [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py) | Bug fix & interface refinement | **P1** | `domain` was native EPI and `codomain` was CC200; `prealign` was $M_{\text{EPI}\to\text{T1w}} \cdot M_{\text{T1w}\to\text{MNI}}$ (inverted) | Explicit `target_shape/affine` (domain=CC200) and `source_shape/affine` (codomain=EPI); `prealign` corrected to $M_{\text{T1w}\to\text{MNI}} \cdot M_{\text{EPI}\to\text{T1w}}$ |
-| [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py) | Unit test expansion | **P2** | 9 tests; tested only equal-sized grids and near-identity transforms | 14 tests (+5 new); tests distinct grid shapes, LAS orientation affine, prealign non-commutativity, label preservation across resolutions, and non-zero deformation fields |
-| [`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py) | Hardening & input validation | **P3** | No mask shape check against BOLD grid; no non-finite BOLD check; no Nyquist check; basic rank check without condition number | Strict 3D mask checks; shape equality with `bold.shape[:3]`; non-finite BOLD rejected; Nyquist limit enforced ($f_{\text{high}} < 0.5/\text{TR}$); SVD condition number diagnostics |
-| [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_nuisance.py) | Unit test expansion | **P3** | 7 tests; tested valid inputs and basic length mismatch | 15 tests (+8 new); tests WM/CSF spatial mismatch, 4D mask rejection, non-finite input rejection, Nyquist violations, inverted bandpass, and rank deficiency with SVD reporting |
-| [`tests/integration/test_pipeline_v2_synthetic.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/integration/test_pipeline_v2_synthetic.py) | Test update | **P1** | Passed legacy `domain_shape=epi_shape`, `codomain_shape=target_shape` | Uses explicit `target_shape=target_shape`, `source_shape=epi_shape` matching corrected DIPY semantics |
-| [`docs/POC_V2_IMPLEMENTATION_REPORT.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/docs/POC_V2_IMPLEMENTATION_REPORT.md) | Documentation addendum | **P4** | Described initial V2 state; lacked remediation findings | Added Section 9 documenting remediation findings, DIPY semantics, SVD rank checks, and pytest rootdir |
-| [`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_poc_v2.py) | New pipeline stub | **P5** | Did not exist (only rejected V1 runner existed) | Modular stub documenting the 19-step V2 execution graph with safety guard (`raise NotImplementedError`) |
+| [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py) | Bug fix & interface refinement | **P1** | `domain` was native EPI and `codomain` was CC200; `prealign` was $M_{\text{EPI}\to\text{T1w}} \cdot M_{\text{T1w}\to\text{MNI}}$ (inverted) | Explicit `target_shape/affine` (domain=CC200) and `source_shape/affine` (codomain=EPI); `prealign` corrected to $M_{\text{T1w}\to\text{MNI}} \cdot M_{\text{EPI}\to\text{T1w}}$ |
+| [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py) | Unit test expansion | **P2** | 9 tests; tested only equal-sized grids and near-identity transforms | 14 tests (+5 new); tests distinct grid shapes, LAS orientation affine, prealign non-commutativity, label preservation across resolutions, and non-zero deformation fields |
+| [`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py) | Hardening & input validation | **P3** | No mask shape check against BOLD grid; no non-finite BOLD check; no Nyquist check; basic rank check without condition number | Strict 3D mask checks; shape equality with `bold.shape[:3]`; non-finite BOLD rejected; Nyquist limit enforced ($f_{\text{high}} < 0.5/\text{TR}$); SVD condition number diagnostics |
+| [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py) | Unit test expansion | **P3** | 7 tests; tested valid inputs and basic length mismatch | 15 tests (+8 new); tests WM/CSF spatial mismatch, 4D mask rejection, non-finite input rejection, Nyquist violations, inverted bandpass, and rank deficiency with SVD reporting |
+| [`tests/integration/test_pipeline_v2_synthetic.py`](<your-project-folder>/tests/integration/test_pipeline_v2_synthetic.py) | Test update | **P1** | Passed legacy `domain_shape=epi_shape`, `codomain_shape=target_shape` | Uses explicit `target_shape=target_shape`, `source_shape=epi_shape` matching corrected DIPY semantics |
+| [`docs/POC_V2_IMPLEMENTATION_REPORT.md`](<your-project-folder>/docs/POC_V2_IMPLEMENTATION_REPORT.md) | Documentation addendum | **P4** | Described initial V2 state; lacked remediation findings | Added Section 9 documenting remediation findings, DIPY semantics, SVD rank checks, and pytest rootdir |
+| [`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py) | New pipeline stub | **P5** | Did not exist (only rejected V1 runner existed) | Modular stub documenting the 19-step V2 execution graph with safety guard (`raise NotImplementedError`) |
 
 ---
 
@@ -57,7 +57,7 @@ In the previous implementation of `compose_transformations()`:
 
 ### 3.2 Corrected Implementation
 
-In [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py):
+In [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py):
 ```python
 def compose_transformations(
     rigid_epi_to_t1w: np.ndarray,
@@ -98,7 +98,7 @@ When `resample_4d_bold(bold_img, composed_map, target_shape, target_affine)` cal
 
 ## 4. Priority 2: Geometry-Sensitive Tests
 
-To ensure registration correctness under non-trivial spatial transformations, five new test cases were added to [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py):
+To ensure registration correctness under non-trivial spatial transformations, five new test cases were added to [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py):
 
 1. **`test_compose_transformations_output_has_target_not_source_shape`**:
    - Source EPI grid: $(20, 18, 15)$ @ $3.5\text{ mm}$ isotropic.
@@ -123,7 +123,7 @@ To ensure registration correctness under non-trivial spatial transformations, fi
 
 ### 5.1 Hardened Input Validations Added
 
-In [`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py):
+In [`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py):
 
 #### `extract_acompcor_components()`
 - **3D Mask Dimensionality Check**: Rejects any non-3D mask array with `ValueError("Expected 3D WM/CSF mask, got ND array")`.
@@ -165,8 +165,8 @@ Two specific items raised in the code review were reconciled:
    - The initial implementation report accurately stated that full column rank was checked (`np.linalg.matrix_rank(df.to_numpy()) == 31`). However, the original error message did not diagnostic details.
    - Remediated implementation now uses SVD to compute singular values and outputs the exact condition number alongside the rank deficiency count.
 2. **Pytest Root Directory Name**:
-   - The pytest output displays `rootdir: /Users/apple/Documents/Codex/2026-09-29/untitled folder`.
-   - This occurs because the physical directory on disk was originally created with that folder name. A filesystem symbolic link at `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI` points directly to `untitled folder`.
+   - The pytest output displays `rootdir: <your-project-folder>`.
+   - This occurs because the physical directory on disk was originally created with that folder name. A filesystem symbolic link at `<your-project-folder>` points directly to `untitled folder`.
    - When pytest initializes, Python's `os.path.realpath` resolves the canonical physical path. Both paths access identical source files; all tests and changes execute directly on the active NeuroADHD_RawMRI codebase.
 
 ---
@@ -177,10 +177,10 @@ Two specific items raised in the code review were reconciled:
 
 | Module | Verification Findings | Status |
 |:---|:---|:---:|
-| [`src/preprocessing/motion.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/motion.py) | `realign_4d_bold()` returns 3-tuple `(realigned_img, motion_params, fd)`. Motion parameters adhere to mm for translations $[0:3]$ and degrees for rotations $[3:6]$. FD uses Power et al. (2012) formulation with standard $50\text{ mm}$ cortical radius. Friston-24 expansion produces exact $(T, 24)$ shape with zero-initial-lag conditions. | **VERIFIED** |
-| [`src/preprocessing/segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/segmentation.py) | Skull-stripping via `median_otsu` isolates brain parenchyma. Smooth polynomial bias field models multiplicative log-intensity non-uniformity without dark-CSF edge distortion. GMM tissue classification orders classes strictly by ascending intensity: CSF (dim) < GM (mid) < WM (bright). Eroded masks apply historical C-PAC thresholds ($P \ge 0.96$) and 1-voxel 3D 6-connectivity morphological erosion. | **VERIFIED** |
-| [`src/preprocessing/qc.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/qc.py) | `generate_registration_qc_overlay()` automatically resamples contour foreground into background space via `nilearn.image.resample_to_img` when shapes/affines differ, preventing out-of-bounds index errors. `generate_parcellation_qc_overlay()` uses Laplacian 3D filtering to render crisp parcel boundaries over mean functional slices. | **VERIFIED** |
-| [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py) | Remediated domain/codomain geometry and prealign direction. Resamples 4D series volume-by-volume with float32 preallocation, keeping peak memory below $0.3\text{ GB}$. Nearest-neighbor mask resampling preserves integer labels. Spatial Dice utility validated. | **VERIFIED** |
+| [`src/preprocessing/motion.py`](<your-project-folder>/src/preprocessing/motion.py) | `realign_4d_bold()` returns 3-tuple `(realigned_img, motion_params, fd)`. Motion parameters adhere to mm for translations $[0:3]$ and degrees for rotations $[3:6]$. FD uses Power et al. (2012) formulation with standard $50\text{ mm}$ cortical radius. Friston-24 expansion produces exact $(T, 24)$ shape with zero-initial-lag conditions. | **VERIFIED** |
+| [`src/preprocessing/segmentation.py`](<your-project-folder>/src/preprocessing/segmentation.py) | Skull-stripping via `median_otsu` isolates brain parenchyma. Smooth polynomial bias field models multiplicative log-intensity non-uniformity without dark-CSF edge distortion. GMM tissue classification orders classes strictly by ascending intensity: CSF (dim) < GM (mid) < WM (bright). Eroded masks apply historical C-PAC thresholds ($P \ge 0.96$) and 1-voxel 3D 6-connectivity morphological erosion. | **VERIFIED** |
+| [`src/preprocessing/qc.py`](<your-project-folder>/src/preprocessing/qc.py) | `generate_registration_qc_overlay()` automatically resamples contour foreground into background space via `nilearn.image.resample_to_img` when shapes/affines differ, preventing out-of-bounds index errors. `generate_parcellation_qc_overlay()` uses Laplacian 3D filtering to render crisp parcel boundaries over mean functional slices. | **VERIFIED** |
+| [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py) | Remediated domain/codomain geometry and prealign direction. Resamples 4D series volume-by-volume with float32 preallocation, keeping peak memory below $0.3\text{ GB}$. Nearest-neighbor mask resampling preserves integer labels. Spatial Dice utility validated. | **VERIFIED** |
 
 ### 7.2 Forensic Audit of Rejected V1 Runner (`scripts/run_single_scan_poc.py`)
 
@@ -192,7 +192,7 @@ A comparative review of the rejected V1 script confirmed critical architectural 
 
 ### 7.3 Remediated V2 Pipeline Runner Stub (`scripts/run_poc_v2.py`)
 
-The new runner stub [`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/scripts/run_poc_v2.py) defines the complete 19-step call graph matching the approved V2 specification:
+The new runner stub [`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py) defines the complete 19-step call graph matching the approved V2 specification:
 
 ```
 Raw BIDS Functional (BOLD) & Structural (T1w) Scans
@@ -237,8 +237,8 @@ Raw BIDS Functional (BOLD) & Structural (T1w) Scans
 
 ```
 ============================= test session starts ==============================
-platform darwin -- Python 3.11.15, pytest-9.2.0, pluggy-1.7.0 -- /Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/.venv/bin/python3.11
-rootdir: /Users/apple/Documents/Codex/2026-09-29/untitled folder
+platform darwin -- Python 3.11.15, pytest-9.2.0, pluggy-1.7.0 -- <your-project-folder>/.venv/bin/python3.11
+rootdir: <your-project-folder>
 plugins: cov-7.1.0
 collected 47 items
 

@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary
 
-This report documents the end-to-end execution of the complete 19-stage pipeline using the functional orchestrator ([`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/run_poc_v2.py)).
+This report documents the end-to-end execution of the complete 19-stage pipeline using the functional orchestrator ([`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py)).
 
 Two comprehensive execution runs were performed and verified:
 1. **Synthetic Phantom Mode:** Executed with authenticated synthetic BIDS inputs and synthetic atlas phantoms.
@@ -65,7 +65,7 @@ Each successful execution generates twelve standardized output artifacts in an i
 3. **`motion_parameters.tsv` & `framewise_displacement.tsv`:** 6 motion columns ($t_x, t_y, t_z$ in mm, $r_x, r_y, r_z$ in deg); Mean FD = $0.0982\text{ mm}$, Max FD = $0.3644\text{ mm}$, Scrubbed volumes ($>0.5\text{ mm}$) = 0.
 4. **`confounds.tsv`:** 31-column nuisance matrix (24 Friston + 5 aCompCor + 2 polynomial trends); verified full column rank ($31/31$, condition number $\approx 3.1 \times 10^5$).
 5. **Quality Control Visual Overlays (4 PNGs):** Multi-planar orthogonal contour plots verifying functional-to-structural alignment, MNI152 normalization, tissue masks, and CC200 parcellation.
-6. **`provenance.json`:** Validated against [`configs/provenance_schema.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/provenance_schema.json) with software versions, hardware memory profiles, and validation gates marked `PASSED`.
+6. **`provenance.json`:** Validated against [`configs/provenance_schema.json`](<your-project-folder>/configs/provenance_schema.json) with software versions, hardware memory profiles, and validation gates marked `PASSED`.
 
 ---
 

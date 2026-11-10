@@ -6,10 +6,10 @@ This document details the architecture, code implementations, model artifacts, a
 
 ## 1. Local Ecosystem Layout
 
-The existing repositories are located adjacent to the current workspace in `/Users/apple/Documents/Codex/2026-09-29/down/`:
+The existing repositories are located adjacent to the current workspace in `<external-reference-folder>/`:
 
 ```
-/Users/apple/Documents/Codex/2026-09-29/
+<your-project-folder>/
 ├── down/
 │   ├── NeuroADHD/                  # Core feature extraction, ML preprocessing & inference
 │   ├── NeuroADHD_ModelBenchmark/   # Model training runs, frozen artifacts & evaluation reports

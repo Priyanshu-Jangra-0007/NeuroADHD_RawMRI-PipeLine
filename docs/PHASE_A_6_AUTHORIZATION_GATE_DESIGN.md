@@ -77,7 +77,7 @@ The authorization architecture operates across three synchronized tiers:
 
 ## 3. Machine-Readable Register Specification
 
-The authorization register is serialized in JSON at [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json) and governed by [`configs/authorization_register_schema.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/authorization_register_schema.json).
+The authorization register is serialized in JSON at [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json) and governed by [`configs/authorization_register_schema.json`](<your-project-folder>/configs/authorization_register_schema.json).
 
 ### Core Register Fields:
 - `schema_version`: Must equal `"1.0.0"`.
@@ -126,7 +126,7 @@ Each item within the register must strictly occupy one of five discrete states:
 
 ## 4. Verification Rules Enforced by the Validation Engine
 
-The `ResearchAuthorizationGate` class ([`src/validation/authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py)) enforces the following deterministic verification rules:
+The `ResearchAuthorizationGate` class ([`src/validation/authorization_gate.py`](<your-project-folder>/src/validation/authorization_gate.py)) enforces the following deterministic verification rules:
 
 | Rule ID | Validation Rule Description | Enforcement Consequence on Failure |
 |---|---|---|

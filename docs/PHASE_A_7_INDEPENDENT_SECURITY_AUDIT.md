@@ -67,12 +67,12 @@ The audit inspected all entrypoints, validation engines, and governance artifact
 
 | Component | File Path | Primary Security Function |
 |---|---|---|
-| **Pipeline Runner Entrypoint** | [`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/run_poc_v2.py) | CLI argument validation, safety guards, memory checks, 19-stage pipeline execution. |
-| **Legacy Entrypoint** | [`scripts/run_single_scan_poc.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/run_single_scan_poc.py) | Single-scan execution (previously unhardened, now gated). |
-| **Authorization Gatekeeper** | [`src/validation/authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py) | Register parsing, schema checking, evidence verification, bypass detection. |
-| **Authorization Register** | [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json) | 23 tracked decision items (all PENDING). |
-| **Register JSON Schema** | [`configs/authorization_register_schema.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/authorization_register_schema.json) | Draft-07 JSON schema forbidding additional properties. |
-| **Container Memory Isolation** | [`scripts/verify_container_memory.sh`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/verify_container_memory.sh) | OS cgroup v2 2.5 GB memory fence and OOM killer verification. |
+| **Pipeline Runner Entrypoint** | [`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py) | CLI argument validation, safety guards, memory checks, 19-stage pipeline execution. |
+| **Legacy Entrypoint** | [`scripts/run_single_scan_poc.py`](<your-project-folder>/scripts/run_single_scan_poc.py) | Single-scan execution (previously unhardened, now gated). |
+| **Authorization Gatekeeper** | [`src/validation/authorization_gate.py`](<your-project-folder>/src/validation/authorization_gate.py) | Register parsing, schema checking, evidence verification, bypass detection. |
+| **Authorization Register** | [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json) | 23 tracked decision items (all PENDING). |
+| **Register JSON Schema** | [`configs/authorization_register_schema.json`](<your-project-folder>/configs/authorization_register_schema.json) | Draft-07 JSON schema forbidding additional properties. |
+| **Container Memory Isolation** | [`scripts/verify_container_memory.sh`](<your-project-folder>/scripts/verify_container_memory.sh) | OS cgroup v2 2.5 GB memory fence and OOM killer verification. |
 
 ---
 

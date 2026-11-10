@@ -17,7 +17,7 @@
 This decision sheet presents the **twelve scientific and quality-control determinations** required before the NeuroADHD RawMRI pipeline can be authorized to process real participant MRI scans.
 
 Under the fail-closed governance implemented in Phase A.6 and audited in Phase A.7:
-1. Every item below currently resides in the `PENDING` state in the repository's machine-readable authorization register ([`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)).
+1. Every item below currently resides in the `PENDING` state in the repository's machine-readable authorization register ([`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)).
 2. Real participant MRI processing is strictly blocked by code until these determinations are recorded, signed, and cryptographically verified.
 3. The supervisor should review each proposal, indicate their determination, provide comments or modifications where desired, and sign the authorization block at the conclusion of this document.
 
@@ -140,7 +140,7 @@ ________________________________________________________________________________
 
 ## 3. Section B: Quality Control (QC) Acceptance Thresholds
 
-The pipeline evaluates **eight quantitative quality control metrics** across structural and functional domains. Every numerical threshold below matches the baseline established in [`docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md) and requires supervisor sign-off.
+The pipeline evaluates **eight quantitative quality control metrics** across structural and functional domains. Every numerical threshold below matches the baseline established in [`docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md`](<your-project-folder>/docs/PHASE_A_5_SUPERVISOR_DECISION_REGISTER.md) and requires supervisor sign-off.
 
 ---
 

@@ -50,7 +50,7 @@ This document formally records the **eight core scientific and methodological li
 
 ### 2.7 Strict Maintenance of Authorization & Safety Gates
 - **Limitation:** Real participant MRI processing remains strictly disabled.
-- **Governance Posture:** All 23 governance items in [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json) are currently `PENDING`.
+- **Governance Posture:** All 23 governance items in [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json) are currently `PENDING`.
 - **Boundary:** No real MRI data (prospective or retrospective) will be processed, and the $N=6$ feasibility pilot will not be executed until official Institutional Ethics Committee clearance and Data Use Agreements are executed and verified.
 
 ### 2.8 Unproven Historical Feature Concordance on Real Participant Scans

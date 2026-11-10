@@ -190,7 +190,7 @@ Before any real participant data is evaluated, the supervisor and thesis committ
 
 The project is governed by a **fail-closed research authorization architecture** (Phase A.6 and A.7).
 
-- All 23 governance items in [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json) are currently **`PENDING`**.
+- All 23 governance items in [`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json) are currently **`PENDING`**.
 - Execution policy is strictly locked to **`STRICTLY_SYNTHETIC_ONLY`**.
 - Attempting to pass real participant scans or override safety parameters via environment variables or CLI flags raises immediate, non-recoverable exceptions.
 - Operating system memory isolation is enforced at a **2.5 GB ceiling** via Linux cgroups.
@@ -200,6 +200,6 @@ The project is governed by a **fail-closed research authorization architecture**
 ## 7. Next Steps for Academic Evaluation
 
 To proceed toward the authorized Phase A.9 research pilot, the following milestones must occur:
-1. **Supervisor Review of Decisions:** Formal sign-off on the 4 architectural choices and 8 QC thresholds detailed in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
-2. **Institutional Clearance:** Execution of NITRC/INDI Data Use Agreement and Institutional Ethics Committee clearance as cataloged in [`docs/PHASE_A_8_EXTERNAL_APPROVAL_CHECKLIST.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_8_EXTERNAL_APPROVAL_CHECKLIST.md).
+1. **Supervisor Review of Decisions:** Formal sign-off on the 4 architectural choices and 8 QC thresholds detailed in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](<your-project-folder>/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
+2. **Institutional Clearance:** Execution of NITRC/INDI Data Use Agreement and Institutional Ethics Committee clearance as cataloged in [`docs/PHASE_A_8_EXTERNAL_APPROVAL_CHECKLIST.md`](<your-project-folder>/docs/PHASE_A_8_EXTERNAL_APPROVAL_CHECKLIST.md).
 3. **Formal Register Update:** Incorporation of physical document SHA-256 hashes and supervisor HMAC key attestation into the authorization register.

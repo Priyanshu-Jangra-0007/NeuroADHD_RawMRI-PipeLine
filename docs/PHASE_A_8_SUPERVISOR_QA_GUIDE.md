@@ -105,7 +105,7 @@ The two transformations are concatenated and applied to the 4D functional volume
 ### Q15: What decisions remain unresolved regarding slice-timing and distortion correction?
 **Answer:**  
 *This is an open methodological decision for which we request your direction.*  
-- **Slice-Timing Correction:** Prospective scans with short $\text{TR} < 0.8\text{ s}$ do not benefit from STC and risk interpolation blurring, whereas retrospective scans with $\text{TR} \approx 2.0\text{ s}$ benefit from STC if `SliceTiming` metadata is reliable. We have recommended **Option C** (dataset-adaptive with fail-closed metadata fallback) in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
+- **Slice-Timing Correction:** Prospective scans with short $\text{TR} < 0.8\text{ s}$ do not benefit from STC and risk interpolation blurring, whereas retrospective scans with $\text{TR} \approx 2.0\text{ s}$ benefit from STC if `SliceTiming` metadata is reliable. We have recommended **Option C** (dataset-adaptive with fail-closed metadata fallback) in [`docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md`](<your-project-folder>/docs/PHASE_A_8_SUPERVISOR_DECISION_REQUEST.md).
 - **Susceptibility Distortion Correction:** Prospective studies can mandate reverse-phase spin-echo fieldmaps (TOPUP), but retrospective datasets lack them. We recommend allowing a synthetic B0 fallback for historical benchmark data while requiring TOPUP for prospective cohorts.
 
 ---
@@ -114,7 +114,7 @@ The two transformations are concatenated and applied to the 4D functional volume
 
 ### Q16: What does the Research Authorization Gate do?
 **Answer:**  
-The Research Authorization Gate ([`src/validation/authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py)) is a programmatic, fail-closed security mechanism implemented in Phase A.6. It tracks 23 distinct governance items across supervisor decisions, institutional legal approvals, and operational safeguards. Before any real participant MRI data can be ingested or processed, the gate asserts that every single item is in the `APPROVED` state with a valid physical evidence reference and verified SHA-256 hash. If even one item is pending, the pipeline raises an `AuthorizationDeniedError` and halts immediately.
+The Research Authorization Gate ([`src/validation/authorization_gate.py`](<your-project-folder>/src/validation/authorization_gate.py)) is a programmatic, fail-closed security mechanism implemented in Phase A.6. It tracks 23 distinct governance items across supervisor decisions, institutional legal approvals, and operational safeguards. Before any real participant MRI data can be ingested or processed, the gate asserts that every single item is in the `APPROVED` state with a valid physical evidence reference and verified SHA-256 hash. If even one item is pending, the pipeline raises an `AuthorizationDeniedError` and halts immediately.
 
 ### Q17: What does synthetic-only validation establish?
 **Answer:**  
@@ -175,7 +175,7 @@ No. An HMAC signature is an internal cryptographic mechanism that proves knowled
 
 ### Q24: What is the proposed Phase A.9 pilot, and why is sample size limited to N=6?
 **Answer:**  
-The proposed First Research Pilot ([`docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md)) evaluates $N=6$ retrospective scans (3 ADHD, 3 Neurotypical controls). This sample size is deliberately constrained: its purpose is strictly to evaluate technical feasibility—specifically, testing whether authentic raw scans pass all 8 QC criteria, converge during non-linear SyN registration, and execute within the 2.5 GB RAM ceiling without memory fragmentation. It is not intended to measure statistical classification accuracy.
+The proposed First Research Pilot ([`docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md`](<your-project-folder>/docs/PHASE_A_5_FIRST_RESEARCH_PILOT_PROTOCOL.md)) evaluates $N=6$ retrospective scans (3 ADHD, 3 Neurotypical controls). This sample size is deliberately constrained: its purpose is strictly to evaluate technical feasibility—specifically, testing whether authentic raw scans pass all 8 QC criteria, converge during non-linear SyN registration, and execute within the 2.5 GB RAM ceiling without memory fragmentation. It is not intended to measure statistical classification accuracy.
 
 ### Q25: What criteria would define a successful feasibility pilot?
 **Answer:**  

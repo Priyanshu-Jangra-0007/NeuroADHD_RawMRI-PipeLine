@@ -50,7 +50,7 @@ RAW 4D RESTING-STATE fMRI (BIDS)
 ## 3. Strict Isolation Rules & Safety Principles
 
 During this phase (Phase 1) and until explicit authorization is granted:
-1. **Workspace Boundary**: All modifications, scripts, documentation, and configs reside strictly within `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI`.
+1. **Workspace Boundary**: All modifications, scripts, documentation, and configs reside strictly within `<your-project-folder>`.
 2. **Read-Only Upstream**: The neighboring projects (`NeuroADHD`, `NeuroADHD_ModelBenchmark`, `NeuroADHD_ModelDashboard`, `ADHD200_Official` located in `../down`) are treated as strictly **READ-ONLY**.
 3. **No Retraining / Refitting**: The model checkpoint (`final_model.joblib`) and preprocessing artifact (`final_preprocessing_pipeline.joblib`) remain completely frozen.
 4. **No Data Leaks or Test Contamination**: The 20 locked test subjects from Peking_2 will never be accessed or used to tune any preprocessing parameter.

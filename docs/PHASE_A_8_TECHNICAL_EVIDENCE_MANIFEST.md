@@ -23,16 +23,16 @@ Every technical claim in this document is backed by reproducible automated tests
 
 ## 2. Authorization Security Architecture & Enforcement Controls
 
-The pipeline's fail-closed governance is enforced by the [`ResearchAuthorizationGate`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py#L65) engine:
+The pipeline's fail-closed governance is enforced by the [`ResearchAuthorizationGate`](<your-project-folder>/src/validation/authorization_gate.py#L65) engine:
 
-1. **Schema Validation:** The authorization register ([`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json)) is validated against Draft-07 JSON Schema ([`configs/authorization_register_schema.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/authorization_register_schema.json)) asserting non-empty strings, valid enum states, and strict object structures.
+1. **Schema Validation:** The authorization register ([`configs/research_authorization_register.json`](<your-project-folder>/configs/research_authorization_register.json)) is validated against Draft-07 JSON Schema ([`configs/authorization_register_schema.json`](<your-project-folder>/configs/authorization_register_schema.json)) asserting non-empty strings, valid enum states, and strict object structures.
 2. **23 Authorization Items:** Tracks 12 supervisor decisions, 5 institutional legal clearances, and 6 operational safeguards. All 23 items must be in `APPROVED` state to enable real data.
 3. **Physical File Existence:** Every `APPROVED` item must link to an existing regular file in `evidence_reference`.
 4. **Mandatory SHA-256 Digest Verification:** Approved evidence files must match an expected 64-character hexadecimal SHA-256 digest, evaluated using constant-time comparison (`hmac.compare_digest`).
 5. **Path Traversal Protection:** Absolute paths and directory traversal sequences (`..`) in evidence paths are strictly rejected. Paths must resolve within the repository boundaries.
 6. **Symlink Traversal Protection:** Candidate evidence paths and all parent directory components are verified via `.is_symlink()` *prior* to path resolution, preventing symlink substitution attacks.
 7. **Environment Variable Bypass Protection:** The engine performs a case-insensitive scan across all `os.environ` keys. Any non-falsy value for prohibited override variables (`NEUROADHD_OVERRIDE_SAFETY`, `NEUROADHD_FORCE_REAL_DATA`, `NEUROADHD_DISABLE_AUTH_GATE`, `NEUROADHD_AUTH_OVERRIDE`) triggers an immediate unrecoverable `AuthorizationBypassAttemptError`.
-8. **Entrypoint Enforcement:** Both pipeline entrypoints ([`scripts/run_poc_v2.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/run_poc_v2.py) and [`scripts/run_single_scan_poc.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/run_single_scan_poc.py)) invoke the gate engine and safety guards at function entry before any file operations.
+8. **Entrypoint Enforcement:** Both pipeline entrypoints ([`scripts/run_poc_v2.py`](<your-project-folder>/scripts/run_poc_v2.py) and [`scripts/run_single_scan_poc.py`](<your-project-folder>/scripts/run_single_scan_poc.py)) invoke the gate engine and safety guards at function entry before any file operations.
 9. **Audit Trail Sanitization:** Audit log entries are sanitized against newline/control character injection (`\n`, `\r`, `\x00`) and prohibited clinical cohort keywords (`sub-2344857`, `peking`, `kki`, `nyu`, `adhd200`).
 
 ---
@@ -75,28 +75,28 @@ Total Execution Time:                       39.18 seconds
 
 | Test Suite Module | Target Scope | Collected | Passed | Skipped | Failed | Coverage |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| [`tests/security/test_phase_a7_adversarial_authorization.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/security/test_phase_a7_adversarial_authorization.py) | Adversarial Security & Gate Bypasses | 14 | 14 | 0 | 0 | 88% |
-| [`tests/unit/test_phase_a6_authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a6_authorization_gate.py) | Gatekeeper Functionality & State Machine | 16 | 16 | 0 | 0 | 88% |
-| [`tests/unit/test_phase_a4_model_compatibility.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a4_model_compatibility.py) | Frozen Classifier & Feature Pipeline | 16 | 16* | 0* | 0 | 100% |
-| [`tests/unit/test_phase_a4_safety_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_phase_a4_safety_gate.py) | Phase A.4 Safety Guards & Flag Rejection | 8 | 8 | 0 | 0 | 95% |
-| [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_registration.py) | Rigid EPI-T1w & SyN T1w-MNI Registration | 28 | 28 | 0 | 0 | 76% |
-| [`tests/unit/test_scientific_registration_validation.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_scientific_registration_validation.py) | CC200 Canonical Grid Alignment | 16 | 16 | 0 | 0 | 87% |
-| [`tests/unit/test_segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_segmentation.py) | Tissue Segmentation & Mask Erosion | 21 | 21 | 0 | 0 | 83% |
-| [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_nuisance.py) | aCompCor & Confound Matrix Construction | 18 | 18 | 0 | 0 | 89% |
-| [`tests/unit/test_qc.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_qc.py) | 8 Quantitative QC Metric Assertions | 10 | 10 | 0 | 0 | 98% |
-| [`tests/unit/test_connectivity.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_connectivity.py) | Correlation & Fisher-z Transformation | 13 | 13 | 0 | 0 | 100% |
-| [`tests/unit/test_memory_guard.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_memory_guard.py) | In-Memory Allocation & Process Limits | 9 | 9 | 0 | 0 | 81% |
-| [`tests/unit/test_input_validation.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/unit/test_input_validation.py) | BIDS Input Contract & Sidecar Parsing | 6 | 6 | 0 | 0 | 94% |
-| [`tests/integration/test_runner_poc_v2_synthetic.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/integration/test_runner_poc_v2_synthetic.py) | End-to-End 19-Stage Synthetic Execution | 28 | 28 | 0 | 0 | 92% |
-| [`tests/integration/test_pipeline_v2_synthetic.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/integration/test_pipeline_v2_synthetic.py) | Synthetic Pipeline Assembly | 1 | 1 | 0 | 0 | 90% |
-| [`tests/integration/test_container_model_integration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/tests/integration/test_container_model_integration.py) | Containerized Model Inference | 5 | 0 | 5* | 0 | N/A |
+| [`tests/security/test_phase_a7_adversarial_authorization.py`](<your-project-folder>/tests/security/test_phase_a7_adversarial_authorization.py) | Adversarial Security & Gate Bypasses | 14 | 14 | 0 | 0 | 88% |
+| [`tests/unit/test_phase_a6_authorization_gate.py`](<your-project-folder>/tests/unit/test_phase_a6_authorization_gate.py) | Gatekeeper Functionality & State Machine | 16 | 16 | 0 | 0 | 88% |
+| [`tests/unit/test_phase_a4_model_compatibility.py`](<your-project-folder>/tests/unit/test_phase_a4_model_compatibility.py) | Frozen Classifier & Feature Pipeline | 16 | 16* | 0* | 0 | 100% |
+| [`tests/unit/test_phase_a4_safety_gate.py`](<your-project-folder>/tests/unit/test_phase_a4_safety_gate.py) | Phase A.4 Safety Guards & Flag Rejection | 8 | 8 | 0 | 0 | 95% |
+| [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py) | Rigid EPI-T1w & SyN T1w-MNI Registration | 28 | 28 | 0 | 0 | 76% |
+| [`tests/unit/test_scientific_registration_validation.py`](<your-project-folder>/tests/unit/test_scientific_registration_validation.py) | CC200 Canonical Grid Alignment | 16 | 16 | 0 | 0 | 87% |
+| [`tests/unit/test_segmentation.py`](<your-project-folder>/tests/unit/test_segmentation.py) | Tissue Segmentation & Mask Erosion | 21 | 21 | 0 | 0 | 83% |
+| [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py) | aCompCor & Confound Matrix Construction | 18 | 18 | 0 | 0 | 89% |
+| [`tests/unit/test_qc.py`](<your-project-folder>/tests/unit/test_qc.py) | 8 Quantitative QC Metric Assertions | 10 | 10 | 0 | 0 | 98% |
+| [`tests/unit/test_connectivity.py`](<your-project-folder>/tests/unit/test_connectivity.py) | Correlation & Fisher-z Transformation | 13 | 13 | 0 | 0 | 100% |
+| [`tests/unit/test_memory_guard.py`](<your-project-folder>/tests/unit/test_memory_guard.py) | In-Memory Allocation & Process Limits | 9 | 9 | 0 | 0 | 81% |
+| [`tests/unit/test_input_validation.py`](<your-project-folder>/tests/unit/test_input_validation.py) | BIDS Input Contract & Sidecar Parsing | 6 | 6 | 0 | 0 | 94% |
+| [`tests/integration/test_runner_poc_v2_synthetic.py`](<your-project-folder>/tests/integration/test_runner_poc_v2_synthetic.py) | End-to-End 19-Stage Synthetic Execution | 28 | 28 | 0 | 0 | 92% |
+| [`tests/integration/test_pipeline_v2_synthetic.py`](<your-project-folder>/tests/integration/test_pipeline_v2_synthetic.py) | Synthetic Pipeline Assembly | 1 | 1 | 0 | 0 | 90% |
+| [`tests/integration/test_container_model_integration.py`](<your-project-folder>/tests/integration/test_container_model_integration.py) | Containerized Model Inference | 5 | 0 | 5* | 0 | N/A |
 
 *\*Note: 16/16 model compatibility tests pass when `NEUROADHD_MODEL_DIR` is set to the benchmark artifact directory. Container tests execute and pass in GitHub Actions CI where Docker is active.*
 
 ### 4.3 Code Coverage
 - **Core Library (`src/`):** **84% total statement coverage** (1084 / 1290 statements).
-- **Authorization Engine ([`src/validation/authorization_gate.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/validation/authorization_gate.py)):** **88% coverage** (198 / 224 statements).
-- **Quality Control Engine ([`src/preprocessing/qc.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/qc.py)):** **98% coverage** (230 / 234 statements).
+- **Authorization Engine ([`src/validation/authorization_gate.py`](<your-project-folder>/src/validation/authorization_gate.py)):** **88% coverage** (198 / 224 statements).
+- **Quality Control Engine ([`src/preprocessing/qc.py`](<your-project-folder>/src/preprocessing/qc.py)):** **98% coverage** (230 / 234 statements).
 
 ---
 
@@ -133,5 +133,5 @@ The pipeline includes an HMAC-SHA256 signature verification mechanism for the au
 The pipeline is constrained to a **2.5 GB RAM ceiling** to ensure operation on standard compute infrastructure and prevent unmanaged memory expansion during 4D BOLD registration:
 - **Enforcement Mechanism:** Linux `cgroup v2` memory controllers enforced via Docker: `--memory=2560m --memory-swap=2560m`.
 - **Kernel OOM Killer:** Enabled. If container memory consumption exceeds 2560 MiB, the Linux kernel terminates the process rather than paging to disk.
-- **Verification Script:** [`scripts/verify_container_memory.sh`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/scripts/verify_container_memory.sh).
+- **Verification Script:** [`scripts/verify_container_memory.sh`](<your-project-folder>/scripts/verify_container_memory.sh).
 - **CI Result:** Successfully verified in GitHub Actions run `41461226564` (Step: "Build Container Image & Verify OS Memory Isolation").

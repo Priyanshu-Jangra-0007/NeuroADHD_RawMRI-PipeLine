@@ -40,7 +40,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.preprocessing.qc import compute_registration_qc_metrics
 from src.preprocessing.registration import compute_spatial_dice, register_t1w_to_mni
 
-OUTPUT_DIR = Path("/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_Step3_Synthetic/registration_experiment")
+OUTPUT_DIR = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation")) / "registration_experiment"
 
 
 def compute_jacobian_determinants(displacement_field: np.ndarray, voxel_spacing: Tuple[float, float, float] = (3.0, 3.0, 3.0)) -> np.ndarray:
@@ -411,10 +411,10 @@ def run_synthetic_registration_experiment() -> Dict[str, Any]:
             "notes": "Synthetic labeled atlas partitioning brain mask into 200 compact 3D ROIs. Distinguished from authentic CC200 Craddock template.",
         },
         "artifacts": {
-            "target_nii": str(target_nii_path),
-            "moving_nii": str(moving_nii_path),
-            "warped_nii": str(warped_nii_path),
-            "qc_overlay_png": str(overlay_path),
+            "target_nii": str(target_nii_path.relative_to(PROJECT_ROOT)) if target_nii_path.is_relative_to(PROJECT_ROOT) else str(target_nii_path),
+            "moving_nii": str(moving_nii_path.relative_to(PROJECT_ROOT)) if moving_nii_path.is_relative_to(PROJECT_ROOT) else str(moving_nii_path),
+            "warped_nii": str(warped_nii_path.relative_to(PROJECT_ROOT)) if warped_nii_path.is_relative_to(PROJECT_ROOT) else str(warped_nii_path),
+            "qc_overlay_png": str(overlay_path.relative_to(PROJECT_ROOT)) if overlay_path.is_relative_to(PROJECT_ROOT) else str(overlay_path),
         },
     }
 

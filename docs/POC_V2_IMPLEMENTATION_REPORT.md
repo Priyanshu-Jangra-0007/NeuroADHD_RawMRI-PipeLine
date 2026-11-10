@@ -1,8 +1,8 @@
 # POC V2 IMPLEMENTATION & SYNTHETIC VALIDATION REPORT
 
 > [!WARNING]
-> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
-> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
+> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](<your-project-folder>/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
+> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](<your-project-folder>/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
 
 **Project**: `NeuroADHD_RawMRI`  
 **Phase**: Phase 2 — Corrected Proof of Concept Implementation (V2)  
@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary
   
-In accordance with the approved architectural specification ([`docs/CORRECTED_POC_V2_DESIGN.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/docs/CORRECTED_POC_V2_DESIGN.md)) and the forensic audit findings ([`docs/REJECTED_POC_FORENSIC_AUDIT.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/docs/REJECTED_POC_FORENSIC_AUDIT.md)), the preprocessing pipeline of **NeuroADHD_RawMRI** has been completely overhauled:
+In accordance with the approved architectural specification ([`docs/CORRECTED_POC_V2_DESIGN.md`](<your-project-folder>/docs/CORRECTED_POC_V2_DESIGN.md)) and the forensic audit findings ([`docs/REJECTED_POC_FORENSIC_AUDIT.md`](<your-project-folder>/docs/REJECTED_POC_FORENSIC_AUDIT.md)), the preprocessing pipeline of **NeuroADHD_RawMRI** has been completely overhauled:
 
 1. **Spatial Registration (Phase A)**: Implemented 3D rigid functional-to-anatomical coregistration, 12 DOF affine + nonlinear SyN anatomical standard space normalization, and a single-step pullback coordinate composition mechanism that maps native 4D functional series into the CC200 reference grid in a single interpolation step.
 2. **Anatomical Tissue Segmentation (Phase B)**: Implemented DIPY `median_otsu` skull stripping, 3D Legendre polynomial bias-field correction, multi-class tissue probability segmentation (CSF/GM/WM), strict historical C-PAC $P \ge 0.96$ thresholding, and 1-voxel 3D morphological erosion.
@@ -45,7 +45,7 @@ The pipeline executes natively on Apple Silicon ARM64 without container overhead
 
 ## 3. Implemented Modules & Architecture
 
-### 3.1 Spatial Registration ([`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py))
+### 3.1 Spatial Registration ([`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py))
 
 - `generate_functional_reference(bold_4d)`: Generates static temporal mean volume $\bar{B}(x, y, z) = \frac{1}{T} \sum_{t=1}^T B(x, y, z, t)$ across realigned timepoints and derives an intracranial brain mask.
 - `register_epi_to_t1w(mean_epi, t1w_brain)`: Executes 3D rigid-body (6 DOF) coregistration of functional mean EPI to skull-stripped T1w anatomical image using Mutual Information (`nbins=32`) across a multi-resolution pyramid.
@@ -59,7 +59,7 @@ The pipeline executes natively on Apple Silicon ARM64 without container overhead
 - `resample_mask_to_target(...)`: Resamples discrete anatomical masks using nearest-neighbor interpolation, strictly preserving discrete labels.
 - `compute_spatial_dice(mask1, mask2)`: Evaluates spatial overlap to enforce Gate 4 ($\text{Dice} \ge 0.85$).
 
-### 3.2 Anatomical Tissue Segmentation ([`src/preprocessing/segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/segmentation.py))
+### 3.2 Anatomical Tissue Segmentation ([`src/preprocessing/segmentation.py`](<your-project-folder>/src/preprocessing/segmentation.py))
 
 - `extract_anatomical_brain(t1w_img)`: Skull stripping using DIPY `median_otsu`, producing skull-stripped T1w brain and binary brain mask.
 - `correct_bias_field(t1w_brain, brain_mask)`: Smooth 3D Legendre polynomial bias-field correction (order 2) fitted to log intensities of brain parenchyma voxels. Normalizes geometric mean to 1.0 and eliminates spatial intensity non-uniformity without confounding by dark ventricles.
@@ -67,7 +67,7 @@ The pipeline executes natively on Apple Silicon ARM64 without container overhead
 - `create_eroded_tissue_masks(...)`: Applies historical C-PAC thresholds ($P(\text{WM}) \ge 0.96, P(\text{CSF}) \ge 0.96$) followed by 1-voxel 3D binary erosion with 6-connectivity (`generate_binary_structure(3, 1)`).
 - `validate_tissue_masks(...)`: Verifies non-empty masks, minimum voxel coverage, and strict disjointness (`WM ∩ CSF == 0`).
 
-### 3.3 Confound Generation & Nuisance Regression ([`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py))
+### 3.3 Confound Generation & Nuisance Regression ([`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py))
 
 - `extract_acompcor_components(bold_data, eroded_wm, eroded_csf)`: Derives 5 physiological noise components strictly from the union of eroded WM and eroded CSF masks. Standardizes voxel time series and applies PCA.
 - `build_confound_matrix(friston_24, acompcor_5)`: Constructs the complete 31-column nuisance matrix:
@@ -79,7 +79,7 @@ The pipeline executes natively on Apple Silicon ARM64 without container overhead
   - Verifies full matrix rank and absence of NaNs.
 - `clean_functional_bold(bold_img, confounds, tr)`: Simultaneous 0.01–0.10 Hz bandpass filtering and confound regression via Nilearn `clean_img`. Enforces `standardize=None` so residual amplitudes retain physical BOLD scale.
 
-### 3.4 Quality Control Visualization ([`src/preprocessing/qc.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/qc.py))
+### 3.4 Quality Control Visualization ([`src/preprocessing/qc.py`](<your-project-folder>/src/preprocessing/qc.py))
 
 - `generate_registration_qc_overlay(...)`: Produces high-resolution 3-plane orthogonal slice figures (Sagittal, Coronal, Axial) with yellow/red contour overlays, resampling foreground into background space if shapes differ.
 - `generate_parcellation_qc_overlay(...)`: Overlays CC200 parcel boundaries onto the normalized mean functional image.
@@ -93,7 +93,7 @@ The automated test suite was executed via `pytest tests/ -v`:
 ```
 ============================= test session starts ==============================
 platform darwin -- Python 3.11.15, pytest-9.2.0, pluggy-1.7.0
-rootdir: /Users/apple/Documents/Codex/2026-09-29/untitled folder
+rootdir: <your-project-folder>
 plugins: cov-7.1.0
 collected 34 items
 
@@ -200,26 +200,26 @@ In adherence with the project's scientific integrity rules, all differences betw
 
 ## 7. Deliverables & Current Workspace State
 
-All files were written and verified inside `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI`:
+All files were written and verified inside `<your-project-folder>`:
 
-- **Registration Source**: [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/registration.py)
-- **Segmentation Source**: [`src/preprocessing/segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/segmentation.py)
-- **Nuisance Source**: [`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py)
-- **QC Source**: [`src/preprocessing/qc.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/qc.py)
-- **Package Exports**: [`src/preprocessing/__init__.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/__init__.py)
+- **Registration Source**: [`src/preprocessing/registration.py`](<your-project-folder>/src/preprocessing/registration.py)
+- **Segmentation Source**: [`src/preprocessing/segmentation.py`](<your-project-folder>/src/preprocessing/segmentation.py)
+- **Nuisance Source**: [`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py)
+- **QC Source**: [`src/preprocessing/qc.py`](<your-project-folder>/src/preprocessing/qc.py)
+- **Package Exports**: [`src/preprocessing/__init__.py`](<your-project-folder>/src/preprocessing/__init__.py)
 - **Unit & Integration Tests**:
-  - [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py) (9 tests)
-  - [`tests/unit/test_segmentation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_segmentation.py) (6 tests)
-  - [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_nuisance.py) (7 tests)
-  - [`tests/unit/test_connectivity.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_connectivity.py) (5 tests)
-  - [`tests/unit/test_input_validation.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_input_validation.py) (6 tests)
-  - [`tests/integration/test_pipeline_v2_synthetic.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/integration/test_pipeline_v2_synthetic.py) (1 end-to-end integration test)
+  - [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py) (9 tests)
+  - [`tests/unit/test_segmentation.py`](<your-project-folder>/tests/unit/test_segmentation.py) (6 tests)
+  - [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py) (7 tests)
+  - [`tests/unit/test_connectivity.py`](<your-project-folder>/tests/unit/test_connectivity.py) (5 tests)
+  - [`tests/unit/test_input_validation.py`](<your-project-folder>/tests/unit/test_input_validation.py) (6 tests)
+  - [`tests/integration/test_pipeline_v2_synthetic.py`](<your-project-folder>/tests/integration/test_pipeline_v2_synthetic.py) (1 end-to-end integration test)
 - **Configuration & Provenance Schemas**:
-  - [`configs/preprocessing_config.example.json`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/configs/preprocessing_config.example.json)
-  - [`configs/provenance_schema.json`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/configs/provenance_schema.json)
+  - [`configs/preprocessing_config.example.json`](<your-project-folder>/configs/preprocessing_config.example.json)
+  - [`configs/provenance_schema.json`](<your-project-folder>/configs/provenance_schema.json)
 - **Documentation**:
-  - [`README.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/README.md)
-  - [`docs/POC_V2_IMPLEMENTATION_REPORT.md`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/docs/POC_V2_IMPLEMENTATION_REPORT.md)
+  - [`README.md`](<your-project-folder>/README.md)
+  - [`docs/POC_V2_IMPLEMENTATION_REPORT.md`](<your-project-folder>/docs/POC_V2_IMPLEMENTATION_REPORT.md)
 
 ---
 
@@ -252,7 +252,7 @@ Following focused code review by the project owner, five remediation items were 
   The prior implementation order was inverted. Corrected to `affine_t1w_to_mni @ rigid_epi_to_t1w`.
 
 ### 2. Geometry-Sensitive Unit Test Expansion
-- Added 5 new geometry-sensitive tests in [`tests/unit/test_registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_registration.py):
+- Added 5 new geometry-sensitive tests in [`tests/unit/test_registration.py`](<your-project-folder>/tests/unit/test_registration.py):
   1. `test_compose_transformations_output_has_target_not_source_shape`: Verifies target grid shape and affine propagation under differing source and target resolutions.
   2. `test_resample_4d_bold_output_has_target_affine_not_source_affine`: Verifies that resampled 4D BOLD acquires CC200 target affine rather than native EPI affine.
   3. `test_compose_transformations_prealign_matrix_composition_order`: Numerically verifies the non-commutative affine multiplication order.
@@ -261,7 +261,7 @@ Following focused code review by the project owner, five remediation items were 
 - Registration test suite expanded from 9 to 14 tests (100% passing).
 
 ### 3. Nuisance Confound Hardening & Mask Validation
-- Hardened `extract_acompcor_components()` in [`src/preprocessing/nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/src/preprocessing/nuisance.py):
+- Hardened `extract_acompcor_components()` in [`src/preprocessing/nuisance.py`](<your-project-folder>/src/preprocessing/nuisance.py):
   - Strictly requires 3D arrays for eroded WM and CSF masks (rejects 2D/4D inputs).
   - Explicitly validates that mask spatial shapes match BOLD spatial dimensions `bold_data.shape[:3]`, ensuring masks have been pre-registered into the BOLD standard grid.
   - Verifies raw BOLD data is finite before aCompCor extraction, catching corrupt inputs early.
@@ -271,11 +271,11 @@ Following focused code review by the project owner, five remediation items were 
   - Checks for non-finite values in standard-space BOLD volumes prior to Nilearn filtering.
 - Hardened `build_confound_matrix()`:
   - Augmented matrix rank check with Singular Value Decomposition (SVD) condition number diagnostics, explicitly reporting severe collinearity if detected.
-- Added 8 new unit tests in [`tests/unit/test_nuisance.py`](file:///Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI/tests/unit/test_nuisance.py). Suite expanded from 7 to 15 tests (100% passing).
+- Added 8 new unit tests in [`tests/unit/test_nuisance.py`](<your-project-folder>/tests/unit/test_nuisance.py). Suite expanded from 7 to 15 tests (100% passing).
 
 ### 4. Report Reconciliation & Pytest Rootdir
 - **Matrix Rank Check**: The confound matrix full rank verification was confirmed present in `build_confound_matrix()`; it has now been upgraded with SVD condition number reporting.
-- **Pytest Rootdir**: The pytest root directory output as `untitled folder` reflects the physical filesystem directory path on disk; the symbolic link `/Users/apple/Documents/Codex/2026-09-29/NeuroADHD_RawMRI` points directly to it. Pytest resolves canonical realpaths, confirming tests execute against the authoritative codebase.
+- **Pytest Rootdir**: The pytest root directory output as `untitled folder` reflects the physical filesystem directory path on disk; the symbolic link `<your-project-folder>` points directly to it. Pytest resolves canonical realpaths, confirming tests execute against the authoritative codebase.
 
 ### 5. Suite Status Post-Remediation
 - **Total Tests**: 47 passed (0 failed).
