@@ -160,10 +160,10 @@ NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ```
 
 **Test Suite Metrics (Measured November 2026):**
-- **Collected:** 267 tests
-- **Passed:** 260 passed
+- **Collected:** 343 tests
+- **Passed:** 336 passed
 - **Skipped:** 7 skipped
-- **Statement Coverage:** 81% across `src/` (`pytest --cov=src`)
+- **Statement Coverage:** 80% across `src/` (`pytest --cov=src`)
 
 **Running the model-dependent tests:**
 - **2 skipped model tests** (`test_container_require_model_inference_fails_closed_without_mount`, etc.) require setting `NEUROADHD_MODEL_DIR` pointing to the trusted frozen model directory (e.g. `NeuroADHD_ModelBenchmark/results/final_locked`).
@@ -207,7 +207,7 @@ Detailed documentation is available in the `docs/` folder:
   - Added UI indicator in `frontend/index.html` clarifying execution duration for canonical CC200 atlas mode on CPU.
   - Added synthetic phantom data disclaimer to model output panel in `frontend/app.js`.
   - Added formal documentation of unproven feature concordance on real participant data.
-  - Expanded test suite to 267 collected tests (260 passed, 7 skipped; 81% statement coverage across `src/`).
+  - Expanded test suite to 343 collected tests (336 passed, 7 skipped; 80% statement coverage across `src/`).
 
 - **2026-11-03 (Local MRI Intake UI & Validation)**:
   - Added the complete BIDS-style MRI session ZIP as the primary dashboard upload.
@@ -223,7 +223,7 @@ Detailed documentation is available in the `docs/` folder:
   - Enforced strict historical 0.96 tissue probability thresholding and 1-voxel 3D morphological erosion.
   - Updated nuisance model in `src/preprocessing/nuisance.py` with 5 aCompCor components extracted strictly from eroded anatomical tissue masks (31 confound columns total, GSR OFF, mean tissue signals OFF).
   - Implemented orthogonal slice contour inspection figure generator in `src/preprocessing/qc.py`.
-  - Created comprehensive test suite (initially 34 tests, now expanded to 267 collected tests: 260 passed, 7 skipped with 81% statement coverage as of November 2026).
+  - Created comprehensive test suite (initially 34 tests, now expanded to 343 collected tests: 336 passed, 7 skipped with 80% statement coverage as of November 2026).
   - Benchmarked peak RAM at 0.29 GB (well below the 2.50 GB ceiling).
   - Single-subject raw scan execution paused awaiting code review.
 - **2026-10-21 (Phase 1 Baseline Audit & Architecture)**:
