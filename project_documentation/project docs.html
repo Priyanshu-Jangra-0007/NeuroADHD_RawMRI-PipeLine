@@ -965,21 +965,21 @@ This section details how to upload neuroimaging data into the system, the strict
     <td>Single <code>.zip</code> file containing BIDS structure</td>
     <td>Dashboard Overview &rarr; Card 1: <em>"Complete MRI session"</em></td>
     <td>ZipSlip traversal check, symlink rejection, 4D BOLD dimensions, $T_R$ range check ($0.5\text{s} \le T_R \le 5.0\text{s}$), 3D T1w presence.</td>
-    <td><code>outputs/intake_sessions/&lt;session_id&gt;/raw_uploads/&lt;file&gt;.zip</code><br>Extracted to: <code>outputs/intake_sessions/&lt;session_id&gt;/bids_extracted/</code></td>
+    <td><code>outputs/intake_sessions/&lt;session_id&gt;/uploads/&lt;file&gt;.zip</code><br>Extracted to: <code>outputs/intake_sessions/&lt;session_id&gt;/data/</code></td>
   </tr>
   <tr>
     <td><strong>2. Individual MRI / fMRI Files</strong></td>
     <td><code>.nii.gz</code>, <code>.nii</code>, <code>.json</code>, or <code>.dcm</code></td>
     <td>Dashboard Overview &rarr; Card 2: <em>"MRI / fMRI files"</em></td>
     <td>File naming pattern (<code>*_bold.nii.gz</code>, <code>*_T1w.nii.gz</code>), NiBabel header integrity, JSON sidecar syntax.</td>
-    <td><code>outputs/intake_sessions/&lt;session_id&gt;/raw_uploads/</code></td>
+    <td><code>outputs/intake_sessions/&lt;session_id&gt;/uploads/</code></td>
   </tr>
   <tr>
     <td><strong>3. Radiology / Medical Report</strong></td>
     <td><code>.pdf</code>, <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code></td>
     <td>Dashboard Overview &rarr; Card 3: <em>"MRI / radiology report"</em></td>
     <td>MIME-type check, maximum file size limit (50 MB), PDF structure validation, OCR engine detection (Poppler / Tesseract).</td>
-    <td><code>outputs/intake_sessions/&lt;session_id&gt;/raw_uploads/</code><br>Extracted text: <code>outputs/intake_sessions/&lt;session_id&gt;/extracted/report_text.txt</code></td>
+    <td><code>outputs/intake_sessions/&lt;session_id&gt;/uploads/</code><br>Extracted text: <code>outputs/intake_sessions/&lt;session_id&gt;/reports/report_text.txt</code></td>
   </tr>
   </tbody>
 </table>
@@ -1011,7 +1011,7 @@ This section details how to upload neuroimaging data into the system, the strict
   <div class="q-row"><div class="q-label">1. WHAT do I need to do?</div><div class="q-ans">Select a BIDS-format ZIP archive containing BOLD fMRI and T1w MRI files and click Upload.</div></div>
   <div class="q-row"><div class="q-label">2. WHERE do I do it?</div><div class="q-ans">In Card 1 ("Complete MRI session") on the web dashboard at <code>http://127.0.0.1:8765</code>.</div></div>
   <div class="q-row"><div class="q-label">3. WHAT happens after?</div><div class="q-ans">The backend streams the file to disk, verifies zip paths, inspects scan headers, and creates an audit manifest.</div></div>
-  <div class="q-row"><div class="q-label">4. WHAT OUTPUT will I get?</div><div class="q-ans">A validated intake session ID, dimensional report, and <code>session_manifest.json</code>.</div></div>
+  <div class="q-row"><div class="q-label">4. WHAT OUTPUT will I get?</div><div class="q-ans">A validated intake session ID, dimensional report, and <code>intake_manifest.json</code>.</div></div>
   <div class="q-row"><div class="q-label">5. WHERE is it stored?</div><div class="q-ans">On your computer at <code>outputs/intake_sessions/&lt;session_id&gt;/</code>.</div></div>
 </div>
 </section>
@@ -1550,11 +1550,11 @@ NeuroADHD employs an <strong>Atomic File-Based JSON Document Store</strong> with
 <h3>9.1 Directory Hierarchy &amp; Storage Layout</h3>
 <pre><code>outputs/
 ├── intake_sessions/                               # Uploaded and staged scan sessions
-│   └── session_20261107T150500_123456Z/
-│       ├── session_manifest.json                  # Atomic JSON manifest of upload
-│       ├── raw_uploads/                           # Original binary uploads (.zip, .nii.gz)
-│       ├── bids_extracted/                        # Extracted BIDS hierarchy (sub-*/ses-*)
-│       └── extracted_reports/                     # OCR text and extracted report images
+│   └── intake_a1b2c3d4e5f6789012345678abcdef01/   # Intake session ID (32 hex characters)
+│       ├── intake_manifest.json                   # Atomic JSON manifest of upload
+│       ├── uploads/                               # Original binary uploads (.zip, .nii.gz)
+│       ├── data/                                  # Extracted BIDS hierarchy (sub-*/ses-*)
+│       └── reports/                               # OCR text and extracted report images
 │
 └── dashboard_cohorts/                             # Cohort execution outputs
     └── cohort_20261103T091529_010582Z/
@@ -1779,7 +1779,7 @@ The end-to-end processing pipeline operates in <strong>9 primary algorithmic blo
       <div class="wf-desc">ZipSlip traversal audit, NiBabel NIfTI 4D/3D header checks, and $T_R$ bounds verification.</div>
       <div class="wf-io">
         <span class="wf-io-in">IN:</span> Staged files<br>
-        <span class="wf-io-out">OUT:</span> session_manifest.json
+        <span class="wf-io-out">OUT:</span> intake_manifest.json
       </div>
     </div>
 
