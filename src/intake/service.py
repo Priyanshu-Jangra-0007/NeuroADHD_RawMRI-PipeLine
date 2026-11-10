@@ -20,7 +20,9 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Union
+from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, Union
+
+from src.validation.authorization_gate import ResearchAuthorizationGate
 
 SESSION_RE = re.compile(r"^intake_[0-9a-f]{32}$")
 MAX_SCAN_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -34,6 +36,7 @@ CHUNK_BYTES = 1024 * 1024
 SCAN_SUFFIXES = (".zip", ".nii.gz", ".nii", ".dcm", ".ima", ".json", ".tsv", ".bval", ".bvec", ".txt", ".csv")
 REPORT_SUFFIXES = (".pdf", ".jpg", ".jpeg", ".png")
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_ROOT = Path(os.environ.get("NEUROADHD_DATA_ROOT") or (Path.home() / "NeuroADHD_Data"))
 
 
@@ -103,7 +106,12 @@ def _suffix(name: str) -> str:
 class IntakeService:
     """Local, path-contained intake, DICOM conversion and validation service."""
 
-    def __init__(self, root: Optional[Union[str, Path]] = None):
+    def __init__(
+        self,
+        root: Optional[Union[str, Path]] = None,
+        authorization_checker: Optional[Callable[[str, str], Any]] = None,
+    ):
+        self._authorization_checker = authorization_checker
         if root is None:
             self.data_root = get_data_root()
         else:
@@ -830,12 +838,184 @@ class IntakeService:
         self._save_manifest(session_dir, manifest)
         return result
 
+    def _enforce_dicom_conversion_authorization(self, requested_dataset: str) -> Dict[str, Any]:
+        """Fail-closed research authorization gate check before any DICOM-to-BIDS conversion."""
+        if (
+            not isinstance(requested_dataset, str)
+            or not requested_dataset
+            or requested_dataset != requested_dataset.strip()
+            or "\x00" in requested_dataset
+        ):
+            raise IntakeError(
+                "Conversion blocked: research authorization not approved for this dataset "
+                "(invalid dataset identifier)."
+            )
+
+        sensitive_values: List[str] = []
+        for env_name in ("NEUROADHD_HMAC_KEY", "NEUROADHD_INTEGRITY_KEY"):
+            val = os.environ.get(env_name)
+            if isinstance(val, str) and val.strip():
+                sensitive_values.append(val.strip())
+
+        def _redact(text: Any) -> str:
+            out = str(text)
+            for secret in sensitive_values:
+                if len(secret) >= 4:
+                    out = out.replace(secret, "[REDACTED]")
+            out = re.sub(r"\b[0-9a-fA-F]{32,}\b", "[REDACTED_HEX]", out)
+            return out
+
+        try:
+            if self._authorization_checker is not None:
+                if not callable(self._authorization_checker):
+                    raise IntakeError(
+                        "Conversion blocked: research authorization not approved for this dataset "
+                        "(invalid authorization checker)."
+                    )
+                result = self._authorization_checker(requested_dataset, "dicom_conversion")
+            else:
+                raw_register_path = PROJECT_ROOT / ResearchAuthorizationGate.DEFAULT_REGISTER_PATH
+                if raw_register_path.is_symlink():
+                    raise IntakeError(
+                        "Conversion blocked: research authorization not approved for this dataset "
+                        "(authorization register cannot be a symlink)."
+                    )
+                gate = ResearchAuthorizationGate(base_dir=PROJECT_ROOT)
+                gate.check_for_bypass_attempts()
+                register = gate.load_register()
+                if not isinstance(register, dict):
+                    raise IntakeError(
+                        "Conversion blocked: research authorization not approved for this dataset "
+                        "(authorization register is unreadable or malformed)."
+                    )
+                records = register.get("dataset_authorizations")
+                if not isinstance(records, list):
+                    raise IntakeError(
+                        "Conversion blocked: research authorization not approved for this dataset "
+                        "(authorization register is missing dataset_authorizations)."
+                    )
+
+                # Exact string match against the register's dataset_id (no normalization or trimming)
+                matches = [
+                    rec
+                    for rec in records
+                    if isinstance(rec, dict)
+                    and isinstance(rec.get("dataset_id"), str)
+                    and rec.get("dataset_id") == requested_dataset
+                ]
+                if not matches:
+                    raise IntakeError(
+                        f"Conversion blocked: research authorization not approved for this dataset "
+                        f"(no matching authorization record for dataset '{requested_dataset}')."
+                    )
+                if len(matches) > 1:
+                    raise IntakeError(
+                        f"Conversion blocked: research authorization not approved for this dataset "
+                        f"(multiple matching records for dataset '{requested_dataset}')."
+                    )
+
+                record = matches[0]
+                sig = record.get("cryptographic_signature")
+                if isinstance(sig, str) and sig.strip():
+                    sensitive_values.append(sig.strip())
+
+                result = gate.verify_dataset_authorization(
+                    record,
+                    requested_dataset=requested_dataset,
+                    requested_operation="dicom_conversion",
+                )
+        except IntakeError:
+            raise
+        except Exception as exc:
+            reason = _redact(f"{type(exc).__name__}: {exc}")
+            raise IntakeError(
+                f"Conversion blocked: research authorization not approved for this dataset ({reason})."
+            ) from exc
+
+        if isinstance(result, bool):
+            if result is True and self._authorization_checker is not None:
+                return {"is_valid": True, "dataset_id": requested_dataset, "status": "APPROVED"}
+            raise IntakeError(
+                "Conversion blocked: research authorization not approved for this dataset "
+                "(authorization check rejected conversion)."
+            )
+
+        if not isinstance(result, dict):
+            raise IntakeError(
+                "Conversion blocked: research authorization not approved for this dataset "
+                "(invalid verification response)."
+            )
+
+        reasons: List[str] = []
+
+        res_dataset = result.get("dataset_id")
+        if not isinstance(res_dataset, str) or res_dataset != requested_dataset:
+            reasons.append(f"wrong dataset id (expected '{requested_dataset}', got '{_redact(res_dataset)}')")
+
+        status = result.get("status")
+        if status != "APPROVED":
+            reasons.append(f"status is '{_redact(status)}', not 'APPROVED'")
+
+        exp_status = result.get("expiry_status")
+        if exp_status == "EXPIRED":
+            reasons.append("authorization record is expired")
+        elif exp_status != "VALID_PERIOD":
+            reasons.append(f"invalid expiry status '{_redact(exp_status)}'")
+
+        sig_status = result.get("signature_status")
+        if sig_status == "MISSING_KEY":
+            reasons.append("HMAC key is missing")
+        elif sig_status == "MISSING_SIGNATURE":
+            reasons.append("cryptographic signature is missing")
+        elif sig_status != "VALID":
+            reasons.append(f"cryptographic signature is invalid ({_redact(sig_status)})")
+
+        permitted_ops = result.get("permitted_operations")
+        if not isinstance(permitted_ops, list) or "dicom_conversion" not in permitted_ops:
+            reasons.append("operation 'dicom_conversion' is not permitted")
+
+        issues = result.get("issues")
+        if not isinstance(issues, list):
+            reasons.append("verification issues list is malformed")
+        elif issues:
+            for iss in issues:
+                redacted_iss = _redact(iss)
+                if redacted_iss not in reasons:
+                    reasons.append(redacted_iss)
+
+        if reasons or result.get("is_valid") is not True:
+            if not reasons:
+                reasons.append("authorization record is not valid")
+            detail = "; ".join(reasons)
+            raise IntakeError(
+                f"Conversion blocked: research authorization not approved for this dataset ({detail})."
+            )
+
+        return result
+
     def convert_dicom_to_bids(
         self,
         session_id: str,
         conversion_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Convert confirmed T1w and BOLD DICOM series into standardized BIDS NIfTI structure."""
+        if not isinstance(conversion_spec, dict):
+            raise IntakeError("Conversion blocked: conversion specification must be a JSON object.")
+
+        raw_subject = conversion_spec.get("subject_id", "")
+        if not raw_subject or not isinstance(raw_subject, str) or raw_subject != raw_subject.strip():
+            raise IntakeError(
+                "Conversion blocked: an exact de-identified BIDS subject/dataset identifier is required "
+                "(without leading or trailing whitespace, e.g. 'sub-001')."
+            )
+        if "dataset_id" in conversion_spec and conversion_spec.get("dataset_id") is not None:
+            if not isinstance(conversion_spec["dataset_id"], str) or conversion_spec["dataset_id"] != raw_subject:
+                raise IntakeError(
+                    "Conversion blocked: requested dataset_id does not match subject_id."
+                )
+
+        self._enforce_dicom_conversion_authorization(raw_subject)
+
         session_dir = self._session_dir(session_id)
         manifest = self._read_manifest(session_dir)
         if manifest.get("kind") != "scan":
@@ -850,9 +1030,6 @@ class IntakeService:
         if not dcm2niix_bin:
             raise IntakeError("dcm2niix converter is not installed or not in PATH.")
 
-        raw_subject = conversion_spec.get("subject_id", "")
-        if not raw_subject or not isinstance(raw_subject, str):
-            raise IntakeError("A de-identified BIDS subject identifier is required (e.g. 'sub-001').")
         sub_clean = re.sub(r"[^a-zA-Z0-9]", "", raw_subject)
         if sub_clean.lower().startswith("sub"):
             sub_clean = sub_clean[3:]

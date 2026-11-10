@@ -46,18 +46,19 @@ Directories are created with restrictive permissions (`0o700`) and files with (`
 ### Step A: Upload DICOM Study
 Upload a ZIP containing scanner DICOM files or individual DICOM files (`.dcm`, `.ima`) into a scan intake session. Files are verified for cryptographic integrity.
 
-### Step B: Inspect Series (Inspect-Only)
-The pipeline runs `dcm2niix -n -1` and temporary metadata extraction:
-- Detects all series without converting images into NIfTI files.
+### Step B: Inspect Series (Inspect-Only — Allowed)
+The pipeline runs `dcm2niix -n -1` / `-n -2` header listing and temporary metadata extraction:
+- Detects all series without converting or writing NIfTI image files (inspect-only header listing remains allowed without conversion authorization).
 - Extracts series numbers, descriptions, protocols, image counts, dimensions, modality, and repetition time ($TR$).
 - **Strict Anonymization:** Patient name, Patient ID, date of birth, age, sex, institution address, and accession numbers are redacted and never returned or logged.
 - Identifies candidate scan types (`T1w`, `BOLD`, `LOCALIZER`, `DWI`, `OTHER`).
 - Flags ambiguous series (e.g. BOLD without explicit "rest" designation, or multiple BOLD runs).
 
-### Step C: Select Series & Convert
+### Step C: Select Series & Convert (Gated by Research Authorization)
+- **Fail-Closed Authorization Gate:** Before invoking `dcm2niix` or writing any files, `convert_dicom_to_bids` queries `ResearchAuthorizationGate.verify_dataset_authorization(...)` against `configs/research_authorization_register.json` using the exact `dataset_id` (no normalization or whitespace trimming) and `requested_operation="dicom_conversion"`. Conversion is blocked with `IntakeError` unless an unexpired, HMAC-SHA256 signed `APPROVED` record exists for that exact dataset permitting `"dicom_conversion"` and a valid HMAC key is configured (`sub-01` is currently `PENDING` and blocked).
 - User selects one Anatomical T1-weighted series (T1w).
 - User selects one or more Resting-state BOLD functional series (supports multi-run acquisition: `run-01`, `run-02`, etc.).
-- User specifies de-identified BIDS identifiers (e.g. `sub-001`, optional `ses-01`).
+- User specifies de-identified BIDS identifiers (e.g. `sub-001`, optional `ses-01`) matching the exact authorized `dataset_id`.
 - User explicitly confirms any series with ambiguous classification.
 - Pipeline executes `dcm2niix` with gzip compression (`-z y`), BIDS sidecar generation (`-b y`), and anonymization (`-ba y`).
 - Generates valid BIDS layout:
@@ -111,6 +112,7 @@ Open **http://127.0.0.1:8765** in your browser.
 
 ## 7. Current Boundaries and Remaining Limitations
 
-* **DICOM-to-BIDS is ingestion only:** Conversion does not constitute authorization for real-participant processing.
+* **DICOM Conversion Authorization Gate:** `convert_dicom_to_bids` fails closed unless `configs/research_authorization_register.json` contains a valid, unexpired, HMAC-SHA256 signed `APPROVED` record matching the exact `dataset_id` with `"dicom_conversion"` in `permitted_operations` (and `NEUROADHD_HMAC_KEY` is present). Inspect-only (`inspect_dicom`, `dcm2niix -n -1` / `-n -2` header listing without writing NIfTI images) remains allowed.
+* **DICOM-to-BIDS is ingestion only:** Even when a dataset is authorized for `dicom_conversion`, conversion does not authorize real-participant preprocessing or model inference.
 * **Research Gate Enforcement:** `processing_enabled` and `real_data_authorized` remain `false` across all intake and converted sessions until Phase 2 research authorization is complete.
 * **Synthetic Cohort Runs:** Pipeline runs launched from the dashboard continue to execute against deterministic synthetic phantoms only.

@@ -447,6 +447,8 @@ async function convertDicom() {
 
   const progress = $("intakeProgress");
   progress.classList.remove("hidden");
+  progress.style.borderColor = "";
+  progress.style.color = "";
   progress.textContent = `Converting series to BIDS (${subjectId}): executing dcm2niix anonymization and NIfTI compression…`;
 
   const btn = $("convertDicomButton");
@@ -461,8 +463,22 @@ async function convertDicom() {
     progress.textContent = `Conversion and BIDS validation complete · ${subjectId}`;
     showToast("DICOM converted to valid BIDS session successfully!");
   } catch (err) {
-    progress.textContent = `Conversion stopped: ${err.message}`;
-    showToast(err.message);
+    const rawMsg = err?.message || "Unknown conversion error.";
+    const isAuthBlocked =
+      rawMsg.includes("Conversion blocked:") ||
+      /research authorization|authorization|not approved|hmac|signature|permitted|expired|revoked|rejected|pending/i.test(rawMsg);
+    const displayMsg = isAuthBlocked
+      ? (rawMsg.includes("Conversion blocked: research authorization not approved for this dataset")
+          ? rawMsg
+          : `Conversion blocked: research authorization not approved for this dataset (${rawMsg})`)
+      : `Conversion stopped: ${rawMsg}`;
+    progress.classList.remove("hidden");
+    if (isAuthBlocked) {
+      progress.style.borderColor = "#9e6428";
+      progress.style.color = "#ffbe6b";
+    }
+    progress.textContent = displayMsg;
+    showToast(displayMsg);
   } finally {
     btn.disabled = false;
   }
