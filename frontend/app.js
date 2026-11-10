@@ -37,6 +37,7 @@ function statusClass(status) {
   if (status === "SUCCESS") return "status-success";
   if (status === "RUNNING" || status === "STARTING") return "status-running";
   if (status === "FAILED" || status === "PARTIAL_FAILURE") return "status-failed";
+  if (status === "TERMINATED") return "status-terminated";
   return "status-other";
 }
 
@@ -90,18 +91,22 @@ async function refreshSelectedCohort() {
     const cohort = await api(`/api/runs/${encodeURIComponent(state.selectedRunId)}`);
     const summary = cohort.summary || {};
     const done = cohort.subjects.filter((s) => s.status === "SUCCESS").length;
-    const failed = cohort.subjects.filter((s) => s.status === "FAILED").length;
+    const failed = cohort.subjects.filter((s) => s.status === "FAILED" || s.status === "TERMINATED").length;
     const total = cohort.subjects.length;
-    const terminal = cohort.status === "SUCCESS" || cohort.status === "FAILED" || cohort.status === "PARTIAL_FAILURE";
+    const terminal = cohort.status === "SUCCESS" || cohort.status === "FAILED" || cohort.status === "PARTIAL_FAILURE" || cohort.status === "TERMINATED";
     $("runProgress").classList.remove("hidden");
     $("runProgressTitle").textContent = terminal ? `Run ${cohort.status.toLowerCase().replaceAll("_", " ")}` : "Pipeline executing";
     $("runProgressText").textContent = `${done} / ${total} subjects`;
     $("runProgressBar").style.width = `${total ? (done / total) * 100 : 0}%`;
-    $("runProgressHint").textContent = failed
+    $("runProgressHint").textContent = cohort.status === "TERMINATED"
+      ? (cohort.terminated_reason || "Run was terminated. Stale process or user cancellation.")
+      : failed
       ? `${failed} subject(s) failed. Inspect the runner log for the failure details.`
       : terminal ? "All subject checkpoints have been written." : "Subjects are processed sequentially; outputs appear as each subject finishes.";
     $("selectedRunTitle").textContent = cohort.cohort_run_id || cohort.cohort_id;
-    $("selectedRunSub").textContent = `${cohort.status} · ${fmtDate(cohort.created_utc)} · STRICTLY_SYNTHETIC_ONLY`;
+    $("selectedRunSub").textContent = cohort.status === "TERMINATED" && cohort.terminated_reason
+      ? `${cohort.status} (${cohort.terminated_reason}) · ${fmtDate(cohort.created_utc)} · STRICTLY_SYNTHETIC_ONLY`
+      : `${cohort.status} · ${fmtDate(cohort.created_utc)} · STRICTLY_SYNTHETIC_ONLY`;
     const previous = state.selectedSubjectId;
     const selectable = cohort.subjects.filter((s) => s.status === "SUCCESS");
     $("subjectSelect").innerHTML = cohort.subjects.map((s) =>

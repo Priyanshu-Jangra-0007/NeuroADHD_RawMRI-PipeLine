@@ -43,6 +43,7 @@ class DashboardApplication:
         self._ephemeral_integrity_key = os.environ.get("NEUROADHD_HMAC_KEY") or os.environ.get("NEUROADHD_INTEGRITY_KEY")
         if not self._ephemeral_integrity_key:
             self._ephemeral_integrity_key = secrets.token_urlsafe(32)
+        self._recover_stale_cohorts()
 
     def health(self) -> Dict[str, Any]:
         pending = None
@@ -67,9 +68,122 @@ class DashboardApplication:
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
 
+    def _is_pid_alive(self, pid: int) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
+
+    def _terminate_stale_cohort(self, cohort_dir: Path, manifest: Dict[str, Any], reason: str) -> None:
+        manifest_path = cohort_dir / "cohort_manifest.json"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        manifest["status"] = "TERMINATED"
+        manifest["terminated_reason"] = reason
+        manifest["terminated_utc"] = now_iso
+        manifest["updated_utc"] = now_iso
+
+        subjects = manifest.get("subjects", [])
+        for subj in subjects:
+            if subj.get("status") in ("RUNNING", "PENDING", None):
+                subj["status"] = "TERMINATED"
+                subj["error"] = reason
+
+        succeeded = sum(1 for s in subjects if s.get("status") == "SUCCESS")
+        failed = sum(1 for s in subjects if s.get("status") in ("FAILED", "TERMINATED"))
+        manifest["summary"] = {
+            "total_subjects": len(subjects),
+            "succeeded": succeeded,
+            "failed": failed,
+            "pending": 0,
+            "failures": [
+                {"subject_id": s.get("subject_id"), "error": s.get("error", reason)}
+                for s in subjects
+                if s.get("status") in ("FAILED", "TERMINATED")
+            ],
+        }
+
+        temp_path = manifest_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(temp_path, manifest_path)
+
+        status_file = cohort_dir / "dashboard-process.json"
+        proc_data: Dict[str, Any] = {}
+        if status_file.is_file() and not status_file.is_symlink():
+            try:
+                proc_data = json.loads(status_file.read_text(encoding="utf-8"))
+            except Exception:
+                proc_data = {}
+        proc_data["status"] = "TERMINATED"
+        proc_data["exit_code"] = proc_data.get("exit_code", -1)
+        proc_data["terminated_reason"] = reason
+        proc_data["terminated_utc"] = now_iso
+        temp_proc = status_file.with_suffix(".tmp")
+        temp_proc.write_text(json.dumps(proc_data, indent=2), encoding="utf-8")
+        os.replace(temp_proc, status_file)
+
+    def _recover_stale_cohorts(self) -> None:
+        if not OUTPUT_ROOT.is_dir():
+            return
+        for candidate in OUTPUT_ROOT.iterdir():
+            if not candidate.is_dir() or candidate.is_symlink() or not candidate.name.startswith("cohort_"):
+                continue
+            manifest_path = candidate / "cohort_manifest.json"
+            if not manifest_path.is_file() or manifest_path.is_symlink():
+                continue
+            try:
+                with manifest_path.open("r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except Exception:
+                continue
+
+            if manifest.get("status") not in ("RUNNING", "STARTING"):
+                continue
+
+            cohort_id = candidate.name
+            if cohort_id in self._active:
+                continue
+
+            status_file = candidate / "dashboard-process.json"
+            is_alive = False
+            if status_file.is_file() and not status_file.is_symlink():
+                try:
+                    with status_file.open("r", encoding="utf-8") as f:
+                        proc_data = json.load(f)
+                    pid = proc_data.get("pid")
+                    if self._is_pid_alive(pid):
+                        is_alive = True
+                except Exception:
+                    is_alive = False
+
+            if is_alive:
+                continue
+
+            # Conservative staleness check: if dashboard-process.json is missing,
+            # verify updated_utc is older than threshold (30 seconds) or server is initializing.
+            if not status_file.is_file():
+                ts_str = manifest.get("updated_utc") or manifest.get("created_utc")
+                if ts_str:
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        age = (datetime.now(timezone.utc) - ts).total_seconds()
+                        if age < 30.0 and cohort_id in self._active:
+                            continue
+                    except Exception:
+                        pass
+
+            self._terminate_stale_cohort(
+                candidate,
+                manifest,
+                reason="Stale RUNNING cohort recovered: no active worker thread or live process.",
+            )
+
     def _has_running_cohort(self) -> bool:
+        self._recover_stale_cohorts()
         for cohort in self.service.list_cohorts():
-            if cohort.get("status") == "RUNNING":
+            if cohort.get("status") in ("RUNNING", "STARTING"):
                 return True
         return False
 

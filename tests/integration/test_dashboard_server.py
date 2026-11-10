@@ -1,6 +1,8 @@
 """Tests for the synthetic-only dashboard run launcher."""
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -107,6 +109,69 @@ class TestDashboardApplication(unittest.TestCase):
 
     def test_only_one_run_can_be_active(self):
         self.app.start_run({"n_subjects": 1})
+        with self.assertRaisesRegex(RuntimeError, "already running"):
+            self.app.start_run({"n_subjects": 1})
+
+    def test_stale_running_cohort_is_recovered_and_allows_new_run(self):
+        cohort_id = "cohort_20261103T120000_111111Z"
+        cohort_dir = self.output_root / cohort_id
+        cohort_dir.mkdir(parents=True)
+        manifest_path = cohort_dir / "cohort_manifest.json"
+        manifest_data = {
+            "cohort_run_id": cohort_id,
+            "manifest_version": "1.0.0",
+            "run_type": "SYNTHETIC_COHORT_ONLY",
+            "status": "RUNNING",
+            "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+            "real_data_authorized": False,
+            "created_utc": "2026-11-03T12:00:00.000000+00:00",
+            "updated_utc": "2026-11-03T12:00:00.000000+00:00",
+            "configuration": {"n_subjects": 1},
+            "subjects": [{"subject_id": "sub-synthetic001", "status": "RUNNING"}],
+            "summary": {"total_subjects": 1, "succeeded": 0, "failed": 0, "pending": 1},
+        }
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+        # Record a dead pid in dashboard-process.json
+        status_path = cohort_dir / "dashboard-process.json"
+        status_path.write_text(json.dumps({"pid": 999999999, "status": "RUNNING"}), encoding="utf-8")
+
+        self.assertFalse(self.app._has_running_cohort())
+        recovered_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(recovered_manifest["status"], "TERMINATED")
+        self.assertIn("terminated_reason", recovered_manifest)
+        self.assertIn("terminated_utc", recovered_manifest)
+        self.assertEqual(recovered_manifest["execution_policy"], "STRICTLY_SYNTHETIC_ONLY")
+        self.assertIs(recovered_manifest["real_data_authorized"], False)
+        self.assertEqual(recovered_manifest["subjects"][0]["status"], "TERMINATED")
+
+        # New run can start successfully without 409 conflict
+        result = self.app.start_run({"n_subjects": 1})
+        self.assertEqual(result["status"], "STARTING")
+
+    def test_genuinely_running_cohort_with_live_pid_blocks(self):
+        cohort_id = "cohort_20261103T120000_222222Z"
+        cohort_dir = self.output_root / cohort_id
+        cohort_dir.mkdir(parents=True)
+        manifest_path = cohort_dir / "cohort_manifest.json"
+        manifest_data = {
+            "cohort_run_id": cohort_id,
+            "manifest_version": "1.0.0",
+            "run_type": "SYNTHETIC_COHORT_ONLY",
+            "status": "RUNNING",
+            "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+            "real_data_authorized": False,
+            "created_utc": "2026-11-03T12:00:00.000000+00:00",
+            "updated_utc": "2026-11-03T12:00:00.000000+00:00",
+            "configuration": {"n_subjects": 1},
+            "subjects": [{"subject_id": "sub-synthetic001", "status": "RUNNING"}],
+            "summary": {"total_subjects": 1, "succeeded": 0, "failed": 0, "pending": 1},
+        }
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+        # Use our own live process pid
+        status_path = cohort_dir / "dashboard-process.json"
+        status_path.write_text(json.dumps({"pid": os.getpid(), "status": "RUNNING"}), encoding="utf-8")
+
+        self.assertTrue(self.app._has_running_cohort())
         with self.assertRaisesRegex(RuntimeError, "already running"):
             self.app.start_run({"n_subjects": 1})
 
