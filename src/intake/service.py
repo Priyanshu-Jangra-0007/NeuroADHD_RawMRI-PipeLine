@@ -417,6 +417,54 @@ class IntakeService:
             )
         return {"filename": path.name, "dimensions": list(shape), "dimensionality": len(shape)}
 
+    @staticmethod
+    def _is_dicom_file(path: Path) -> bool:
+        if path.is_symlink() or not path.is_file():
+            return False
+        parts = [p.lower() for p in path.parts]
+        if "bids" in parts or path.name.startswith("."):
+            return False
+        try:
+            with path.open("rb") as f:
+                header = f.read(132)
+                if len(header) >= 132 and header[128:132] == b"DICM":
+                    return True
+                if header.startswith(b"DICM"):
+                    return True
+        except (OSError, PermissionError):
+            pass
+        if path.suffix.lower() in (".dcm", ".ima"):
+            return True
+        return False
+
+    def _find_dicom_directory(self, session_dir: Path) -> Tuple[Optional[Path], List[Path]]:
+        data_root = session_dir / "data"
+        if not data_root.is_dir():
+            return None, []
+
+        all_dcms = [p for p in data_root.rglob("*") if self._is_dicom_file(p)]
+        if not all_dcms:
+            return None, []
+
+        # Priority 1: Check for 'raw' directory (ignoring any path under 'bids')
+        raw_dirs = [
+            p for p in data_root.rglob("*")
+            if p.is_dir() and p.name.lower() == "raw" and "bids" not in [x.lower() for x in p.parts]
+        ]
+        for r_dir in raw_dirs:
+            sub_dirs = [s for s in r_dir.iterdir() if s.is_dir()]
+            for s in sub_dirs:
+                sub_dcms = [f for f in s.rglob("*") if self._is_dicom_file(f)]
+                if sub_dcms:
+                    return s, sub_dcms
+            raw_dcms = [f for f in r_dir.rglob("*") if self._is_dicom_file(f)]
+            if raw_dcms:
+                return r_dir, raw_dcms
+
+        # Priority 2: Common ancestor directory of all verified DICOM files
+        common = Path(os.path.commonpath([str(p.parent) for p in all_dcms]))
+        return common, all_dcms
+
     def validate_scan_session(self, session_id: str) -> Dict[str, Any]:
         session_dir = self._session_dir(session_id)
         manifest = self._read_manifest(session_dir)
@@ -424,12 +472,12 @@ class IntakeService:
             raise IntakeError("This session is not a scan-upload session.")
         self._verify_staged_files(session_dir, manifest)
         data_root = session_dir / "data"
+        dicom_dir, dicom_files = self._find_dicom_directory(session_dir)
+
         nifti_files = [p for p in data_root.rglob("*") if p.is_file() and not p.is_symlink()
                        and (p.name.lower().endswith(".nii") or p.name.lower().endswith(".nii.gz"))]
         bold_files = [p for p in nifti_files if self._nifti_stem(p).lower().endswith("_bold")]
         t1w_files = [p for p in nifti_files if self._nifti_stem(p).lower().endswith("_t1w")]
-        dicom_files = [p for p in data_root.rglob("*") if p.is_file() and not p.is_symlink()
-                       and (p.suffix.lower() in (".dcm", ".ima") or (not p.suffix and not p.name.startswith(".")))]
 
         findings: Dict[str, Any] = {
             "status": "INCOMPLETE_INPUTS",
@@ -437,6 +485,7 @@ class IntakeService:
             "t1w": None,
             "repetition_time_seconds": None,
             "dicom_file_count": len(dicom_files),
+            "dicom_directory": str(dicom_dir.relative_to(session_dir)) if dicom_dir else None,
             "missing": [],
             "errors": [],
             "warnings": [],
@@ -445,7 +494,21 @@ class IntakeService:
             "next_action": "Upload one BIDS-compatible resting-state BOLD NIfTI, its JSON sidecar, and one T1w NIfTI.",
         }
 
-        if len(bold_files) > 1 or len(t1w_files) > 1:
+        if dicom_files:
+            findings["status"] = "DICOM_SERIES_STAGED"
+            findings["warnings"].append(
+                f"Original DICOM files staged ({len(dicom_files)} verified files). "
+                "Inspect series and select T1w and BOLD series for automated BIDS conversion."
+            )
+            if bold_files and t1w_files:
+                findings["warnings"].append(
+                    "Reference BIDS NIfTI files detected in staging; "
+                    "reference files are preserved but not used as evidence of DICOM conversion."
+                )
+            findings["next_action"] = (
+                "Inspect staged DICOM series using the DICOM series inspector, select T1w and BOLD series, and convert to BIDS."
+            )
+        elif len(bold_files) > 1 or len(t1w_files) > 1:
             findings["errors"].append("More than one BOLD or T1w candidate was found. Upload one participant/session at a time.")
         elif bold_files and t1w_files:
             bold, t1w = bold_files[0], t1w_files[0]
@@ -491,14 +554,6 @@ class IntakeService:
                 findings["missing"].append("4D resting-state BOLD NIfTI ending in _bold.nii or _bold.nii.gz")
             if not t1w_files:
                 findings["missing"].append("3D anatomical T1w NIfTI ending in _T1w.nii or _T1w.nii.gz")
-            if dicom_files:
-                findings["status"] = "DICOM_SERIES_STAGED"
-                findings["warnings"].append(
-                    "DICOM files are staged in this session. Run series inspection and select T1w and BOLD series for automated BIDS conversion."
-                )
-                findings["next_action"] = (
-                    "Inspect staged DICOM series using the DICOM series inspector, select T1w and BOLD series, and convert to BIDS."
-                )
 
         if findings["errors"]:
             findings["status"] = "VALIDATION_FAILED"
@@ -605,6 +660,7 @@ class IntakeService:
         # Redact patient identifiers strictly: never copy PatientName, PatientID, PatientBirthDate, etc.
         return {
             "series_id": crc,
+            "series_crc": crc,
             "series_number": int(s_num) if s_num is not None else 0,
             "series_description": desc or protocol or f"Series {s_num}",
             "protocol_name": protocol,
@@ -630,8 +686,15 @@ class IntakeService:
             m = pattern.match(line)
             if m:
                 s_id = m.group(1)
-                desc = Path(m.group(2).strip()).name
-                s_num = int(s_id) if len(s_id) <= 6 else 1
+                full_path_str = m.group(2).strip()
+                desc = Path(full_path_str).name
+                sm = re.search(r"_(\d+)(?:_i\d+)?$", full_path_str)
+                if sm:
+                    s_num = int(sm.group(1))
+                elif len(s_id) <= 6:
+                    s_num = int(s_id)
+                else:
+                    s_num = 1
                 sc = sidecars_by_num.get(s_num, {})
                 item = {
                     "SeriesNumber": s_num,
@@ -650,13 +713,7 @@ class IntakeService:
             raise IntakeError("Only scan intake sessions support DICOM inspection.")
 
         self._verify_staged_files(session_dir, manifest)
-        data_root = session_dir / "data"
-
-        dicom_files = [
-            p for p in data_root.rglob("*")
-            if p.is_file() and not p.is_symlink()
-            and (p.suffix.lower() in (".dcm", ".ima") or (not p.suffix and not p.name.startswith(".")))
-        ]
+        dicom_dir, dicom_files = self._find_dicom_directory(session_dir)
 
         dcm2niix_bin = shutil.which("dcm2niix")
         if not dcm2niix_bin:
@@ -665,24 +722,28 @@ class IntakeService:
                 "dcm2niix_available": False,
                 "dcm2niix_version": None,
                 "series_count": 0,
+                "dicom_file_count": len(dicom_files) if dicom_files else 0,
+                "dicom_directory": str(dicom_dir.relative_to(session_dir)) if dicom_dir else None,
                 "series": [],
                 "errors": ["dcm2niix converter is not installed or not in PATH."],
             }
 
-        if not dicom_files:
+        if not dicom_files or dicom_dir is None:
             return {
                 "session_id": session_id,
                 "dcm2niix_available": True,
                 "dcm2niix_version": self._get_dcm2niix_version(dcm2niix_bin),
                 "series_count": 0,
+                "dicom_file_count": 0,
+                "dicom_directory": None,
                 "series": [],
                 "errors": ["No DICOM files found in session."],
             }
 
-        # Run dcm2niix -n -1 inspection
+        # Run dcm2niix -n -1 inspection strictly on dicom_dir
         try:
             inspect_proc = subprocess.run(
-                [dcm2niix_bin, "-n", "-1", str(data_root)],
+                [dcm2niix_bin, "-n", "-1", str(dicom_dir)],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -699,7 +760,7 @@ class IntakeService:
             tmp_inspect = Path(tmp_inspect_str)
             try:
                 subprocess.run(
-                    [dcm2niix_bin, "-n", "-2", "-o", str(tmp_inspect), str(data_root)],
+                    [dcm2niix_bin, "-n", "-2", "-o", str(tmp_inspect), str(dicom_dir)],
                     capture_output=True,
                     text=True,
                     timeout=60,
@@ -710,7 +771,7 @@ class IntakeService:
 
             try:
                 subprocess.run(
-                    [dcm2niix_bin, "-b", "o", "-ba", "y", "-o", str(tmp_inspect), str(data_root)],
+                    [dcm2niix_bin, "-b", "o", "-ba", "y", "-o", str(tmp_inspect), str(dicom_dir)],
                     capture_output=True,
                     text=True,
                     timeout=60,
@@ -759,6 +820,8 @@ class IntakeService:
             "dcm2niix_available": True,
             "dcm2niix_version": self._get_dcm2niix_version(dcm2niix_bin),
             "series_count": len(series_records),
+            "dicom_file_count": len(dicom_files),
+            "dicom_directory": str(dicom_dir.relative_to(session_dir)),
             "series": series_records,
             "errors": [],
         }
@@ -779,7 +842,9 @@ class IntakeService:
             raise IntakeError("Only scan intake sessions support DICOM-to-BIDS conversion.")
 
         self._verify_staged_files(session_dir, manifest)
-        data_root = session_dir / "data"
+        dicom_dir, dicom_files = self._find_dicom_directory(session_dir)
+        if not dicom_files or dicom_dir is None:
+            raise IntakeError("No staged DICOM files found in this intake session.")
 
         dcm2niix_bin = shutil.which("dcm2niix")
         if not dcm2niix_bin:
@@ -824,19 +889,35 @@ class IntakeService:
         else:
             bold_specs.append({"series_id": str(bold_input), "run": None, "task": "rest"})
 
+        inspection = manifest.get("dicom_inspection") or {}
+        inspected_series: Dict[str, Dict[str, Any]] = {}
+        for s in inspection.get("series", []):
+            crc_val = str(s.get("series_crc") or s.get("series_id"))
+            inspected_series[crc_val] = s
+            s_num_val = str(s.get("series_number"))
+            if s_num_val not in inspected_series:
+                inspected_series[s_num_val] = s
+
+        def _resolve_selector(sel: Any) -> str:
+            raw_s = str(sel).strip()
+            rec = inspected_series.get(raw_s)
+            if rec and (rec.get("series_crc") or rec.get("series_id")):
+                return str(rec.get("series_crc") or rec.get("series_id"))
+            return raw_s
+
+        resolved_t1w = _resolve_selector(t1w_series)
+        for b in bold_specs:
+            b["series_id"] = _resolve_selector(b.get("series_id"))
+
         confirm_ambiguous = bool(conversion_spec.get("confirm_ambiguous", False))
         if not confirm_ambiguous:
-            inspection = manifest.get("dicom_inspection") or {}
-            inspected_series: Dict[str, Dict[str, Any]] = {}
-            for s in inspection.get("series", []):
-                inspected_series[str(s.get("series_id"))] = s
-                inspected_series[str(s.get("series_number"))] = s
-
             ambiguous_selected = []
-            for s_id in [str(t1w_series)] + [str(b.get("series_id")) for b in bold_specs]:
+            for s_id in [str(t1w_series), str(resolved_t1w)] + [str(b.get("series_id")) for b in bold_specs]:
                 rec = inspected_series.get(s_id)
                 if rec and rec.get("classification_ambiguous"):
-                    ambiguous_selected.append(f"Series {s_id} ({rec.get('series_description')}: {rec.get('ambiguity_reason')})")
+                    msg = f"Series {s_id} ({rec.get('series_description')}: {rec.get('ambiguity_reason')})"
+                    if msg not in ambiguous_selected:
+                        ambiguous_selected.append(msg)
 
             if ambiguous_selected:
                 raise IntakeError(
@@ -863,7 +944,7 @@ class IntakeService:
 
         converted_files: List[Dict[str, Any]] = []
 
-        # Convert T1w series
+        # Convert T1w series strictly from dicom_dir
         prefix_t1w = f"{sub_entity}_{ses_entity}_T1w" if ses_entity else f"{sub_entity}_T1w"
         with tempfile.TemporaryDirectory(dir=self.conversion_logs_dir, prefix=".conv_t1w_") as tmp_t1w_str:
             tmp_t1w = Path(tmp_t1w_str)
@@ -872,10 +953,10 @@ class IntakeService:
                 "-z", "y",
                 "-b", "y",
                 "-ba", "y",
-                "-n", str(t1w_series),
+                "-n", str(resolved_t1w),
                 "-o", str(tmp_t1w),
                 "-f", prefix_t1w,
-                str(data_root),
+                str(dicom_dir),
             ]
             try:
                 proc = subprocess.run(cmd_t1w, capture_output=True, text=True, timeout=120, check=False)
@@ -905,7 +986,7 @@ class IntakeService:
                 os.chmod(target_t1w_json, 0o600)
                 converted_files.append({"type": "T1w_JSON", "path": str(target_t1w_json.relative_to(self.bids_dir))})
 
-        # Convert each BOLD series
+        # Convert each BOLD series strictly from dicom_dir
         target_bold = None
         target_json = None
         for idx, b_spec in enumerate(bold_specs):
@@ -927,8 +1008,55 @@ class IntakeService:
                     "-n", str(b_series_id),
                     "-o", str(tmp_bold),
                     "-f", prefix_bold,
-                    str(data_root),
+                    str(dicom_dir),
                 ]
+                try:
+                    proc = subprocess.run(cmd_bold, capture_output=True, text=True, timeout=120, check=False)
+                except subprocess.TimeoutExpired as exc:
+                    raise IntakeError(f"dcm2niix conversion timed out for BOLD series {b_series_id}.") from exc
+
+                nii_candidates = list(tmp_bold.glob("*.nii.gz"))
+                if not nii_candidates:
+                    for uncompressed in tmp_bold.glob("*.nii"):
+                        gz_path = uncompressed.with_suffix(".nii.gz")
+                        with uncompressed.open("rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                        nii_candidates.append(gz_path)
+
+                if not nii_candidates:
+                    raise IntakeError(f"dcm2niix failed to produce BOLD NIfTI for series {b_series_id}. (Return code: {proc.returncode})")
+
+                json_candidates = list(tmp_bold.glob("*.json"))
+                if not json_candidates:
+                    raise IntakeError(f"dcm2niix failed to produce BOLD JSON sidecar for series {b_series_id}.")
+
+                sidecar_data = json.loads(json_candidates[0].read_text(encoding="utf-8"))
+                tr = sidecar_data.get("RepetitionTime")
+                if tr is None:
+                    raise IntakeError(f"BOLD JSON sidecar for series {b_series_id} is missing required 'RepetitionTime'.")
+                try:
+                    tr_val = float(tr)
+                    if not (0.5 <= tr_val <= 5.0):
+                        raise IntakeError(f"RepetitionTime {tr_val}s is outside valid range [0.5, 5.0]s.")
+                except (ValueError, TypeError) as exc:
+                    raise IntakeError(f"Invalid RepetitionTime in BOLD JSON: {tr}") from exc
+
+                if not sidecar_data.get("TaskName"):
+                    sidecar_data["TaskName"] = task_name
+
+                # Do NOT fabricate missing SliceTiming or PhaseEncodingDirection
+
+                target_bold = func_dir / f"{prefix_bold}.nii.gz"
+                target_json = func_dir / f"{prefix_bold}.json"
+
+                shutil.copy2(nii_candidates[0], target_bold)
+                os.chmod(target_bold, 0o600)
+
+                _atomic_json(target_json, sidecar_data)
+                os.chmod(target_json, 0o600)
+
+                converted_files.append({"type": "BOLD_NIFTI", "path": str(target_bold.relative_to(self.bids_dir))})
+                converted_files.append({"type": "BOLD_JSON", "path": str(target_json.relative_to(self.bids_dir))})
                 try:
                     proc = subprocess.run(cmd_bold, capture_output=True, text=True, timeout=120, check=False)
                 except subprocess.TimeoutExpired as exc:

@@ -450,3 +450,142 @@ class TestDicomBidsIngestion(unittest.TestCase):
         self.assertFalse(result["validation"]["processing_enabled"])
         self.assertFalse(result["validation"]["real_data_authorized"])
 
+    # 19. Dual raw/ and bids/ ZIP detection (Regression Test)
+    def test_19_dual_raw_and_bids_zip_detection(self):
+        created = self.service.create_session("scan")
+        session_id = created["session_id"]
+        session_dir = self.service.staged_sessions_dir / session_id
+
+        # Build mock ZIP containing both raw/sub-01/ and bids/sub-01/
+        zip_buffer = io.BytesIO()
+        valid_dicom_content = b"\x00" * 128 + b"DICM" + b"TEST_DICOM_DATA" * 8
+        mock_series_specs = [
+            ("raw/sub-01/0002_MR000004.dcm", 2, "413754352", "T1w_MPRAGE_1mm", 192),
+            ("raw/sub-01/0005_MR000580.dcm", 5, "3837671540", "ep2d_bold_3mm", 240),
+            ("raw/sub-01/0004_MR000388.dcm", 4, "2337236158", "T2w_TSE_1mm_iPAT_3D", 192),
+            ("raw/sub-01/0006_MR000820.dcm", 6, "3019797074", "ep2d_diff_2mm", 72),
+            ("raw/sub-01/0007_MR000892.dcm", 7, "3190052478", "ep2d_diff_2mm_ADC", 72),
+            ("raw/sub-01/0001_MR000001.dcm", 1, "3676135602", "localizer", 1),
+            ("raw/sub-01/0001_MR000002.dcm", 1, "3676135602", "localizer", 1),
+            ("raw/sub-01/0001_MR000003.dcm", 1, "3676135602", "localizer", 1),
+            ("raw/sub-01/0003_MR000196.dcm", 3, "3999717435", "T2w_TSE_1mm", 192),
+            ("raw/sub-01/0008_MR000964.dcm", 8, "4054646043", "ep2d_diff_2mm_FA", 72),
+        ]
+
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            # 1. Add raw DICOM files
+            for arc_path, _, _, _, _ in mock_series_specs:
+                zf.writestr(arc_path, valid_dicom_content)
+
+            # 2. Add reference BIDS files
+            dummy_img = nib.Nifti1Image(np.zeros((10, 10, 10, 60), dtype=np.float32), np.eye(4))
+            nii_bytes = io.BytesIO()
+            with gzip.GzipFile(fileobj=nii_bytes, mode="wb") as gz:
+                gz.write(dummy_img.to_bytes())
+            zf.writestr("bids/sub-01/func/sub-01_task-rest_bold.nii.gz", nii_bytes.getvalue())
+            zf.writestr("bids/sub-01/func/sub-01_task-rest_bold.json", json.dumps({"RepetitionTime": 2.0, "TaskName": "rest"}))
+
+            dummy_t1 = nib.Nifti1Image(np.zeros((20, 20, 20), dtype=np.float32), np.eye(4))
+            t1_bytes = io.BytesIO()
+            with gzip.GzipFile(fileobj=t1_bytes, mode="wb") as gz:
+                gz.write(dummy_t1.to_bytes())
+            zf.writestr("bids/sub-01/anat/sub-01_T1w.nii.gz", t1_bytes.getvalue())
+            zf.writestr("bids/sub-01/anat/sub-01_T1w.json", json.dumps({"EchoTime": 0.002}))
+            zf.writestr("bids/dataset_description.json", json.dumps({"BIDSVersion": "1.8.0", "Name": "Ref"}))
+            zf.writestr("bids/CHANGES", "Changelog text")
+
+        zip_bytes = zip_buffer.getvalue()
+        self.service.upload_file(session_id, "bids-base-DICOM.zip", io.BytesIO(zip_bytes), len(zip_bytes))
+
+        # Check validation: raw/ must be detected, reference NIfTIs must not be counted as DICOM
+        val = self.service.validate_scan_session(session_id)
+        self.assertEqual(val["validation"]["status"], "DICOM_SERIES_STAGED")
+        self.assertEqual(val["validation"]["dicom_file_count"], len(mock_series_specs))
+        self.assertEqual(val["validation"]["dicom_directory"], "data/raw/sub-01")
+        self.assertFalse(val["validation"]["real_data_authorized"])
+        self.assertFalse(val["validation"]["processing_enabled"])
+
+        # Check inspection
+        mock_series_json = [
+            {"SeriesNumber": s_num, "CRC": crc, "SeriesDescription": desc, "ProtocolName": desc, "Modality": "MR", "Files": files, "Rows": 256, "Columns": 256}
+            for _, s_num, crc, desc, files in mock_series_specs
+        ]
+
+        dcm2niix_input_paths = []
+        def fake_inspect_run(args, **kwargs):
+            if "-v" in args:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="Chris Rorden's dcm2niiX version v1.0.20261029\n", stderr="")
+            # Record the directory passed to dcm2niix
+            target_input = args[-1]
+            dcm2niix_input_paths.append(target_input)
+            if "-n" in args and "-2" in args:
+                out_dir = Path(args[args.index("-o") + 1])
+                (out_dir / "dcm2niix_series.json").write_text(json.dumps(mock_series_json), encoding="utf-8")
+            if "-b" in args and "o" in args:
+                out_dir = Path(args[args.index("-o") + 1])
+                (out_dir / "series_5.json").write_text(json.dumps({"SeriesNumber": 5, "RepetitionTime": 2.0, "EchoTime": 0.03}), encoding="utf-8")
+                (out_dir / "series_2.json").write_text(json.dumps({"SeriesNumber": 2, "RepetitionTime": 2.3, "EchoTime": 0.002}), encoding="utf-8")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with mock.patch("src.intake.service.shutil.which", return_value="/opt/homebrew/bin/dcm2niix"):
+            with mock.patch("src.intake.service.subprocess.run", side_effect=fake_inspect_run):
+                insp = self.service.inspect_dicom_series(session_id)
+
+        # DICOM inspection must only target raw/sub-01, never bids/
+        for p in dcm2niix_input_paths:
+            self.assertTrue(p.endswith("raw/sub-01"))
+            self.assertNotIn("bids", p)
+
+        # 10 series detected
+        self.assertEqual(insp["series_count"], 10)
+        self.assertEqual(insp["dicom_file_count"], 10)
+
+        # Verify T1w MPRAGE (192 files, CRC 413754352, Series #2)
+        t1w = next(s for s in insp["series"] if s["series_crc"] == "413754352")
+        self.assertEqual(t1w["series_number"], 2)
+        self.assertEqual(t1w["image_count"], 192)
+        self.assertEqual(t1w["candidate_scan_type"], "T1w")
+
+        # Verify BOLD (240 files, CRC 3837671540, Series #5)
+        bold = next(s for s in insp["series"] if s["series_crc"] == "3837671540")
+        self.assertEqual(bold["series_number"], 5)
+        self.assertEqual(bold["image_count"], 240)
+        self.assertEqual(bold["candidate_scan_type"], "BOLD")
+
+        # Test conversion: verify raw files unchanged and reference NIfTIs not confused
+        raw_files = list((session_dir / "data" / "raw" / "sub-01").glob("*.dcm"))
+        raw_hashes_before = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in raw_files}
+
+        def fake_convert_run(args, **kwargs):
+            out_dir = Path(args[args.index("-o") + 1])
+            prefix = args[args.index("-f") + 1]
+            if "T1w" in prefix:
+                self._create_synthetic_nifti_gz(out_dir / f"{prefix}.nii.gz", (20, 20, 20))
+                (out_dir / f"{prefix}.json").write_text(json.dumps({"EchoTime": 0.002}), encoding="utf-8")
+            elif "bold" in prefix:
+                self._create_synthetic_nifti_gz(out_dir / f"{prefix}.nii.gz", (10, 10, 10, 60))
+                (out_dir / f"{prefix}.json").write_text(json.dumps({"RepetitionTime": 2.0, "TaskName": "rest"}), encoding="utf-8")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        with mock.patch("src.intake.service.shutil.which", return_value="/opt/homebrew/bin/dcm2niix"):
+            with mock.patch("src.intake.service.subprocess.run", side_effect=fake_convert_run):
+                conv = self.service.convert_dicom_to_bids(session_id, {
+                    "subject_id": "sub-dualtest",
+                    "t1w_series": "413754352",
+                    "bold_series": "3837671540",
+                    "confirm_ambiguous": True,
+                })
+
+        self.assertEqual(conv["status"], "CONVERSION_SUCCESSFUL")
+        self.assertFalse(conv["real_data_authorized"])
+        self.assertFalse(conv["processing_enabled"])
+
+        # Verify original DICOM files remain unchanged
+        for f in raw_files:
+            self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), raw_hashes_before[f.name])
+
+        # Verify reference BIDS files remain preserved
+        ref_bold = session_dir / "data" / "bids" / "sub-01" / "func" / "sub-01_task-rest_bold.nii.gz"
+        self.assertTrue(ref_bold.is_file())
+
+

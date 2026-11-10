@@ -112,6 +112,11 @@
             <small>Reports are stored separately and are never treated as BOLD input or model features.</small>
           </article>
         </div>
+        <div class="existing-sessions-bar" id="existingSessionsBar">
+          <label for="existingSessionSelect"><strong>Or inspect staged session:</strong></label>
+          <select id="existingSessionSelect"><option value="">Select a staged session…</option></select>
+          <button class="secondary-button" id="resumeSessionButton" type="button">Inspect / Open workbench</button>
+        </div>
         <div class="dicom-workbench hidden" id="dicomWorkbench">
           <div class="dicom-workbench-head">
             <div>
@@ -126,6 +131,7 @@
               <thead>
                 <tr>
                   <th>Series #</th>
+                  <th>dcm2niix CRC</th>
                   <th>Description / Protocol</th>
                   <th>Image Count</th>
                   <th>Dimensions</th>

@@ -362,17 +362,20 @@ function renderDicomInspection(sessionId, data) {
 
     const dimsText = s.dimensions && s.dimensions.length ? s.dimensions.join(" × ") : "—";
     const trText = s.repetition_time != null ? `${s.repetition_time} s` : "—";
+    const crcVal = s.series_crc || s.series_id || "—";
+    const sNumVal = s.series_number != null ? s.series_number : "—";
 
     tr.innerHTML = `
-      <td><strong>${s.series_number || s.series_id}</strong></td>
-      <td><div><strong>${s.series_description || "Series"}</strong></div><small style="color:#788ea8">${s.protocol_name || ""}</small></td>
+      <td><strong>${sNumVal}</strong></td>
+      <td><code class="crc-tag">${escapeHtml(String(crcVal))}</code></td>
+      <td><div><strong>${escapeHtml(s.series_description || "Series")}</strong></div><small style="color:#788ea8">${escapeHtml(s.protocol_name || "")}</small></td>
       <td>${s.image_count || 1}</td>
-      <td>${dimsText}</td>
-      <td>${s.modality || "MR"}</td>
-      <td>${trText}</td>
-      <td><span class="badge ${badgeClass}">${s.candidate_scan_type}</span></td>
-      <td style="text-align:center"><input type="radio" name="dicomT1wRadio" value="${s.series_id}" ${s.candidate_scan_type === "T1w" && !s.classification_ambiguous ? "checked" : ""}></td>
-      <td style="text-align:center"><input type="checkbox" name="dicomBoldCheckbox" value="${s.series_id}" ${s.candidate_scan_type === "BOLD" ? "checked" : ""}></td>
+      <td>${escapeHtml(dimsText)}</td>
+      <td>${escapeHtml(s.modality || "MR")}</td>
+      <td>${escapeHtml(trText)}</td>
+      <td><span class="badge ${badgeClass}">${escapeHtml(s.candidate_scan_type)}</span></td>
+      <td style="text-align:center"><input type="radio" name="dicomT1wRadio" value="${escapeHtml(String(crcVal))}" ${s.candidate_scan_type === "T1w" && !s.classification_ambiguous ? "checked" : ""}></td>
+      <td style="text-align:center"><input type="checkbox" name="dicomBoldCheckbox" value="${escapeHtml(String(crcVal))}" ${s.candidate_scan_type === "BOLD" ? "checked" : ""}></td>
     `;
     tbody.appendChild(tr);
   });
@@ -515,6 +518,7 @@ async function uploadIntake(kind, files, button) {
 
     progress.textContent = `Intake complete · session ${sessionId}`;
     showToast(kind === "scan" ? "MRI files uploaded and validation completed." : "Report upload and extraction completed.");
+    await refreshStagedSessions();
   } catch (error) {
     progress.textContent = sessionId
       ? `Upload stopped. Intake session ${sessionId} was retained for review. ${error.message}`
@@ -559,6 +563,34 @@ async function startRun(event) {
   }
 }
 
+async function refreshStagedSessions() {
+  try {
+    const data = await api("/api/intake/sessions");
+    const select = $("existingSessionSelect");
+    if (!select) return;
+    const currentVal = select.value;
+    select.replaceChildren();
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = "Select a staged session…";
+    select.appendChild(defaultOpt);
+
+    const scanSessions = (data.sessions || []).filter((s) => s.kind === "scan");
+    scanSessions.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s.session_id;
+      const createdStr = s.created_utc ? s.created_utc.slice(0, 16).replace("T", " ") : "";
+      opt.textContent = `${s.session_id} (${s.status}, ${createdStr})`;
+      select.appendChild(opt);
+    });
+    if (currentVal && scanSessions.some((s) => s.session_id === currentVal)) {
+      select.value = currentVal;
+    }
+  } catch (err) {
+    // Non-blocking
+  }
+}
+
 async function init() {
   try {
     state.health = await api("/api/health");
@@ -573,6 +605,7 @@ async function init() {
       $("runButton").disabled = true;
     }
     await refreshRuns();
+    await refreshStagedSessions();
     state.refreshTimer = setInterval(refreshRuns, 3000);
   } catch (error) {
     $("serverStatus").textContent = "Offline";
@@ -581,6 +614,11 @@ async function init() {
 }
 
 $("runForm").addEventListener("submit", startRun);
+$("resumeSessionButton")?.addEventListener("click", () => {
+  const sel = $("existingSessionSelect")?.value;
+  if (!sel) return showToast("Select a staged session first.");
+  inspectDicom(sel);
+});
 $("uploadZipButton").addEventListener("click", () => {
   const files = $("sessionZipInput").files;
   if (files.length !== 1) return showToast("Choose one complete MRI session ZIP.");
