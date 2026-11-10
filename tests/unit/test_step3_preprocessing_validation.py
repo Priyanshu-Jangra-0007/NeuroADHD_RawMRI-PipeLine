@@ -428,7 +428,8 @@ def test_21_deterministic_feature_ordering():
 # =========================================================================
 # Scenario 22: Synthetic-only execution enforcement
 # =========================================================================
-def test_22_synthetic_only_execution_enforcement(synthetic_mini_dataset):
+def test_22_synthetic_only_execution_enforcement(synthetic_mini_dataset, monkeypatch):
+    monkeypatch.setenv("NEUROADHD_HMAC_KEY", "test-key-32-bytes-minimum-security")
     # check_safety_guards should pass for synthetic inputs with valid manifest
     files_dict = {
         "bold_nii": {
