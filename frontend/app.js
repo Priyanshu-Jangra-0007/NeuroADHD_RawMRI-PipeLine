@@ -211,6 +211,7 @@ function renderModel(prediction) {
       <div>ADHD probability<strong>${(Number(prediction.adhd_probability) * 100).toFixed(1)}%</strong></div>
       <div>Control probability<strong>${(Number(prediction.control_probability) * 100).toFixed(1)}%</strong></div>
     </div>
+    <div class="model-synthetic-notice">Computed from synthetic phantom data. This is not a prediction about any real person.</div>
     <small>${escapeHtml(prediction.evaluation_mode || "SYNTHETIC_DEMONSTRATION_ONLY")}</small>
     <p>${escapeHtml(prediction.diagnostic_disclaimer || "Not approved or validated for clinical diagnostic use.")}</p>`;
 }

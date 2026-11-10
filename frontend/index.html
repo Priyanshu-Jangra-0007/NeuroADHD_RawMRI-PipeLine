@@ -140,6 +140,7 @@
               </label>
               <label>Atlas mode
                 <select id="atlasMode"><option value="synthetic_phantom" selected>Synthetic phantom atlas</option><option value="canonical">Canonical CC200 atlas</option></select>
+                <small class="field-hint" id="atlasModeHint">Canonical CC200 can take many minutes per subject on CPU. It changes only the reference atlas; input remains a synthetic phantom.</small>
               </label>
             </div>
             <div class="run-note"><span>ⓘ</span><span>Subjects are processed sequentially to limit memory use. Each run is checkpointed and its output hashes are verified.</span></div>
