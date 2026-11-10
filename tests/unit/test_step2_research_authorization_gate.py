@@ -133,6 +133,8 @@ class TestStep2ResearchAuthorizationGate(unittest.TestCase):
     def test_03_modified_record_invalidates_signature(self):
         """Mutating any canonical field in the record must invalidate the HMAC signature."""
         fields_to_tamper = [
+            ("authorization_id", "AUTH-DS-FORGED-001"),
+            ("authorization_status", "REVOKED"),
             ("approved_purpose", "Altered clinical purpose without approval"),
             ("dataset_id", "sub-02"),
             ("expiry_date", "2028-12-31"),
@@ -157,6 +159,48 @@ class TestStep2ResearchAuthorizationGate(unittest.TestCase):
                 "INVALID_SIGNATURE",
                 f"Tampering field '{field}' must produce INVALID_SIGNATURE",
             )
+
+    def test_03a_tampered_authorization_id_invalidates_signature(self):
+        """Isolated test: Mutating authorization_id must invalidate the cryptographic HMAC signature."""
+        tampered = copy.deepcopy(self.valid_dataset_record)
+        tampered["authorization_id"] = "AUTH-DS-TAMPERED-999"
+
+        # 1. Direct signature verification check
+        self.assertFalse(
+            self.gate.verify_authorization_signature(tampered, key=self.test_hmac_key),
+            "Tampered authorization_id must fail verify_authorization_signature()",
+        )
+
+        # 2. Comprehensive dataset authorization check
+        res = self.gate.verify_dataset_authorization(
+            tampered,
+            key=self.test_hmac_key,
+            current_date=datetime.date(2026, 6, 1),
+        )
+        self.assertFalse(res["is_valid"])
+        self.assertEqual(res["signature_status"], "INVALID_SIGNATURE")
+        self.assertTrue(any("signature mismatch" in iss.lower() for iss in res["issues"]))
+
+    def test_03b_tampered_authorization_status_invalidates_signature(self):
+        """Isolated test: Mutating authorization_status must invalidate the cryptographic HMAC signature."""
+        tampered = copy.deepcopy(self.valid_dataset_record)
+        tampered["authorization_status"] = "REVOKED"
+
+        # 1. Direct signature verification check
+        self.assertFalse(
+            self.gate.verify_authorization_signature(tampered, key=self.test_hmac_key),
+            "Tampered authorization_status must fail verify_authorization_signature()",
+        )
+
+        # 2. Comprehensive dataset authorization check
+        res = self.gate.verify_dataset_authorization(
+            tampered,
+            key=self.test_hmac_key,
+            current_date=datetime.date(2026, 6, 1),
+        )
+        self.assertFalse(res["is_valid"])
+        self.assertEqual(res["signature_status"], "INVALID_SIGNATURE")
+        self.assertTrue(any("signature mismatch" in iss.lower() for iss in res["issues"]))
 
     # 4. Expired authorization
     def test_04_expired_authorization(self):
