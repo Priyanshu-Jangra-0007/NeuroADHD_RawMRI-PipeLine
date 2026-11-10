@@ -88,3 +88,4 @@ logs/execution_traces/
 # Sensitive test fixtures
 tests/fixtures/*.nii*
 tests/fixtures/temp/
+NeuroADHD_4K_Cinematic_Walkthrough.mp4
