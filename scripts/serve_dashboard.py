@@ -22,6 +22,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from src.intake.service import IntakeError, IntakeService
 
+_REAL_POPEN = subprocess.Popen
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -38,11 +40,12 @@ class DashboardApplication:
 
         self.service = DashboardDataService(OUTPUT_ROOT)
         self.intake = IntakeService(INTAKE_ROOT)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._active: Dict[str, Dict[str, Any]] = {}
         self._ephemeral_integrity_key = os.environ.get("NEUROADHD_HMAC_KEY") or os.environ.get("NEUROADHD_INTEGRITY_KEY")
         if not self._ephemeral_integrity_key:
             self._ephemeral_integrity_key = secrets.token_urlsafe(32)
+        self._recover_stale_cohorts()
 
     def health(self) -> Dict[str, Any]:
         pending = None
@@ -67,9 +70,173 @@ class DashboardApplication:
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
 
+    def _get_pid_start_marker(self, pid: int) -> Optional[str]:
+        if not isinstance(pid, int) or pid <= 0:
+            return None
+        # Linux /proc/<pid>/stat field 22 (starttime)
+        proc_stat = Path(f"/proc/{pid}/stat")
+        if proc_stat.is_file():
+            try:
+                content = proc_stat.read_text(encoding="utf-8")
+                idx = content.rfind(")")
+                if idx != -1:
+                    fields = content[idx + 1 :].split()
+                    if len(fields) >= 20:
+                        return fields[19]
+            except Exception:
+                pass
+        # macOS / fallback: ps -o lstart= -p <pid>
+        try:
+            proc = _REAL_POPEN(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            out, _ = proc.communicate(timeout=5)
+            if proc.returncode == 0:
+                stripped = out.strip()
+                if stripped:
+                    return stripped
+        except Exception:
+            pass
+        return None
+
+    def _is_pid_alive(self, pid: int, expected_start_marker: Optional[str] = None) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # PermissionError indicates the process exists (owned by another user or sandboxed)
+            pass
+        except OSError:
+            return False
+
+        if expected_start_marker is not None:
+            current_marker = self._get_pid_start_marker(pid)
+            if current_marker is not None and current_marker != expected_start_marker:
+                return False
+        return True
+
+    def _terminate_stale_cohort(self, cohort_dir: Path, manifest: Dict[str, Any], reason: str) -> None:
+        manifest_path = cohort_dir / "cohort_manifest.json"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        manifest["status"] = "TERMINATED"
+        manifest["terminated_reason"] = reason
+        manifest["terminated_utc"] = now_iso
+        manifest["updated_utc"] = now_iso
+
+        subjects = manifest.get("subjects", [])
+        for subj in subjects:
+            if subj.get("status") in ("RUNNING", "PENDING", None):
+                subj["status"] = "TERMINATED"
+                subj["error"] = reason
+
+        succeeded = sum(1 for s in subjects if s.get("status") == "SUCCESS")
+        failed = sum(1 for s in subjects if s.get("status") in ("FAILED", "TERMINATED"))
+        manifest["summary"] = {
+            "total_subjects": len(subjects),
+            "succeeded": succeeded,
+            "failed": failed,
+            "pending": 0,
+            "failures": [
+                {"subject_id": s.get("subject_id"), "error": s.get("error", reason)}
+                for s in subjects
+                if s.get("status") in ("FAILED", "TERMINATED")
+            ],
+        }
+
+        temp_path = manifest_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(temp_path, manifest_path)
+
+        status_file = cohort_dir / "dashboard-process.json"
+        proc_data: Dict[str, Any] = {}
+        if status_file.is_file() and not status_file.is_symlink():
+            try:
+                proc_data = json.loads(status_file.read_text(encoding="utf-8"))
+            except Exception:
+                proc_data = {}
+        proc_data["status"] = "TERMINATED"
+        proc_data["exit_code"] = proc_data.get("exit_code", -1)
+        proc_data["terminated_reason"] = reason
+        proc_data["terminated_utc"] = now_iso
+        temp_proc = status_file.with_suffix(".tmp")
+        temp_proc.write_text(json.dumps(proc_data, indent=2), encoding="utf-8")
+        os.replace(temp_proc, status_file)
+
+    def _recover_stale_cohorts(self) -> None:
+        if not OUTPUT_ROOT.is_dir():
+            return
+        for candidate in OUTPUT_ROOT.iterdir():
+            if not candidate.is_dir() or candidate.is_symlink() or not candidate.name.startswith("cohort_"):
+                continue
+            manifest_path = candidate / "cohort_manifest.json"
+            if not manifest_path.is_file() or manifest_path.is_symlink():
+                continue
+            try:
+                with manifest_path.open("r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except Exception:
+                continue
+
+            if manifest.get("status") not in ("RUNNING", "STARTING"):
+                continue
+
+            cohort_id = candidate.name
+            # (a) in self._active -> skip
+            if cohort_id in self._active:
+                continue
+
+            status_file = candidate / "dashboard-process.json"
+
+            # (b) pid file present -> alive: skip, dead: TERMINATE
+            if status_file.is_file() and not status_file.is_symlink():
+                proc_data: Dict[str, Any] = {}
+                try:
+                    with status_file.open("r", encoding="utf-8") as f:
+                        proc_data = json.load(f)
+                except Exception:
+                    proc_data = {}
+                pid = proc_data.get("pid")
+                marker = proc_data.get("pid_start_marker")
+                if self._is_pid_alive(pid, expected_start_marker=marker):
+                    continue
+                self._terminate_stale_cohort(
+                    candidate,
+                    manifest,
+                    reason="Stale RUNNING cohort recovered: runner process is not alive.",
+                )
+                continue
+
+            # (c) no pid file -> apply a REAL grace window using manifest updated_utc (30 s),
+            # skip while inside it, terminate only after.
+            ts_str = manifest.get("updated_utc") or manifest.get("created_utc")
+            if ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - ts).total_seconds()
+                    if age < 30.0:
+                        continue
+                except Exception:
+                    pass
+
+            self._terminate_stale_cohort(
+                candidate,
+                manifest,
+                reason="Stale RUNNING cohort recovered: no process file and grace window expired.",
+            )
+
     def _has_running_cohort(self) -> bool:
+        self._recover_stale_cohorts()
+        with self._lock:
+            if self._active:
+                return True
         for cohort in self.service.list_cohorts():
-            if cohort.get("status") == "RUNNING":
+            if cohort.get("status") in ("RUNNING", "STARTING"):
                 return True
         return False
 
@@ -131,6 +298,7 @@ class DashboardApplication:
                 "started_utc": datetime.now(timezone.utc).isoformat(),
                 "exit_code": None,
                 "pid": None,
+                "pid_start_marker": None,
             }
             self._active[cohort_id] = state
             thread = threading.Thread(
@@ -162,8 +330,23 @@ class DashboardApplication:
                     stderr=subprocess.STDOUT,
                     shell=False,
                 )
+                start_marker = self._get_pid_start_marker(process.pid)
                 state["pid"] = process.pid
+                state["pid_start_marker"] = start_marker
                 state["status"] = "RUNNING"
+
+                # Atomically write dashboard-process.json right after Popen
+                init_data = {
+                    "cohort_id": cohort_id,
+                    "pid": process.pid,
+                    "pid_start_marker": start_marker,
+                    "status": "RUNNING",
+                    "started_utc": state["started_utc"],
+                }
+                temp_init = status_path.with_suffix(".tmp")
+                temp_init.write_text(json.dumps(init_data, indent=2), encoding="utf-8")
+                os.replace(temp_init, status_path)
+
                 exit_code = process.wait()
             state["exit_code"] = int(exit_code)
             state["status"] = "SUCCESS" if exit_code == 0 else "FAILED"

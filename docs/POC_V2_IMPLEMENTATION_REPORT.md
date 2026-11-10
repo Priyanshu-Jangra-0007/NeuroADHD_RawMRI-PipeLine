@@ -1,5 +1,9 @@
 # POC V2 IMPLEMENTATION & SYNTHETIC VALIDATION REPORT
 
+> [!WARNING]
+> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
+> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
+
 **Project**: `NeuroADHD_RawMRI`  
 **Phase**: Phase 2 — Corrected Proof of Concept Implementation (V2)  
 **Status**: COMPLETE (Code Implemented & Synthetically Validated; Raw Processing Paused Awaiting User Review)  

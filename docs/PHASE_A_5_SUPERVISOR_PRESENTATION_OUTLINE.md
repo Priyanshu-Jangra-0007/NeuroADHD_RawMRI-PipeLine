@@ -72,7 +72,7 @@
   - **Canonical CC200 Atlas Hash Reconciliation:**
     - Dimension: Exactly $(63, 75, 61)$ voxels.
     - Resolution: Exactly $3.0\text{ mm}$ isotropic.
-    - Cryptographic SHA-256: `9467afce23ad719fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`.
+    - Cryptographic SHA-256: `9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`.
     - Labels: Exactly 200 contiguous integer regions ($1\text{--}200$).
 - **Visual Recommendation:** Visual comparison of single-step resampling vs cascading multi-step resampling; 3D glass brain rendering of the 200 Craddock clusters.
 - **Speaker Talking Points:**

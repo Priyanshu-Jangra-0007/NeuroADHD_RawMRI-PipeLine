@@ -59,6 +59,12 @@ Without those tools, the report is staged and the dashboard explains which extra
 
 A successful scan intake status is VALIDATED_WAITING_FOR_RESEARCH_AUTHORIZATION. It means the required files passed the checks above; it does not mean the scan has passed image-registration QC or that real-data processing is authorized.
 
+## Atlas modes and execution performance
+
+The dashboard provides two atlas modes for synthetic cohort runs:
+- **Synthetic phantom atlas (`synthetic_phantom`)**: Fast demonstration mode taking ~10–16 seconds per subject.
+- **Canonical CC200 atlas (`canonical`)**: Uses the canonical Craddock CC200 reference atlas (`cc200_roi_atlas.nii.gz`). Mutual-information non-linear and affine registration on CPU is computationally intensive and can take many minutes per subject (e.g. ~5–6 minutes per subject on CPU). Note that selecting the canonical atlas changes only the reference atlas; the input data is still a synthetic phantom. Real-participant preprocessing remains strictly locked.
+
 ## Storage and limits
 
 - Uploads are saved under outputs/intake_sessions/, which is excluded from version control.

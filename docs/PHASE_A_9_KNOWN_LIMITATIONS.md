@@ -17,7 +17,7 @@
 
 While the NeuroADHD RawMRI PoC V2 pipeline has achieved 100% synthetic-only verification, software stability, and memory isolation, clear scientific boundaries must be established.
 
-This document formally records the **seven core scientific and methodological limitations** inherent to the current implementation and its synthetic validation framework.
+This document formally records the **eight core scientific and methodological limitations** inherent to the current implementation and its synthetic validation framework.
 
 ---
 
@@ -52,6 +52,11 @@ This document formally records the **seven core scientific and methodological li
 - **Limitation:** Real participant MRI processing remains strictly disabled.
 - **Governance Posture:** All 23 governance items in [`configs/research_authorization_register.json`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/configs/research_authorization_register.json) are currently `PENDING`.
 - **Boundary:** No real MRI data (prospective or retrospective) will be processed, and the $N=6$ feasibility pilot will not be executed until official Institutional Ethics Committee clearance and Data Use Agreements are executed and verified.
+
+### 2.8 Unproven Historical Feature Concordance on Real Participant Scans
+- **Limitation:** The V2 preprocessing pipeline has been verified against synthetic phantoms and unit tests, but has **never been compared against historical C-PAC CC200 features on a real participant scan**.
+- **Provenance Status:** Provenance records explicitly track `historical_concordance_status: NOT_ASSESSED`.
+- **Scientific Implication:** Feature compatibility between the newly engineered pipeline outputs (`roi_CC200.csv` and resulting Fisher-$z$ connectivity vectors) and the historical training features used to fit the downstream frozen model remains empirically unproven. Investigators must not assume that the frozen model will produce calibrated probability scores without a formal, authorized concordance audit on real data. Execution stays strictly synthetic until governance authorization is achieved.
 
 ---
 
