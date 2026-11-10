@@ -328,6 +328,40 @@ class TestDashboardApplication(unittest.TestCase):
         result = restarted_app.start_run({"n_subjects": 1})
         self.assertEqual(result["status"], "STARTING")
 
+    def test_failed_start_marker_lookup_keeps_live_cohort_running(self):
+        cohort_id = "cohort_20261103T120000_666666Z"
+        cohort_dir = self.output_root / cohort_id
+        cohort_dir.mkdir(parents=True)
+        manifest_path = cohort_dir / "cohort_manifest.json"
+        manifest_data = {
+            "cohort_run_id": cohort_id,
+            "manifest_version": "1.0.0",
+            "run_type": "SYNTHETIC_COHORT_ONLY",
+            "status": "RUNNING",
+            "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+            "real_data_authorized": False,
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "updated_utc": datetime.now(timezone.utc).isoformat(),
+            "configuration": {"n_subjects": 1},
+            "subjects": [{"subject_id": "sub-synthetic001", "status": "RUNNING"}],
+            "summary": {"total_subjects": 1, "succeeded": 0, "failed": 0, "pending": 1},
+        }
+        manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+        status_path = cohort_dir / "dashboard-process.json"
+        status_path.write_text(
+            json.dumps({"pid": os.getpid(), "pid_start_marker": "expected_start_marker", "status": "RUNNING"}),
+            encoding="utf-8",
+        )
+
+        # Simulate start marker lookup failure (e.g. ps error / transient failure) returning None
+        with mock.patch.object(serve_dashboard.DashboardApplication, "_get_pid_start_marker", return_value=None):
+            # Process is still alive (os.getpid()), so failed lookup must NOT cause termination
+            self.assertTrue(self.app._is_pid_alive(os.getpid(), expected_start_marker="expected_start_marker"))
+            restarted_app = serve_dashboard.DashboardApplication()
+            self.assertTrue(restarted_app._has_running_cohort())
+            manifest_after = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest_after["status"], "RUNNING")
+
 
 if __name__ == "__main__":
     unittest.main()

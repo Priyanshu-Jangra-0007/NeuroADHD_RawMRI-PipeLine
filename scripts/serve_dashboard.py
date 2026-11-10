@@ -117,7 +117,7 @@ class DashboardApplication:
 
         if expected_start_marker is not None:
             current_marker = self._get_pid_start_marker(pid)
-            if current_marker != expected_start_marker:
+            if current_marker is not None and current_marker != expected_start_marker:
                 return False
         return True
 
