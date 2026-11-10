@@ -99,7 +99,7 @@ Because this is a technical feasibility pilot designed to evaluate computational
 #### Stage 2: Intake Approval & Manifest Checksum Verification
 - Stage raw NIfTI files into a designated, secure intake volume (`/data/intake/`).
 - Generate `manifest.json` containing SHA-256 hashes of all anatomical and functional files.
-- Sign manifest using `NEUROADHD_HMAC_KEY` via `scripts/generate_manifest.py`.
+- Sign manifest using `NEUROADHD_HMAC_KEY` via `scripts/run_poc_v2.py` / `scripts/run_synthetic_cohort.py` (`scripts/generate_manifest.py` is not present in this repository; manifest creation and HMAC signing are built inline).
 
 #### Stage 3: Secure Environment Deployment
 - Spin up the verified Docker container (`neuro_adhd_pipeline:v2`).

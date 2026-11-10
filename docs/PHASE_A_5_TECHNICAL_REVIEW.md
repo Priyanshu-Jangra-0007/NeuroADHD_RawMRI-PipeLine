@@ -208,9 +208,9 @@ The complete system comprises 19 distinct algorithmic stages separated into two 
 - **Failure Conditions:** Singularity of design matrix $(X^T X)$; temporal degrees of freedom exhausted ($N_t \le 34$).
 
 ### Stage 15: Canonical CC200 Atlas Integrity Verification
-- **Input:** Canonical CC200 atlas NIfTI file (`data/atlases/cc200_canonical.nii.gz`).
+- **Input:** Canonical CC200 atlas NIfTI file (`data/atlases/cc200_roi_atlas.nii.gz`; formerly cited as `cc200_canonical.nii.gz`).
 - **Operation:** Performs cryptographic and structural verification before parcellation extraction:
-  - Cryptographic Hash (SHA-256): `9467afce23ad719fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`
+  - Cryptographic Hash (SHA-256): `9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`
   - Matrix Dimensions: Exactly $(63, 75, 61)$
   - Voxel Resolution: Exactly $(3.0, 3.0, 3.0)\text{ mm}$ isotropic
   - Region Count: Exactly 200 contiguous integer labels ($1\text{--}200$)

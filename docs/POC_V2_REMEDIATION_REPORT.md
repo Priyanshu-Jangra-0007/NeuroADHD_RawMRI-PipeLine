@@ -1,5 +1,9 @@
 # PoC V2 Remediation Report
 
+> [!WARNING]
+> **Superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md)**
+> Sections discussing affine matrix-composition order and transformation geometry in this historical document are superseded by [`POC_V2_FINAL_REVIEW_REMEDIATION.md`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/docs/POC_V2_FINAL_REVIEW_REMEDIATION.md), which reflects the canonical implemented codebase in [`src/preprocessing/registration.py`](file:///Users/apple/Documents/Codex/2026-09-29/untitled%20folder/src/preprocessing/registration.py) (`compose_transformations`). This document is preserved for historical audit provenance.
+
 **Date**: 2026-11-01  
 **Project**: NeuroADHD_RawMRI  
 **Phase**: PoC V2 — Code Review Remediation  

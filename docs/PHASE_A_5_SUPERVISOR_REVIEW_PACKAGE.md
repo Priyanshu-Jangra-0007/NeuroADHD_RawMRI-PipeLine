@@ -118,7 +118,7 @@ The pipeline is verified through automated test suites, container memory tests, 
   - Test 3: Fail-closed behavior on unconstrained host environment verified — `PASSED`.
 
 ### Cryptographic Baseline Provenance:
-- **Canonical CC200 Atlas:** `9467afce23ad719fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`
+- **Canonical CC200 Atlas:** `9467afce23ad7197fbbc8c96aadc8c0c2e36d4938445e3c1570a5deac489c650`
 - **Frozen Preprocessing Pipeline (`final_preprocessing_pipeline.joblib`):** `228d3f0180e4855d49fd732327ab1fc4f255beb7bea43dd4fd1db3064aa86249`
 - **Frozen Classifier (`final_model.joblib`):** `d8eb23eb8c6d25ffc12b2bab515a2a7112daeeb0afa8f4e9eaa499dbe5b5f2ef`
 

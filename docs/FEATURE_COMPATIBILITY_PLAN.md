@@ -40,6 +40,11 @@ $$z_{ij} = \operatorname{arctanh}(r_{\text{clipped}})$$
 
 ## 3. Downstream Frozen Pipeline Interface
 
+> [!NOTE]
+> **Audit Note on Subject Counts and Test Suite Metrics (November 2026)**:
+> - **Subject Count Discrepancy**: The imputer medians below were learned on 114 training subjects (from a historical 114 training + 20 test split = 134 subjects), whereas other documents cite 153 subjects for cohort scaling. This subject count is **unreconciled - needs the original split manifest** rather than guessing.
+> - **Current Test Suite**: 267 tests collected: 260 passed, 7 skipped (5 Docker tests, 2 requiring `NEUROADHD_MODEL_DIR`), with 81% statement coverage across `src/` as of November 2026.
+
 When a new 19,900-element feature vector is produced, it is transformed through `final_preprocessing_pipeline.joblib`:
 
 ```
