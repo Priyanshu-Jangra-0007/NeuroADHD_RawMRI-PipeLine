@@ -845,8 +845,8 @@ This section assumes you have just cloned or opened the project folder for the v
 source .venv/bin/activate
 pip install -r requirements-lock.txt</code></pre>
 <p>
-<strong>What it does:</strong> Installs the exact locked versions of the 35 required scientific libraries so that there are zero version discrepancies.<br>
-<strong>Successful execution looks like:</strong> <code>Successfully installed dipy-1.9.0 nibabel-5.2.1 nilearn-0.10.4 scikit-learn-1.4.1 ...</code>
+<strong>What it does:</strong> Installs the exact locked versions of the 53 required scientific libraries (from <code>requirements-lock.txt</code>) so that there are zero version discrepancies.<br>
+<strong>Successful execution looks like:</strong> <code>Successfully installed dipy-1.12.1 nibabel-5.4.2 nilearn-0.14.1 scikit-learn-1.9.1 scipy-1.17.1 numpy-2.4.6 pandas-3.0.6 ...</code>
 </p>
 
 <h4>Command 4: Configure Mandatory Environment Variables</h4>
@@ -1037,33 +1037,33 @@ This section demystifies the exact 13-step technical chain reaction that occurs 
     <strong>Session Initialization Request:</strong> The frontend makes an HTTP <code>POST /api/intake/sessions</code> request with payload <code>{"kind": "scan"}</code>.
   </li>
   <li>
-    <strong>Backend Session Allocation:</strong> <code>src/intake/service.py:create_session()</code> generates a timestamped session ID (e.g., <code>session_20261107T150500_123456Z</code>) and creates directory <code>outputs/intake_sessions/&lt;session_id&gt;/</code>.
+    <strong>Backend Session Allocation:</strong> <code>src/intake/service.py:create_session()</code> generates a secure random session ID in format <code>intake_&lt;32 hex&gt;</code> (e.g., <code>intake_3f2a89c1...</code>) and creates directory <code>outputs/intake_sessions/&lt;session_id&gt;/</code> with subdirectories <code>uploads/</code>, <code>data/</code>, and <code>reports/</code>.
   </li>
   <li>
-    <strong>Streaming File Upload:</strong> The frontend streams raw binary file chunks using <code>POST /api/intake/sessions/&lt;session_id&gt;/files</code> with custom header <code>X-Upload-Filename: session.zip</code>.
+    <strong>Streaming File Upload:</strong> The frontend streams raw binary file chunks (using a 1 MiB chunk size) using <code>POST /api/intake/sessions/&lt;session_id&gt;/files</code> with custom header <code>X-Upload-Filename: session.zip</code>.
   </li>
   <li>
-    <strong>Memory-Safe Disk Streaming:</strong> In <code>scripts/serve_dashboard.py</code>, the server writes incoming bytes directly into <code>outputs/intake_sessions/&lt;session_id&gt;/raw_uploads/session.zip</code> using a 64 KB buffer, preventing server RAM exhaustion.
+    <strong>Memory-Safe Disk Streaming:</strong> In <code>scripts/serve_dashboard.py</code>, the server writes incoming bytes directly into <code>outputs/intake_sessions/&lt;session_id&gt;/uploads/session.zip</code> using a bounded stream buffer, preventing server RAM exhaustion.
   </li>
   <li>
-    <strong>Cryptographic Hash Verification:</strong> As the file is written, <code>_sha256()</code> computes the cryptographic SHA-256 checksum and saves it into the session manifest.
+    <strong>Cryptographic Hash Verification:</strong> As the file is written, the server computes the cryptographic SHA-256 checksum and saves it into the session record.
   </li>
   <li>
-    <strong>Safe Archive Extraction:</strong> <code>_extract_zip()</code> inspects the archive for ZipSlip directory traversal attacks (ensuring no file extracts outside the target directory) and unpacks the contents into <code>outputs/intake_sessions/&lt;session_id&gt;/bids_extracted/</code>.
+    <strong>Safe Archive Extraction:</strong> At upload time, <code>_extract_archive()</code> inspects the archive for ZipSlip directory traversal attacks (ensuring no file extracts outside the target directory) and unpacks scan contents safely into <code>outputs/intake_sessions/&lt;session_id&gt;/data/</code>.
   </li>
   <li>
-    <strong>Neuroimaging Header Inspection:</strong> <code>_inspect_nifti()</code> invokes <code>nibabel.load()</code> to parse the NIfTI headers:
+    <strong>Neuroimaging Header Inspection &amp; Separate Validation:</strong> The frontend calls <code>POST /api/intake/sessions/&lt;session_id&gt;/validate</code>, which invokes <code>nibabel.load()</code> to parse the NIfTI headers:
     <ul>
       <li>Verifies the functional scan has 4 dimensions $(X, Y, Z, T)$ with $T \ge 50$ volumes.</li>
-      <li>Verifies the structural scan has 3 dimensions $(X, Y, Z)$ with $1\text{ mm}$ isotropic geometry.</li>
+      <li>Verifies the structural scan has 3 dimensions $(X, Y, Z)$ (3D anatomical check).</li>
       <li>Parses the companion JSON sidecar to confirm <code>RepetitionTime</code> is within $0.5\text{s} \le T_R \le 5.0\text{s}$.</li>
     </ul>
   </li>
   <li>
-    <strong>Session Manifest Persistence:</strong> An atomic JSON document (<code>session_manifest.json</code>) is written via a temporary file and atomic rename, recording all extracted file paths, dimensions, and checksums.
+    <strong>Session Manifest Persistence:</strong> An atomic JSON document (<code>intake_manifest.json</code>) is written via a temporary file and atomic rename, recording all extracted file paths, dimensions, and checksums.
   </li>
   <li>
-    <strong>Safety Gate Enforcement:</strong> The backend checks <code>src/security/authorization.py:is_authorized()</code>. Because clinical research credentials are not yet configured on this demo workspace, the backend tags the session as <code>INTAKE_VALIDATED_AWAITING_RESEARCH_AUTHORIZATION</code> and locks real-scan execution.
+    <strong>Safety Gate Enforcement:</strong> The backend checks <code>src/validation/authorization_gate.py:ResearchAuthorizationGate</code>. Because clinical research credentials are not yet verified, the backend tags the session as <code>VALIDATED_WAITING_FOR_RESEARCH_AUTHORIZATION</code> and locks real-scan execution. The pipeline itself runs strictly on generated synthetic phantoms.
   </li>
   <li>
     <strong>Backend JSON Response:</strong> The server returns HTTP <code>200 OK</code> with a JSON summary of the validated scans, volume count, and storage path.
@@ -1079,7 +1079,7 @@ This section demystifies the exact 13-step technical chain reaction that occurs 
   <div class="q-row"><div class="q-label">2. WHERE do I do it?</div><div class="q-ans">On the web page; progress is indicated by the upload button state.</div></div>
   <div class="q-row"><div class="q-label">3. WHAT happens after?</div><div class="q-ans">The upload is staged, checked for ZipSlip, validated via NiBabel, and recorded in a manifest.</div></div>
   <div class="q-row"><div class="q-label">4. WHAT OUTPUT will I get?</div><div class="q-ans">A green validation banner showing scan dimensions and $T_R$ parameters.</div></div>
-  <div class="q-row"><div class="q-label">5. WHERE is it stored?</div><div class="q-ans">In <code>outputs/intake_sessions/&lt;session_id&gt;/session_manifest.json</code>.</div></div>
+  <div class="q-row"><div class="q-label">5. WHERE is it stored?</div><div class="q-ans">In <code>outputs/intake_sessions/&lt;session_id&gt;/intake_manifest.json</code>.</div></div>
 </div>
 </section>
 
@@ -1102,10 +1102,10 @@ When a processing run is triggered (either automatically on synthetic data or ma
 <h3>Stage 2: 4D BOLD Realignment &amp; Motion Parameter Estimation</h3>
 <ul>
   <li><strong>Input:</strong> Raw 4D BOLD volume series $(30 \times 30 \times 20 \times 60)$.</li>
-  <li><strong>Processing:</strong> Uses DIPY <code>AffineRegistration</code> (Rigid-body, 6 Degrees of Freedom: $\Delta x, \Delta y, \Delta z, \text{rot}_x, \text{rot}_y, \text{rot}_z$) aligning every volume $t=1 \dots 59$ to reference Volume 0. Computes Framewise Displacement (FD):
-  $$FD_t = |\Delta d_{x,t}| + |\Delta d_{y,t}| + |\Delta d_{z,t}| + |\Delta \alpha_t| + |\Delta \beta_t| + |\Delta \gamma_t|$$
+  <li><strong>Processing:</strong> Uses <code>src/preprocessing/motion.py:realign_4d_bold()</code> (DIPY 6-DOF rigid alignment: translations $\Delta x, \Delta y, \Delta z$ and rotations $\alpha, \beta, \gamma$ aligning volumes $t=1 \dots 59$ to reference Volume 0). Computes Framewise Displacement ($FD$) using the Power et al. (2012) formulation, where angular rotations in radians are converted to millimeter arc displacement across an assumed cerebral cortex radius $r = 50\text{ mm}$ before summing:
+  $$FD_t = |\Delta d_{x,t}| + |\Delta d_{y,t}| + |\Delta d_{z,t}| + 50 \cdot (|\Delta \alpha_t| + |\Delta \beta_t| + |\Delta \gamma_t|)$$
   </li>
-  <li><strong>Output:</strong> <code>motion_parameters.tsv</code> (6 cols) and <code>framewise_displacement.tsv</code> (1 col). Capped at $0.50\text{ mm}$ scrubbing threshold.</li>
+  <li><strong>Output:</strong> <code>motion_parameters.tsv</code> (6 cols) and <code>framewise_displacement.tsv</code> (1 col). Frames with $FD > 0.50\text{ mm}$ are counted and logged as motion outliers in confound metrics (retained in time series; no volume scrubbing/censoring is performed to preserve temporal continuity).</li>
   <li><strong>Next Stage &rarr;:</strong> Realigned 4D BOLD passed to Stage 3.</li>
 </ul>
 
@@ -1201,7 +1201,7 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Input:</strong> 6 rigid realignment parameters from Stage 2 $(R_t)$.</li>
   <li><strong>Processing:</strong> Expands the 6 motion parameters into the complete Friston-24 model:
   $$[R_t, \quad R_{t-1}, \quad R_t^2, \quad R_{t-1}^2]$$
-  (6 current motions + 6 backwards temporal derivatives + 12 quadratic expansions).
+  (6 current realignment parameters $R$, 6 lagged parameters $R(t-1)$, 6 squared current parameters $R^2$, and 6 squared lagged parameters $R(t-1)^2$, representing lagged motion states without derivative approximations).
   </li>
   <li><strong>Output:</strong> Matrix of 24 motion regressors $(60 \times 24)$.</li>
   <li><strong>Next Stage &rarr;:</strong> Motion regressors passed to Stage 14.</li>
@@ -1210,7 +1210,7 @@ When a processing run is triggered (either automatically on synthetic data or ma
 <h3>Stage 14: 31-Column Nuisance Confound Matrix Assembly</h3>
 <ul>
   <li><strong>Input:</strong> 24 Friston regressors + 5 aCompCor components + linear trend + quadratic trend.</li>
-  <li><strong>Processing:</strong> Assembles the full $60 \times 31$ design matrix $X$. Performs singular value decomposition (SVD) to audit matrix rank ($31/31$) and condition number. Global Signal Regression (GSR) and mean tissue regression remain explicitly <strong>OFF</strong> to preserve neurobiological correlation structures.</li>
+  <li><strong>Processing:</strong> Assembles the full $60 \times 31$ design matrix $X$ using <code>src/preprocessing/nuisance.py:build_confound_matrix()</code>. Performs singular value decomposition (SVD) to audit matrix rank ($31/31$) and condition number. Global Signal Regression (GSR) and mean tissue regression remain explicitly <strong>OFF</strong> to preserve neurobiological correlation structures.</li>
   <li><strong>Output:</strong> <code>confounds.tsv</code> and <code>confound_report.json</code>.</li>
   <li><strong>Next Stage &rarr;:</strong> Confound matrix passed to Stage 15.</li>
 </ul>
@@ -1218,9 +1218,8 @@ When a processing run is triggered (either automatically on synthetic data or ma
 <h3>Stage 15: Simultaneous Regression &amp; Butterworth Bandpass Filtering</h3>
 <ul>
   <li><strong>Input:</strong> Standard-space 4D BOLD and 31-column confound matrix $X$.</li>
-  <li><strong>Processing:</strong> Applies simultaneous Ordinary Least Squares (OLS) nuisance projection:
+  <li><strong>Processing:</strong> Applies simultaneous Ordinary Least Squares (OLS) nuisance projection and bandpass temporal filtering via <code>nilearn.image.clean_img()</code> (with its default zero-phase Butterworth filter, order 5) retaining resting-state frequencies between <strong>0.01 Hz and 0.10 Hz</strong>:
   $$Y_{\text{clean}} = \left(I - X(X^T X)^{-1}X^T\right) Y$$
-  combined with a 4th-order zero-phase Butterworth bandpass filter retaining resting-state frequencies between <strong>0.01 Hz and 0.10 Hz</strong>.
   </li>
   <li><strong>Output:</strong> Fully cleaned 4D BOLD volume series $(30 \times 30 \times 20 \times 60)$.</li>
   <li><strong>Next Stage &rarr;:</strong> Cleaned functional data passed to Stage 16.</li>
@@ -1229,7 +1228,7 @@ When a processing run is triggered (either automatically on synthetic data or ma
 <h3>Stage 16: CC200 Atlas Parcellation &amp; ROI Timeseries Extraction</h3>
 <ul>
   <li><strong>Input:</strong> Cleaned 4D BOLD series and Craddock CC200 atlas (200 distinct regions).</li>
-  <li><strong>Processing:</strong> For every region $i = 1 \dots 200$ and every volume $t = 1 \dots 60$, computes the spatial mean BOLD signal across all voxels belonging to parcel $i$:
+  <li><strong>Processing:</strong> Uses <code>src/parcellation/extractor.py:extract_cc200_timeseries()</code>. For every region $i = 1 \dots 200$ and every volume $t = 1 \dots 60$, computes the spatial mean BOLD signal across all voxels belonging to parcel $i$:
   $$s_i(t) = \frac{1}{|V_i|} \sum_{v \in V_i} \text{BOLD}(v, t)$$
   </li>
   <li><strong>Output:</strong> <code>roi_CC200.csv</code> (exactly 200 rows $\times$ 60 timepoint columns + 1 node label column).</li>
@@ -1239,10 +1238,22 @@ When a processing run is triggered (either automatically on synthetic data or ma
 <h3>Stage 17: Functional Connectivity &amp; 19,900 Fisher-z Feature Extraction</h3>
 <ul>
   <li><strong>Input:</strong> <code>roi_CC200.csv</code> (200 regional timeseries).</li>
-  <li><strong>Processing:</strong> Calculates the pairwise Pearson correlation $r_{i,j}$ between all pairs of regions $(200 \times 200\text{ matrix})$. Applies Fisher's $z$-transformation:
+  <li><strong>Processing:</strong> Uses <code>src/features/connectivity.py:compute_connectivity_vector()</code>. Calculates the pairwise Pearson correlation $r_{i,j}$ between all pairs of regions $(200 \times 200\text{ matrix})$. Applies Fisher's $z$-transformation:
   $$z_{i,j} = \operatorname{arctanh}(r_{i,j}) = \frac{1}{2} \ln\left(\frac{1 + r_{i,j}}{1 - r_{i,j}}\right)$$
   Extracts the strictly upper-triangular unique elements (excluding diagonal self-correlations $r=1.0$ and mirrored duplicates):
   $$\text{Total Features} = \frac{200 \times 199}{2} = 19,900$$
+  </li>
+  <li><strong>Output:</strong> <code>features_19900_fisher_z.csv</code> (19,900 columns).</li>
+  <li><strong>Next Stage &rarr;:</strong> Feature vector passed to Stage 18.</li>
+</ul>
+
+<h3>Stage 18: Frozen Model Inference</h3>
+<ul>
+  <li><strong>Input:</strong> 19,900 Fisher-$z$ connectivity feature vector.</li>
+  <li><strong>Processing:</strong> Verified via <code>src/integration/model_verifier.py</code>. The 19,900 features pass through the frozen preprocessor (imputation &rarr; variance filter &rarr; standard scaler &rarr; ANOVA $F$-test Top 100 features) and are evaluated by the frozen Random Forest classifier (50 trees, max depth 3, class_weight='balanced', trained with balanced bootstrap sampling).</li>
+  <li><strong>Output:</strong> <code>model_prediction.json</code> containing ADHD risk probability, control probability, and non-clinical research disclaimer.</li>
+  <li><strong>Next Stage &rarr;:</strong> Results recorded in provenance audit (Stage 19).</li>
+</ul>
   </li>
   <li><strong>Output:</strong> <code>features_19900_fisher_z.csv</code> and <code>features_19900_fisher_z.npy</code>.</li>
   <li><strong>Next Stage &rarr;:</strong> Features passed to Stage 18.</li>
@@ -1316,56 +1327,56 @@ The table below explains what each file contains, why it exists, which code func
     <td><strong>features_19900_fisher_z.csv</strong><br><strong>features_19900_fisher_z.npy</strong></td>
     <td>CSV / NumPy</td>
     <td>19,900 Fisher-$z$ transformed pairwise Pearson correlations representing the subject's whole-brain functional connectome vector.</td>
-    <td><code>src/connectivity/matrix.py:<br>compute_fisher_z_vector()</code></td>
+    <td><code>src/features/connectivity.py:<br>compute_connectivity_vector()</code></td>
     <td>Direct disk access or view interactively in the dashboard <strong>Connectivity</strong> tab.</td>
   </tr>
   <tr>
     <td><strong>motion_parameters.tsv</strong></td>
     <td>TSV</td>
     <td>6 estimated rigid head movement trajectories (trans_x, trans_y, trans_z in mm; rot_x, rot_y, rot_z in degrees) across all timepoints.</td>
-    <td><code>src/preprocessing/realign.py:<br>realign_4d_series()</code></td>
+    <td><code>src/preprocessing/motion.py:<br>realign_4d_bold()</code></td>
     <td>Inspected in text editor or loaded via Pandas: <code>pd.read_csv('motion_parameters.tsv', sep='\t')</code></td>
   </tr>
   <tr>
     <td><strong>framewise_displacement.tsv</strong></td>
     <td>TSV</td>
-    <td>Instantaneous volume-to-volume head displacement (in mm). Values exceeding 0.50 mm trigger outlier scrubbing.</td>
-    <td><code>src/preprocessing/realign.py:<br>compute_fd()</code></td>
+    <td>Instantaneous volume-to-volume head displacement (in mm). Values exceeding 0.50 mm are counted and logged as motion outliers without volume removal (no scrubbing).</td>
+    <td><code>src/preprocessing/motion.py:<br>compute_framewise_displacement()</code></td>
     <td>Viewed via API or visualized in dashboard Quality Control plots.</td>
   </tr>
   <tr>
     <td><strong>confounds.tsv</strong></td>
     <td>TSV</td>
     <td>31 nuisance confound regressors: 24 Friston motion parameters, 5 aCompCor anatomical noise components, and linear/quadratic trends.</td>
-    <td><code>src/preprocessing/nuisance.py:<br>assemble_nuisance_matrix()</code></td>
+    <td><code>src/preprocessing/nuisance.py:<br>build_confound_matrix()</code></td>
     <td>Audited via companion <code>confound_report.json</code> for collinearity and condition number.</td>
   </tr>
   <tr>
     <td><strong>qc_parcellation_cc200.png</strong></td>
     <td>PNG</td>
     <td>Multi-plane orthographic visualization displaying all 200 CC200 parcel boundaries overlaid on the standard BOLD volume.</td>
-    <td><code>src/preprocessing/qc.py:<br>plot_parcellation_overlay()</code></td>
+    <td><code>src/preprocessing/qc.py:<br>generate_parcellation_qc_overlay()</code></td>
     <td>Displayed automatically in the dashboard <strong>Quality control</strong> gallery.</td>
   </tr>
   <tr>
     <td><strong>qc_registration_t1w_to_mni.png</strong><br><strong>qc_registration_epi_to_t1w.png</strong></td>
     <td>PNG</td>
     <td>Red boundary contours demonstrating spatial alignment between functional EPI, anatomical T1w, and standard MNI152 template space.</td>
-    <td><code>src/preprocessing/qc.py:<br>plot_registration_overlay()</code></td>
+    <td><code>src/preprocessing/qc.py:<br>generate_registration_qc_overlay()</code></td>
     <td>Viewable directly in the web browser on the dashboard Quality Control panel.</td>
   </tr>
   <tr>
     <td><strong>qc_tissue_masks.png</strong></td>
     <td>PNG</td>
     <td>Orthographic visualization showing the eroded, non-overlapping CSF (blue), Grey Matter (purple), and White Matter (cyan) masks.</td>
-    <td><code>src/preprocessing/qc.py:<br>plot_tissue_masks()</code></td>
+    <td><code>src/preprocessing/qc.py:<br>generate_tissue_mask_qc_overlay()</code></td>
     <td>Diagnostic visual used to verify zero tissue boundary contamination.</td>
   </tr>
   <tr>
     <td><strong>provenance.json</strong></td>
     <td>JSON</td>
     <td>Audit manifest recording system environment, hardware architecture, package versions, execution timestamps, and output file SHA-256 hashes.</td>
-    <td><code>src/preprocessing/manifest.py:<br>build_provenance_record()</code></td>
+    <td><code>scripts/run_poc_v2.py:<br>build_execution_provenance()</code></td>
     <td>Validated against <code>configs/provenance_schema.json</code> to ensure scientific reproducibility.</td>
   </tr>
   </tbody>
@@ -1464,21 +1475,42 @@ The application utilizes a RESTful JSON HTTP architecture implemented in <code>s
     <td><code>GET</code></td>
     <td><code>/api/runs/&lt;c_id&gt;/process</code></td>
     <td>None</td>
-    <td>JSON: <code>{pid, returncode, elapsed_sec}</code></td>
-    <td>Monitors live background subprocess state.</td>
+    <td>JSON: <code>{status, exit_code, started_utc, finished_utc}</code> (pid is intentionally omitted for safety/container isolation)</td>
+    <td>Monitors background subprocess execution status and completion timestamps.</td>
   </tr>
   <tr>
     <td><code>GET</code></td>
     <td><code>/api/runs/&lt;c_id&gt;/log</code></td>
     <td>None</td>
-    <td>JSON: <code>{log: "string"}</code></td>
-    <td>Streams the live console log for real-time progress monitoring in the UI.</td>
+    <td>JSON: <code>{available: bool, text: "..."}</code></td>
+    <td>Streams the bounded live console log (up to 16 KB) for real-time progress monitoring in the UI.</td>
+  </tr>
+  <tr>
+    <td><code>GET</code></td>
+    <td><code>/api/intake/sessions</code></td>
+    <td>None</td>
+    <td>JSON: <code>{sessions: [...]}</code></td>
+    <td>Lists all staged upload intake sessions with their validation status and file manifests.</td>
+  </tr>
+  <tr>
+    <td><code>GET</code></td>
+    <td><code>/api/intake/sessions/&lt;s_id&gt;</code></td>
+    <td>None</td>
+    <td>JSON: <code>{session_id, status, created_utc, files: [...], validation: {...}}</code></td>
+    <td>Returns detailed intake session metadata, validation results, and staged file paths.</td>
+  </tr>
+  <tr>
+    <td><code>GET</code></td>
+    <td><code>/api/intake/sessions/&lt;s_id&gt;/artifacts/&lt;filename&gt;</code></td>
+    <td>Filename in URL path</td>
+    <td>Plain text / JSON stream</td>
+    <td>Streams extracted report artifacts (e.g. OCR text outputs from medical report extraction).</td>
   </tr>
   <tr>
     <td><code>POST</code></td>
     <td><code>/api/intake/sessions</code></td>
     <td><code>{"kind": "scan"}</code> or <code>{"kind": "report"}</code></td>
-    <td>JSON: <code>{session_id, status: "INITIALIZED"}</code></td>
+    <td>JSON: <code>{session_id: "intake_&lt;32_hex&gt;", status: "INITIALIZED"}</code></td>
     <td>Allocates a new upload staging session folder under <code>outputs/intake_sessions/</code>.</td>
   </tr>
   <tr>
@@ -1486,14 +1518,14 @@ The application utilizes a RESTful JSON HTTP architecture implemented in <code>s
     <td><code>/api/intake/sessions/&lt;s_id&gt;/files</code></td>
     <td>Raw file bytes; Header: <code>X-Upload-Filename</code></td>
     <td>JSON: <code>{filename, bytes_written, sha256}</code></td>
-    <td>Streams raw upload bytes directly to disk with zero-memory buffering.</td>
+    <td>Streams raw upload bytes directly to disk in 1 MiB chunks with safe extraction into <code>uploads/</code>, <code>data/</code>, or <code>reports/</code>.</td>
   </tr>
   <tr>
     <td><code>POST</code></td>
     <td><code>/api/intake/sessions/&lt;s_id&gt;/validate</code></td>
     <td>None</td>
-    <td>JSON: <code>{status: "VALIDATED", scans: [...]}</code></td>
-    <td>Triggers ZIP extraction, NIfTI dimensional checks, and BIDS sidecar validation.</td>
+    <td>JSON: <code>{status: "VALIDATED_WAITING_FOR_RESEARCH_AUTHORIZATION", ...}</code></td>
+    <td>Performs NIfTI dimensional checks (4D BOLD, 3D T1w), TR validation, and writes <code>intake_manifest.json</code>.</td>
   </tr>
   <tr>
     <td><code>POST</code></td>
@@ -1590,17 +1622,18 @@ PYTHONPATH=. .venv/bin/python scripts/serve_dashboard.py</code></pre>
   <li>On the dashboard, Dr. Sarah looks at the <strong>MRI Data Intake</strong> section.</li>
   <li>Under Card 1 (<em>Complete MRI session</em>), she clicks <strong>Choose File</strong> and selects <code>sub-01_ses-1.zip</code>.</li>
   <li>She clicks <strong>Upload and validate session &rarr;</strong>.</li>
-  <li>Within 2 seconds, a green banner appears: <code>Session session_20261107_... validated successfully. 4D BOLD (60 volumes, TR=2.0s) and 3D T1w verified. Staged under outputs/intake_sessions/</code>.</li>
+  <li>Within 2 seconds, a green banner appears: <code>Session intake_3f2a89... validated successfully. 4D BOLD (60 volumes, TR=2.0s) and 3D T1w verified. Staged under outputs/intake_sessions/intake_3f2a89.../intake_manifest.json with status VALIDATED_WAITING_FOR_RESEARCH_AUTHORIZATION</code>.</li>
+  <li><em>Critical Boundary:</em> Dr. Sarah notes that the uploaded scan is <strong>only staged and validated</strong>. Because real participant execution remains locked under the safety authorization gate, real MRI files are not processed through the pipeline.</li>
 </ol>
 
 <h3>Phase 3: Launching the Synthetic Processing Pipeline</h3>
 <ol>
   <li>Dr. Sarah scrolls down to the <strong>Pipeline Control</strong> panel.</li>
-  <li>She selects <strong>2 subjects</strong>, <strong>60 volumes</strong>, Seed <strong>42</strong>, and chooses <strong>Synthetic phantom atlas</strong>.</li>
+  <li>She selects <strong>2 subjects</strong>, <strong>60 volumes</strong>, Seed <strong>42</strong>, and chooses <strong>Synthetic phantom atlas</strong> (noting that the pipeline will run strictly on generated synthetic phantom subjects <code>sub-synthetic001</code> and <code>sub-synthetic002</code>).</li>
   <li>She clicks the blue button: <strong>Run MRI pipeline &rarr;</strong>.</li>
   <li>The dashboard immediately displays a flashing <span class="badge badge-blue">RUNNING</span> badge.</li>
-  <li>Behind the scenes, the 19-stage computational pipeline runs: motion correction &rarr; skull stripping &rarr; GMM tissue segmentation &rarr; SyN normalization &rarr; 31-confound regression &rarr; CC200 parcellation &rarr; Fisher-$z$ connectivity matrix calculation.</li>
-  <li>In under 8 seconds, the status updates to <span class="badge badge-green">SUCCESS</span> (2 / 2 completed).</li>
+  <li>Behind the scenes, the 19-stage computational pipeline runs on the synthetic phantom: motion correction &rarr; skull stripping &rarr; GMM tissue segmentation &rarr; SyN normalization &rarr; 31-confound regression &rarr; CC200 parcellation &rarr; Fisher-$z$ connectivity matrix calculation.</li>
+  <li>In under 15 seconds, the status updates to <span class="badge badge-green">SUCCESS</span> (2 / 2 completed).</li>
 </ol>
 
 <h3>Phase 4: Inspecting Quality Control &amp; Connectivity</h3>
@@ -1820,7 +1853,7 @@ The end-to-end processing pipeline operates in <strong>9 primary algorithmic blo
     <div class="wf-card" style="border-left-color: #10b981;">
       <span class="wf-num">BLOCK 09</span>
       <div class="wf-title">ML Model &amp; Dashboard</div>
-      <div class="wf-desc">Median imputer &rarr; variance filter &rarr; standard scaler &rarr; ANOVA Top 100 &rarr; 500-Tree Random Forest.</div>
+      <div class="wf-desc">Median imputer &rarr; variance filter &rarr; standard scaler &rarr; ANOVA Top 100 &rarr; 50-Tree Random Forest (max depth 3, balanced).</div>
       <div class="wf-io">
         <span class="wf-io-in">IN:</span> 19,900 Fisher-z vector<br>
         <span class="wf-io-out">OUT:</span> ADHD / Control Prediction
@@ -1843,7 +1876,7 @@ The end-to-end processing pipeline operates in <strong>9 primary algorithmic blo
 <!-- 12.2 FULL SYSTEM TIER ARCHITECTURE -->
 <h3>12.2 Full System Tier Architecture</h3>
 <p>
-The NeuroADHD platform is organized into <strong>four decoupled architectural tiers</strong> ensuring modularity, data security, zero-leakage machine learning, and bounded hardware memory utilization:
+The NeuroADHD platform is organized into <strong>four decoupled architectural tiers</strong> ensuring modularity, data security, and bounded hardware memory utilization (with downstream model training having adhered to strict site-disjoint cross-validation protocols):
 </p>
 
 <!-- INLINE INTERACTIVE ARCHITECTURE COMPONENT -->
@@ -1898,8 +1931,8 @@ The NeuroADHD platform is organized into <strong>four decoupled architectural ti
           <div class="tier-mod-desc">DashboardDataService: lists cohorts, formats subject details, downsamples matrices, serves logs.</div>
         </div>
         <div class="tier-mod">
-          <div class="tier-mod-title">src/security/guards.py</div>
-          <div class="tier-mod-desc">Enforces fail-closed HMAC-SHA256 integrity checks and 2.50 GB resident set size memory limits.</div>
+          <div class="tier-mod-title">src/validation/authorization_gate.py</div>
+          <div class="tier-mod-desc">ResearchAuthorizationGate &amp; MemoryGuard: enforces fail-closed IRB/ethics authorization and 2.50 GB memory bounds.</div>
         </div>
       </div>
     </div>
@@ -1912,8 +1945,8 @@ The NeuroADHD platform is organized into <strong>four decoupled architectural ti
       </div>
       <div class="tier-modules">
         <div class="tier-mod">
-          <div class="tier-mod-title">src/preprocessing/realign.py</div>
-          <div class="tier-mod-desc">DIPY 6-DOF rigid motion estimation and Framewise Displacement (FD) timeseries calculation.</div>
+          <div class="tier-mod-title">src/preprocessing/motion.py</div>
+          <div class="tier-mod-desc">DIPY 6-DOF rigid motion estimation, Friston-24 expansion, and Framewise Displacement (FD) timeseries.</div>
         </div>
         <div class="tier-mod">
           <div class="tier-mod-title">src/preprocessing/segmentation.py</div>
@@ -1925,14 +1958,14 @@ The NeuroADHD platform is organized into <strong>four decoupled architectural ti
         </div>
         <div class="tier-mod">
           <div class="tier-mod-title">src/preprocessing/nuisance.py</div>
-          <div class="tier-mod-desc">31-confound projection (Friston-24 + 5 aCompCor) &amp; 0.01–0.10 Hz Butterworth bandpass.</div>
+          <div class="tier-mod-desc">31-confound projection (Friston-24 + 5 aCompCor) &amp; 0.01–0.10 Hz Butterworth bandpass (order 5).</div>
         </div>
         <div class="tier-mod">
           <div class="tier-mod-title">src/parcellation/extractor.py</div>
           <div class="tier-mod-desc">Craddock CC200 spatial mean parcellation producing standardized roi_CC200.csv.</div>
         </div>
         <div class="tier-mod">
-          <div class="tier-mod-title">src/connectivity/matrix.py</div>
+          <div class="tier-mod-title">src/features/connectivity.py</div>
           <div class="tier-mod-desc">Upper-triangular Fisher-z vectorization extracting 19,900 unique pairwise correlation edges.</div>
         </div>
       </div>
@@ -1947,7 +1980,7 @@ The NeuroADHD platform is organized into <strong>four decoupled architectural ti
       <div class="tier-modules">
         <div class="tier-mod">
           <div class="tier-mod-title">outputs/intake_sessions/</div>
-          <div class="tier-mod-desc">Contains raw uploaded archives, extracted BIDS hierarchies, and atomic session_manifest.json.</div>
+          <div class="tier-mod-desc">Contains staged uploaded archives, data/ and reports/ folders, and atomic intake_manifest.json.</div>
         </div>
         <div class="tier-mod">
           <div class="tier-mod-title">outputs/dashboard_cohorts/</div>
