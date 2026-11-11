@@ -42,10 +42,25 @@ from src.intake.service import DEFAULT_DATA_ROOT, IntakeError, IntakeService, ge
 
 
 class TestDicomBidsIngestion(unittest.TestCase):
+    @staticmethod
+    def _allow_test_conversion(dataset_id: str, operation: str) -> dict:
+        return {
+            "is_valid": True,
+            "dataset_id": dataset_id,
+            "status": "APPROVED",
+            "signature_status": "VALID",
+            "expiry_status": "VALID_PERIOD",
+            "permitted_operations": [operation],
+            "issues": [],
+        }
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.external_root = Path(self.temp_dir.name) / "NeuroADHD_Converted"
-        self.service = IntakeService(self.external_root)
+        self.service = IntakeService(
+            self.external_root,
+            authorization_checker=self._allow_test_conversion,
+        )
 
     def tearDown(self):
         self.temp_dir.cleanup()

@@ -1014,7 +1014,7 @@ For environments where neuroimaging data arrives directly from clinical scanner 
 <div class="note-box" style="margin: 16px 0; padding: 14px 18px; border-left: 4px solid var(--accent); background: #fdfaf2; border-radius: 4px;">
   <strong>IMPORTANT REGULATORY &amp; SAFETY SPECIFICATION:</strong>
   <p style="margin: 6px 0 0;">
-    <strong>DICOM conversion is NOT currently gated by the authorization register.</strong> DICOM conversion functions strictly as a local format-normalization utility: it transforms vendor-specific DICOM series into standardized BIDS-compliant NIfTI-1 files and accompanying JSON sidecars. The research authorization gate (described in Step 5 and Step 9) specifically restricts downstream computational preprocessing, feature extraction, and frozen model inference on real participant data.
+    <strong>DICOM-to-BIDS conversion is strictly gated by the research authorization register.</strong> Before invoking <code>dcm2niix</code> or writing any NIfTI/JSON files, <code>convert_dicom_to_bids</code> executes <code>ResearchAuthorizationGate.verify_dataset_authorization(...)</code> (<code>configs/research_authorization_register.json</code>) using the exact register <code>dataset_id</code> and operation <code>"dicom_conversion"</code>, failing closed unless an unexpired, HMAC-SHA256 signed <code>APPROVED</code> record is present (<code>sub-01</code> is currently <code>PENDING</code> and blocked). Inspect-only header listing (<code>inspect_dicom</code> via <code>dcm2niix -n -1</code> / <code>-n -2</code>, writing no NIfTI images) remains allowed. Downstream computational preprocessing, feature extraction, and frozen model inference remain separately locked.
   </p>
 </div>
 
@@ -1022,11 +1022,11 @@ For environments where neuroimaging data arrives directly from clinical scanner 
 <ol>
   <li>
     <strong>Series Inspection (<code>POST /api/intake/sessions/&lt;session_id&gt;/inspect_dicom</code>):</strong>
-    When DICOM files or directories are staged within an intake session, the engine invokes <code>dcm2niix -n -1</code> to rapidly catalog all imaging series without writing full volume files. It parses metadata fields (including <code>SeriesNumber</code>, <code>SeriesDescription</code>, <code>ProtocolName</code>, <code>RepetitionTime</code>, <code>EchoTime</code>, and volume counts) and classifies candidate scans into 3D T1-weighted structural anatomy and 4D BOLD functional timeseries. If multiple BOLD candidates or ambiguous series are detected, the API returns a structured candidate list for user selection.
+    When DICOM files or directories are staged within an intake session, the engine invokes inspect-only header listing (<code>dcm2niix -n -1</code> / <code>-n -2</code>) to rapidly catalog all imaging series without writing NIfTI volume files (inspect-only remains allowed). It parses metadata fields (including <code>SeriesNumber</code>, <code>SeriesDescription</code>, <code>ProtocolName</code>, <code>RepetitionTime</code>, <code>EchoTime</code>, and volume counts) and classifies candidate scans into 3D T1-weighted structural anatomy and 4D BOLD functional timeseries. If multiple BOLD candidates or ambiguous series are detected, the API returns a structured candidate list for user selection.
   </li>
   <li>
     <strong>Deterministic BIDS Normalization (<code>POST /api/intake/sessions/&lt;session_id&gt;/convert_dicom</code>):</strong>
-    Upon user confirmation of series mappings, <code>dcm2niix</code> executes conversion using internal flags for lossless gzip compression (<code>-z y</code>) and BIDS sidecar generation (<code>-b y -ba y</code>). The generated files are placed into canonical BIDS hierarchy (<code>sub-&lt;participant&gt;/ses-&lt;session&gt;/anat/</code> and <code>sub-&lt;participant&gt;/ses-&lt;session&gt;/func/</code>) with POSIX permissions <code>0600</code>, verified for non-empty file size and valid repetition time ($T_R \ge 0.5\text{ s}$), and bundled into a validated session archive ready for staging.
+    Upon user confirmation of series mappings, the backend first enforces the fail-closed dataset authorization check for exact <code>dataset_id</code> and <code>"dicom_conversion"</code> permission (returning an authorization block error if not approved and validly signed). Only when authorized does <code>dcm2niix</code> execute conversion using internal flags for lossless gzip compression (<code>-z y</code>) and BIDS sidecar generation (<code>-b y -ba y</code>). The generated files are placed into canonical BIDS hierarchy (<code>sub-&lt;participant&gt;/ses-&lt;session&gt;/anat/</code> and <code>sub-&lt;participant&gt;/ses-&lt;session&gt;/func/</code>) with POSIX permissions <code>0600</code>, verified for non-empty file size and valid repetition time ($T_R \ge 0.5\text{ s}$), and bundled into a validated session archive ready for staging.
   </li>
 </ol>
 
@@ -1683,14 +1683,14 @@ The application utilizes a RESTful JSON HTTP architecture implemented in <code>s
     <td><code>/api/intake/sessions/&lt;s_id&gt;/inspect_dicom</code></td>
     <td>None</td>
     <td>JSON: <code>{session_id, dcm2niix_available: bool, series_count, series: [...]}</code></td>
-    <td>Runs fast series header inspection across staged DICOM files using <code>dcm2niix -n -1</code>, returning classified structural and functional candidate series.</td>
+    <td>Runs fast inspect-only header listing across staged DICOM files using <code>dcm2niix -n -1</code> / <code>-n -2</code> (no NIfTI images written; stays allowed without conversion approval), returning classified structural and functional candidate series.</td>
   </tr>
   <tr>
     <td><code>POST</code></td>
     <td><code>/api/intake/sessions/&lt;s_id&gt;/convert_dicom</code></td>
     <td><code>{"t1w_series": 2, "bold_series": 3, "subject_id": "sub-01"}</code></td>
     <td>JSON: <code>{status: "CONVERTED", converted_files: [...], validation_status}</code></td>
-    <td>Converts user-selected DICOM series into standardized BIDS NIfTI and JSON sidecars using <code>dcm2niix</code>. Note: DICOM conversion is NOT currently gated by the authorization register.</td>
+    <td>Converts user-selected DICOM series into standardized BIDS NIfTI and JSON sidecars using <code>dcm2niix</code>. Strictly gated by <code>ResearchAuthorizationGate.verify_dataset_authorization(...)</code>: requires an unexpired, HMAC-SHA256 signed <code>APPROVED</code> record matching exact <code>dataset_id</code> with <code>"dicom_conversion"</code> permitted (fails closed otherwise; <code>sub-01</code> is currently <code>PENDING</code>).</td>
   </tr>
   </tbody>
 </table>

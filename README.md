@@ -23,13 +23,13 @@ Ingesting raw 4D resting-state fMRI scans in BIDS format, executing standardized
 ## 2. Current Status: SYNTHETIC PIPELINE + AUTOMATED DICOM-TO-BIDS INTAKE
 
 > [!IMPORTANT]
-> **STATUS: Synthetic preprocessing demonstration and automated DICOM-to-BIDS ingestion are implemented; real-participant preprocessing remains locked.**
+> **STATUS: Synthetic preprocessing demonstration and authorization-gated DICOM-to-BIDS intake are implemented; real-participant preprocessing remains locked.**
 >
-> The local dashboard accepts complete BIDS-style MRI session ZIP files, raw DICOM studies, and separate radiology reports. It automates DICOM series inspection and de-identification via `dcm2niix`, enables explicit T1w and BOLD series selection (with multi-run support), generates standardized BIDS NIfTI datasets, and provides downloadable validated BIDS session ZIPs.
+> The local dashboard accepts complete BIDS-style MRI session ZIP files, raw DICOM studies, and separate radiology reports. Inspect-only series listing (`inspect_dicom` via `dcm2niix -n -1` / `-n -2`, which writes no NIfTI images) remains allowed for staged DICOM uploads. **DICOM-to-BIDS conversion (`convert_dicom`) is fail-closed gated by the research authorization register** (`configs/research_authorization_register.json`): it is blocked unless `ResearchAuthorizationGate.verify_dataset_authorization(...)` verifies an unexpired, HMAC-SHA256 signed `APPROVED` record matching the exact `dataset_id` and permitting `"dicom_conversion"` (`sub-01` is currently `PENDING` and therefore blocked).
 >
 > **All MRI data and conversion artifacts are stored strictly outside the repository** in `NEUROADHD_DATA_ROOT` (default: `~/NeuroADHD_Data`).
 >
-> **A successful BIDS conversion is an ingestion stage, not a preprocessing run.** Real-scan preprocessing, CC200 feature extraction, and real-participant model inference remain disabled by the research authorization gate (`processing_enabled = false`, `real_data_authorized = false`). The synthetic runner continues to process generated synthetic data only.
+> **A permitted BIDS conversion is an ingestion stage only, never a preprocessing run.** Real-scan preprocessing, CC200 feature extraction, and real-participant model inference remain disabled by the research authorization gate (`processing_enabled = false`, `real_data_authorized = false`). The synthetic runner continues to process generated synthetic data only.
 
 ---
 
@@ -110,10 +110,10 @@ python scripts/serve_dashboard.py
 ```
 
 Open http://127.0.0.1:8765. The dashboard supports:
-1. Automated DICOM inspection (detects series, dimensions, TR, and modality without image conversion).
+1. Automated DICOM inspection (inspect-only via `dcm2niix -n -1` / `-n -2`: detects series, dimensions, TR, and modality without writing NIfTI images; remains allowed).
 2. De-identification (strips patient names, IDs, DOB, etc.).
 3. Explicit series selection (T1w and single/multi-run BOLD).
-4. Automated `dcm2niix` conversion to BIDS format (`.nii.gz` and `.json`).
+4. Research-authorization-gated `dcm2niix` conversion to BIDS format (`.nii.gz` and `.json`): requires an unexpired, HMAC-SHA256 signed `APPROVED` register record matching the exact `dataset_id` and permitting `"dicom_conversion"` (fails closed otherwise; `sub-01` is currently `PENDING`).
 5. BIDS session validation and downloadable validated session ZIPs.
 
 See [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md) for detailed workflow instructions, BIDS layout, validation rules, and safety boundaries.
