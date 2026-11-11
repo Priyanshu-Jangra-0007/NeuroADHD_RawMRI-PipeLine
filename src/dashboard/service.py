@@ -292,6 +292,7 @@ class DashboardDataService:
             "confound_rank": confound_report.get("matrix_rank"),
             "confound_condition_number": confound_report.get("condition_number"),
             "slice_timing_correction": provenance.get("slice_timing_correction"),
+            "susceptibility_distortion_correction": provenance.get("susceptibility_distortion_correction"),
             "validation_gates": gates,
             "qc_threshold_status": "QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL",
             "model_prediction": model_prediction,

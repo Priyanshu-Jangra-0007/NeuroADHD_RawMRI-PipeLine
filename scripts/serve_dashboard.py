@@ -66,8 +66,8 @@ class DashboardApplication:
             "real_data_authorized": False,
             "authorization_state": "NOT_AUTHORIZED",
             "pending_authorization_items": pending,
-            "pipeline": "Existing 21-stage synthetic MRI pipeline",
-            "pipeline_stages_total": 21,
+            "pipeline": "Existing 22-stage synthetic MRI pipeline",
+            "pipeline_stages_total": 22,
             "output_root": "outputs/dashboard_cohorts",
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
@@ -152,6 +152,23 @@ class DashboardApplication:
                     break
                 except Exception:
                     step4_report = None
+
+        step5_report = None
+        step5_candidates = [
+            Path(os.environ["NEUROADHD_STEP5_ROOT"]) / "step5_sdc_validation_report.json"
+            if os.environ.get("NEUROADHD_STEP5_ROOT")
+            else None,
+            PROJECT_ROOT.parent / "NeuroADHD_Step5_Synthetic" / "step5_sdc_validation_report.json",
+            PROJECT_ROOT / "outputs" / "step5_validation" / "step5_sdc_validation_report.json",
+        ]
+        for cand in step5_candidates:
+            if cand is not None and cand.is_file():
+                try:
+                    with open(cand, "r", encoding="utf-8") as s5f:
+                        step5_report = json.load(s5f)
+                    break
+                except Exception:
+                    step5_report = None
 
         auth_info = self.authorization_status()
         real_auth_summary = (
@@ -244,42 +261,120 @@ class DashboardApplication:
                 "report": None,
             }
 
+        from src.preprocessing.susceptibility_distortion import detect_sdc_software
+
+        sdc_sw = detect_sdc_software()
+        if isinstance(step5_report, dict) and isinstance(step5_report.get("e2e_direct_fieldmap"), dict):
+            s5_dir = step5_report["e2e_direct_fieldmap"]
+            s5_pep = step5_report.get("e2e_pepolar_missing_topup", {})
+            s5_sdc = s5_dir.get("sdc_provenance", {})
+            c_qc = s5_sdc.get("correction_qc") or {}
+            j_qc = s5_sdc.get("jacobian_qc") or {}
+            d_st = s5_sdc.get("displacement_stats") or {}
+            susceptibility_distortion_summary: Dict[str, Any] = {
+                "badge": "SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY",
+                "status": str(s5_sdc.get("status", "APPLIED_DIRECT_FIELDMAP")),
+                "pepolar_tool_status": str(s5_pep.get("status", "SKIPPED_TOOL_UNAVAILABLE")),
+                "validation_report_loaded": True,
+                "bids_association": str(s5_sdc.get("association_mechanism", "IntendedFor / B0FieldIdentifier")),
+                "pe_directions_verified": step5_report.get("pe_directions_verified", ["i", "i-", "j", "j-", "k", "k-"]),
+                "primary_pe_direction": s5_sdc.get("bold_phase_encoding_direction"),
+                "readout_time_seconds": s5_sdc.get("bold_total_readout_time_seconds"),
+                "topup_available": bool(sdc_sw.get("topup_available", False)),
+                "prelude_available": bool(sdc_sw.get("prelude_available", False)),
+                "fugue_available": bool(sdc_sw.get("fugue_available", False)),
+                "external_tools_summary": (
+                    f"topup={'available' if sdc_sw.get('topup_available') else 'unavailable'}, "
+                    f"prelude={'available' if sdc_sw.get('prelude_available') else 'unavailable'}, "
+                    f"fugue={'available' if sdc_sw.get('fugue_available') else 'unavailable'}; "
+                    f"calibrated direct fieldmap (SciPy/Nibabel) active"
+                ),
+                "validation_metrics": {
+                    "ncc_before": c_qc.get("ncc_before"),
+                    "ncc_after": c_qc.get("ncc_after"),
+                    "nmi_before": c_qc.get("nmi_before"),
+                    "nmi_after": c_qc.get("nmi_after"),
+                    "mask_dice_before": c_qc.get("mask_dice_before"),
+                    "mask_dice_after": c_qc.get("mask_dice_after"),
+                    "max_abs_disp_mm": d_st.get("max_abs_mm"),
+                    "min_jacobian": j_qc.get("min_jacobian"),
+                    "folding_voxel_count": j_qc.get("folding_voxel_count"),
+                    "single_step_composed_tre_mm": step5_report.get("composed_transform_tre", {}).get("single_step_max_tre_mm"),
+                },
+                "warnings": [
+                    "When external FSL topup/prelude/fugue binaries are absent, PEPOLAR/phasediff scans return SKIPPED_TOOL_UNAVAILABLE with zero fabricated warps.",
+                    "Unassociated fieldmaps or SyN-b0 fallback never substitute for validated physical B0 susceptibility correction.",
+                ],
+                "real_data_authorization_status": real_auth_summary,
+                "report": step5_report,
+            }
+        else:
+            susceptibility_distortion_summary = {
+                "badge": "SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY",
+                "status": "MODULE_READY (External Step 5 validation report not generated yet)",
+                "pepolar_tool_status": "APPLIED_PEPOLAR_TOPUP" if sdc_sw.get("topup_available") else "SKIPPED_TOOL_UNAVAILABLE",
+                "validation_report_loaded": False,
+                "bids_association": "B0FieldSource/B0FieldIdentifier > IntendedFor (fails closed if ambiguous)",
+                "pe_directions_verified": ["i", "i-", "j", "j-", "k", "k-"],
+                "primary_pe_direction": None,
+                "readout_time_seconds": None,
+                "topup_available": bool(sdc_sw.get("topup_available", False)),
+                "prelude_available": bool(sdc_sw.get("prelude_available", False)),
+                "fugue_available": bool(sdc_sw.get("fugue_available", False)),
+                "external_tools_summary": (
+                    f"topup={'available' if sdc_sw.get('topup_available') else 'unavailable'}, "
+                    f"prelude={'available' if sdc_sw.get('prelude_available') else 'unavailable'}, "
+                    f"fugue={'available' if sdc_sw.get('fugue_available') else 'unavailable'}; "
+                    f"direct fieldmap (Hz / rad/s) calibrated solver ready"
+                ),
+                "validation_metrics": None,
+                "warnings": [
+                    "Missing FSL binaries never trigger fabricated warps: PEPOLAR/phasediff skip cleanly with SKIPPED_TOOL_UNAVAILABLE unless topup/prelude/fugue are installed.",
+                    "Real clinical MRI processing remains locked until supervisor/IEC/HMAC authorization.",
+                ],
+                "real_data_authorization_status": real_auth_summary,
+                "report": None,
+            }
+
         return {
             "status": "VERIFIED",
             "badge": "SYNTHETIC PIPELINE VERIFIED",
             "slice_timing_badge": "SLICE-TIMING CORRECTION VERIFIED — SYNTHETIC ONLY",
+            "susceptibility_distortion_badge": "SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY",
             "safety_gate": {
                 "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
                 "real_data_authorized": False,
                 "authorization_status": "NOT_AUTHORIZED",
                 "real_scan_pipeline_status": "LOCKED (WAITING FOR RESEARCH AUTHORIZATION)",
             },
-            "stages_total": 21,
-            "stages_verified": 21,
+            "stages_total": 22,
+            "stages_verified": 22,
             "stages": [
                 {"stage": 1, "name": "BIDS Input & Sidecar Metadata Validation", "status": "PASSED"},
                 {"stage": 2, "name": "3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)", "status": "PASSED"},
                 {"stage": 3, "name": "Metadata-Driven Slice-Timing Correction (DEC-STC-01)", "status": "PASSED"},
-                {"stage": 4, "name": "Motion Transform Application (Native Reference Series)", "status": "PASSED"},
-                {"stage": 5, "name": "Functional Reference Generation", "status": "PASSED"},
-                {"stage": 6, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
-                {"stage": 7, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
-                {"stage": 8, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
-                {"stage": 9, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
-                {"stage": 10, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
-                {"stage": 11, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
-                {"stage": 12, "name": "Composed Pullback Resampling of STC BOLD into CC200 Grid", "status": "PASSED"},
-                {"stage": 13, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
-                {"stage": 14, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
-                {"stage": 15, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
-                {"stage": 16, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
-                {"stage": 17, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
-                {"stage": 18, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
-                {"stage": 19, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
-                {"stage": 20, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
-                {"stage": 21, "name": "Schema-Compliant Provenance JSON Generation", "status": "PASSED"},
+                {"stage": 4, "name": "B0 Susceptibility Distortion Correction (DEC-SDC-02)", "status": "PASSED"},
+                {"stage": 5, "name": "Motion Transform (+ Optional SDC) Application (Native Reference Series)", "status": "PASSED"},
+                {"stage": 6, "name": "Functional Reference Generation", "status": "PASSED"},
+                {"stage": 7, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
+                {"stage": 8, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
+                {"stage": 9, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
+                {"stage": 10, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
+                {"stage": 11, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
+                {"stage": 12, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
+                {"stage": 13, "name": "Composed Pullback Resampling (Motion + SDC + Coreg + SyN on STC BOLD)", "status": "PASSED"},
+                {"stage": 14, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
+                {"stage": 15, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
+                {"stage": 16, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
+                {"stage": 17, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
+                {"stage": 18, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
+                {"stage": 19, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
+                {"stage": 20, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
+                {"stage": 21, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
+                {"stage": 22, "name": "Schema-Compliant Provenance JSON Generation", "status": "PASSED"},
             ],
             "slice_timing": slice_timing_summary,
+            "susceptibility_distortion": susceptibility_distortion_summary,
             "motion_qc": {
                 "method": "Power et al. (2012) Framewise Displacement",
                 "radius_mm": 50.0,

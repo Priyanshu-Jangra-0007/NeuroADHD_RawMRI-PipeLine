@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import nibabel as nib
 import numpy as np
@@ -13,6 +13,7 @@ from dipy.align.imaffine import (
     transform_centers_of_mass,
 )
 from dipy.align.transforms import RigidTransform3D
+from scipy.ndimage import map_coordinates
 
 
 def compute_framewise_displacement(motion_params: np.ndarray, radius_mm: float = 50.0) -> np.ndarray:
@@ -158,8 +159,9 @@ def apply_motion_transforms(
     bold_img: nib.Nifti1Image,
     rigid_transforms: Sequence[AffineMap],
     interpolation: str = "linear",
+    sdc_displacement: Optional[np.ndarray] = None,
 ) -> nib.Nifti1Image:
-    """Apply previously estimated 3D rigid motion transforms to a 4D BOLD image.
+    """Apply previously estimated 3D rigid motion transforms (and optional SDC unwarping) to a 4D BOLD image.
 
     Parameters
     ----------
@@ -168,12 +170,15 @@ def apply_motion_transforms(
     rigid_transforms : Sequence[AffineMap]
         Sequence of T per-volume DIPY ``AffineMap`` transforms returned by ``estimate_motion_parameters``.
     interpolation : str
-        Spatial interpolation mode for DIPY ``AffineMap.transform`` (default: 'linear').
+        Spatial interpolation mode for DIPY ``AffineMap.transform`` or composed SciPy pullback (default: 'linear').
+    sdc_displacement : np.ndarray, optional
+        Optional 4D voxel-displacement field of shape (X, Y, Z, 3) mapping undistorted EPI voxels
+        to distorted EPI voxels. When provided, motion + SDC are composed in a single pullback step.
 
     Returns
     -------
     nib.Nifti1Image
-        Motion-realigned 4D NIfTI image in native BOLD grid geometry.
+        Motion-realigned (and optionally SDC-unwarped) 4D NIfTI image in native EPI grid geometry.
     """
     data = np.asanyarray(bold_img.dataobj, dtype=np.float32)
     if data.ndim != 4:
@@ -186,10 +191,40 @@ def apply_motion_transforms(
         )
 
     realigned_data = np.zeros_like(data, dtype=np.float32)
-    for vol_idx in range(t_vol):
-        realigned_data[..., vol_idx] = rigid_transforms[vol_idx].transform(
-            data[..., vol_idx], interpolation=interpolation
-        )
+    if sdc_displacement is None:
+        for vol_idx in range(t_vol):
+            realigned_data[..., vol_idx] = rigid_transforms[vol_idx].transform(
+                data[..., vol_idx], interpolation=interpolation
+            )
+    else:
+        disp = np.asarray(sdc_displacement, dtype=np.float64)
+        spatial_shape = tuple(data.shape[:3])
+        if disp.shape != spatial_shape + (3,) or not np.isfinite(disp).all():
+            raise ValueError(
+                f"Expected finite sdc_displacement of shape {spatial_shape + (3,)}, got {disp.shape}."
+            )
+        order = 1 if interpolation == "linear" else 3 if interpolation == "cubic" else 0
+        epi_aff = np.asarray(bold_img.affine, dtype=np.float64)
+        inv_epi_aff = np.linalg.inv(epi_aff)
+        gi, gj, gk = np.indices(spatial_shape, dtype=np.float64)
+        v_dist_ref = np.vstack([
+            (gi + disp[..., 0]).ravel(),
+            (gj + disp[..., 1]).ravel(),
+            (gk + disp[..., 2]).ravel(),
+        ])
+        for vol_idx in range(t_vol):
+            rt = rigid_transforms[vol_idx]
+            m_aff = np.asarray(rt.affine if hasattr(rt, "affine") else rt, dtype=np.float64)
+            m_vox = inv_epi_aff @ m_aff @ epi_aff
+            coords_t = m_vox[:3, :3] @ v_dist_ref + m_vox[:3, 3:4]
+            realigned_data[..., vol_idx] = map_coordinates(
+                data[..., vol_idx],
+                coords_t,
+                order=order,
+                mode="constant",
+                cval=0.0,
+                prefilter=(order > 1),
+            ).reshape(spatial_shape).astype(np.float32)
 
     out_header = bold_img.header.copy()
     out_header.set_data_shape(realigned_data.shape)

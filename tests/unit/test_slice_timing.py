@@ -14,7 +14,7 @@ or under pytest's temporary workspace:
 - Scaled NIfTI (scl_slope/scl_inter) handling and bit-exact determinism
 - BIDS derivative immutability (input SHA-256 unchanged; StartTime/+TR/2 origin shift)
 - Double slice-timing correction prevention (directly and via run_poc_v2_pipeline)
-- 21-stage preprocessing order (Stage 2 raw motion estimation before Stage 3 STC, single-step resampling)
+- 22-stage preprocessing order (Stage 2 raw motion estimation before Stage 3 STC & Stage 4 SDC, single-step resampling)
 - Realistic 37-slice x 240-volume source-to-61-slice end-to-end integration
 - Strict synthetic-only safety enforcement (real-data paths & symlinks rejected)
 """
@@ -956,7 +956,7 @@ def test_26_27_synthetic_only_enforcement_and_real_data_rejection(tmp_path: Path
 
 
 def test_run_poc_v2_pipeline_stage3_stc_applied_skipped_and_double_blocked(tmp_path: Path):
-    """End-to-end 21-stage runner tests: STC APPLIED, SKIPPED_MISSING_METADATA, SKIPPED_UNKNOWN_SLICE_AXIS, and double-STC fail-closed."""
+    """End-to-end 22-stage runner tests: STC APPLIED, SKIPPED_MISSING_METADATA, SKIPPED_UNKNOWN_SLICE_AXIS, and double-STC fail-closed."""
     with mock.patch.dict(os.environ, {"NEUROADHD_HMAC_KEY": "step4_integration_test_key"}, clear=False):
         os.environ.pop("NEUROADHD_MODEL_DIR", None)
 
@@ -976,13 +976,14 @@ def test_run_poc_v2_pipeline_stage3_stc_applied_skipped_and_double_blocked(tmp_p
             manifest_path=paths_ok["synthetic_manifest"],
         )
         assert res_ok["status"] == "SUCCESS"
-        assert res_ok["provenance"]["pipeline_stages_total"] == 21
+        assert res_ok["provenance"]["pipeline_stages_total"] == 22
         assert res_ok["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
         order_list = res_ok["provenance"]["preprocessing_order"]
-        assert len(order_list) == 21
+        assert len(order_list) == 22
         assert "Motion Parameter Estimation" in order_list[1]
         assert "Slice-Timing Correction" in order_list[2]
-        assert "Motion Transform Application" in order_list[3]
+        assert "Susceptibility Distortion Correction" in order_list[3]
+        assert "Motion Transform" in order_list[4]
         stc_p = res_ok["provenance"]["slice_timing_correction"]
         assert stc_p["status"] == "APPLIED"
         assert stc_p["corrected"] is True
@@ -1177,7 +1178,7 @@ def test_motion_estimated_from_raw_bold_before_stc_and_single_step_resampling(tm
 
 
 def test_realistic_37slice_240vol_source_to_61slice_e2e(tmp_path: Path):
-    """Source-acquisition 37-slice x 240-volume BOLD -> 61-slice MNI/CC200 full 21-stage E2E test."""
+    """Source-acquisition 37-slice x 240-volume BOLD -> 61-slice MNI/CC200 full 22-stage E2E test."""
     with mock.patch.dict(os.environ, {"NEUROADHD_HMAC_KEY": "step4_1_37slice_240vol_key"}, clear=False):
         os.environ.pop("NEUROADHD_MODEL_DIR", None)
         rng = np.random.default_rng(37240)
@@ -1321,7 +1322,7 @@ def test_realistic_37slice_240vol_source_to_61slice_e2e(tmp_path: Path):
             manifest_path=man_p,
         )
         assert res["status"] == "SUCCESS"
-        assert res["provenance"]["pipeline_stages_total"] == 21
+        assert res["provenance"]["pipeline_stages_total"] == 22
         assert res["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
         stc_p = res["provenance"]["slice_timing_correction"]
         assert stc_p["status"] == "APPLIED"

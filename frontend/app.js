@@ -165,6 +165,21 @@ async function loadSubject(subjectId) {
     setMetric("runtime", Number(detail.runtime_seconds).toFixed(1), " s");
 
     const stc = detail.slice_timing_correction;
+    const sdc = detail.susceptibility_distortion_correction;
+    const formatSdcState = (sdcObj) => {
+      if (!sdcObj || !sdcObj.status) return "Not assessed";
+      const st = String(sdcObj.status);
+      if (st.startsWith("APPLIED_")) return `Applied (${sdcObj.method || st})`;
+      if (st.startsWith("SKIPPED_")) return `Skipped (${st.replace("SKIPPED_", "")})`;
+      if (st.startsWith("FAILED_")) return `Failed (${st.replace("FAILED_", "")})`;
+      return st;
+    };
+    const sdcDispMax = sdc?.displacement_stats?.max_abs_mm != null
+      ? `${Number(sdc.displacement_stats.max_abs_mm).toFixed(2)} mm`
+      : "—";
+    const sdcJacMin = sdc?.jacobian_qc?.min_jacobian != null
+      ? `${Number(sdc.jacobian_qc.min_jacobian).toFixed(3)} (fold=${sdc.jacobian_qc.folding_voxel_count ?? 0})`
+      : "—";
     const facts = [
       ["TR", detail.tr_seconds == null ? "—" : `${detail.tr_seconds} s`],
       ["BOLD volumes", detail.n_volumes ?? "—"],
@@ -178,6 +193,10 @@ async function loadSubject(subjectId) {
       ["STC direction", stc?.slice_encoding_direction ?? "—"],
       ["STC reference", stc?.reference_time_seconds == null ? "—" : `${stc.reference_time_seconds} s (+shift)`],
       ["STC method", stc?.interpolation_method ?? "—"],
+      ["SDC status", formatSdcState(sdc)],
+      ["SDC PE / readout", sdc?.bold_phase_encoding_direction ? `${sdc.bold_phase_encoding_direction} (${sdc.bold_total_readout_time_seconds ?? "—"} s)` : "—"],
+      ["SDC max displacement", sdcDispMax],
+      ["SDC min Jacobian", sdcJacMin],
     ];
     $("qcFacts").innerHTML = facts.map(([label, value]) =>
       `<div class="qc-fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`
@@ -640,7 +659,7 @@ async function refreshPipelineVerification() {
     const data = await api("/api/pipeline/verification");
     if ($("verificationBadge")) $("verificationBadge").textContent = data.badge || "SYNTHETIC PIPELINE VERIFIED";
     if ($("verifPipelineStatus")) $("verifPipelineStatus").textContent = `VERIFIED (${data.stages_verified}/${data.stages_total} Stages)`;
-    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 21} STAGES`;
+    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 22} STAGES`;
     if ($("verifRealDataStatus")) $("verifRealDataStatus").textContent = data.safety_gate?.real_scan_pipeline_status || "LOCKED (Pending Auth)";
     if ($("verifAtlasStatus")) $("verifAtlasStatus").textContent = `${data.parcellation?.atlas?.slice(0, 20) || "Craddock CC200"} (${data.parcellation?.rois || 200} ROIs)`;
     if ($("verifFeaturesStatus")) $("verifFeaturesStatus").textContent = `${(data.parcellation?.edges || 19900).toLocaleString()} Edges (All Finite)`;
@@ -678,6 +697,47 @@ async function refreshPipelineVerification() {
           ? stc.missing_metadata_warnings
           : ["Missing SliceTiming is never invented from TR."];
         warnList.innerHTML = items.map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+      }
+    }
+
+    const sdc = data.susceptibility_distortion;
+    if (sdc) {
+      if ($("verifSdcBadge")) $("verifSdcBadge").textContent = sdc.badge || data.susceptibility_distortion_badge || "SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY";
+      if ($("verifSdcStatus")) {
+        const stEl = $("verifSdcStatus");
+        stEl.textContent = sdc.status || "NOT_ASSESSED";
+        stEl.className = "auth-item-val";
+        if (String(sdc.status).startsWith("APPLIED_")) stEl.classList.add("sdc-status-applied");
+        else if (String(sdc.status).startsWith("SKIPPED_") || String(sdc.status).startsWith("MODULE_READY")) stEl.classList.add("sdc-status-skipped");
+        else if (String(sdc.status).startsWith("FAILED_")) stEl.classList.add("sdc-status-failed");
+      }
+      if ($("verifSdcAssoc")) $("verifSdcAssoc").textContent = sdc.bids_association || "B0FieldIdentifier / IntendedFor";
+      if ($("verifSdcPe")) {
+        const dirs = Array.isArray(sdc.pe_directions_verified) ? sdc.pe_directions_verified.join(", ") : "i, i-, j, j-, k, k-";
+        $("verifSdcPe").textContent = sdc.readout_time_seconds != null
+          ? `${sdc.primary_pe_direction || "j"} (${dirs}) · TRT=${sdc.readout_time_seconds} s`
+          : dirs;
+      }
+      if ($("verifSdcTools")) $("verifSdcTools").textContent = sdc.external_tools_summary || "—";
+      if ($("verifSdcPepolarStatus")) $("verifSdcPepolarStatus").textContent = sdc.pepolar_tool_status || "SKIPPED_TOOL_UNAVAILABLE";
+      const sm = sdc.validation_metrics;
+      if ($("verifSdcJacobian")) {
+        $("verifSdcJacobian").textContent = sm && sm.min_jacobian != null
+          ? `min J = ${Number(sm.min_jacobian).toFixed(4)} | folding = ${sm.folding_voxel_count ?? 0} voxels`
+          : "J > 0 enforced (SDCFoldingError fail-closed)";
+      }
+      if ($("verifSdcMetrics")) {
+        $("verifSdcMetrics").textContent = sm && sm.ncc_after != null
+          ? `NCC ${Number(sm.ncc_before).toFixed(4)} → ${Number(sm.ncc_after).toFixed(4)} | NMI ${Number(sm.nmi_before).toFixed(4)} → ${Number(sm.nmi_after).toFixed(4)} | Dice ${Number(sm.mask_dice_before).toFixed(4)} → ${Number(sm.mask_dice_after).toFixed(4)}`
+          : "Run scripts/validate_step5_sdc.py to generate external metrics";
+      }
+      if ($("verifSdcAuthStatus")) $("verifSdcAuthStatus").textContent = sdc.real_data_authorization_status || "NOT_AUTHORIZED (sub-01 PENDING)";
+      const sdcWarn = $("verifSdcWarnings");
+      if (sdcWarn) {
+        const items = Array.isArray(sdc.warnings) && sdc.warnings.length
+          ? sdc.warnings
+          : ["Missing external tools return SKIPPED_TOOL_UNAVAILABLE with zero fabricated warps."];
+        sdcWarn.innerHTML = items.map((w) => `<li>${escapeHtml(w)}</li>`).join("");
       }
     }
   } catch (err) {

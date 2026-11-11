@@ -12,13 +12,14 @@ This script executes Phase B, C, D, and E of Step 3 using SYNTHETIC MRI DATA ONL
        * Independent noise across remaining parcels
    - Canonical CC200 Atlas (200 ROIs)
    - Signed synthetic integrity manifest
-2. Run 1: Complete 21-Stage Pipeline Execution
+2. Run 1: Complete 22-Stage Pipeline Execution
    - Stage 2 Motion Parameter Estimation on Raw Uncorrected BOLD
    - Stage 3 Metadata-Driven Slice-Timing Correction (DEC-STC-01)
-   - Stage 12 Single-Step Composed Resampling of STC BOLD (Motion + Coreg + SyN)
+   - Stage 4 B0 Susceptibility Distortion Correction (DEC-SDC-02)
+   - Stage 13 Single-Step Composed Resampling of STC BOLD (Motion + SDC + Coreg + SyN)
    - Measures stage runtimes and peak memory
    - Verifies recovery of injected correlations (r_pos > 0.70, r_neg < -0.65)
-   - Audits all 21 stage outputs and validation gates
+   - Audits all 22 stage outputs and validation gates
 3. Run 2: Determinism and Reproducibility Verification
    - Re-runs identical pipeline with identical seed
    - Asserts numerical determinism (|Run 1 - Run 2| < 1e-7) across CC200 time series and 19,900 Fisher-z edges
@@ -301,8 +302,8 @@ def run_validation() -> Dict[str, Any]:
     t_gen = time.time() - t_gen_start
     print(f"  -> Synthetic dataset generated in {t_gen:.2f}s at {ds_paths['session_dir']}")
 
-    # 2. Run 1: Complete 21-Stage Execution
-    print("\n[Phase 2] Executing Run 1 (21-Stage Pipeline Execution & Performance Audit)...")
+    # 2. Run 1: Complete 22-Stage Execution
+    print("\n[Phase 2] Executing Run 1 (22-Stage Pipeline Execution & Performance Audit)...")
     run1_res = run_poc_v2_pipeline(
         bold_path=ds_paths["bold_nii"],
         bold_json_path=ds_paths["bold_json"],
@@ -322,7 +323,7 @@ def run_validation() -> Dict[str, Any]:
     print(f"  -> Run 1 peak memory: {run1_res['peak_rss_gb']:.2f} GB (Ceiling: 2.50 GB)")
 
     assert run1_res["status"] == "SUCCESS", f"Run 1 failed: {run1_res}"
-    assert run1_res["provenance"]["pipeline_stages_total"] == 21
+    assert run1_res["provenance"]["pipeline_stages_total"] == 22
     assert run1_res["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
     assert run1_res["runtime_seconds"] < 600.0, f"Runtime exceeded 10m budget: {run1_res['runtime_seconds']}s"
     assert run1_res["peak_rss_gb"] <= 2.50, f"Memory exceeded 2.5GB ceiling: {run1_res['peak_rss_gb']} GB"
@@ -357,7 +358,7 @@ def run_validation() -> Dict[str, Any]:
     assert np.all(np.isfinite(feat_vector)), "Fisher-z vector contains non-finite values (NaN/Inf)"
 
     # 5. Artifact Existence and Non-Empty Verification
-    print("\n[Phase 4] Verifying all 21 stage output artifacts...")
+    print("\n[Phase 4] Verifying all 22 stage output artifacts...")
     stage_artifacts_summary = {}
     for art_key, art_path in run1_res["artifacts"].items():
         p = Path(art_path)
@@ -405,10 +406,11 @@ def run_validation() -> Dict[str, Any]:
         "step": "Step 3: Neuroimaging Preprocessing Pipeline Validation",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "VERIFIED",
-        "pipeline_stages_total": 21,
-        "pipeline_stages_verified": 21,
+        "pipeline_stages_total": 22,
+        "pipeline_stages_verified": 22,
         "motion_estimation": run1_res["provenance"].get("motion_estimation"),
         "slice_timing_correction": run1_res.get("slice_timing"),
+        "susceptibility_distortion_correction": run1_res.get("susceptibility_distortion"),
         "safety_guards": {
             "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
             "real_data_authorized": False,
@@ -455,24 +457,25 @@ def run_validation() -> Dict[str, Any]:
             {"stage_num": 1, "name": "BIDS Input & Sidecar Metadata Validation", "status": "PASSED"},
             {"stage_num": 2, "name": "3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)", "status": "PASSED"},
             {"stage_num": 3, "name": "Metadata-Driven Slice-Timing Correction (DEC-STC-01)", "status": "PASSED"},
-            {"stage_num": 4, "name": "Motion Transform Application (Native Reference Series)", "status": "PASSED"},
-            {"stage_num": 5, "name": "Functional Reference Generation", "status": "PASSED"},
-            {"stage_num": 6, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
-            {"stage_num": 7, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
-            {"stage_num": 8, "name": "Tissue Segmentation (CSF, GM, WM)", "status": "PASSED"},
-            {"stage_num": 9, "name": "Morphological Tissue Mask Erosion", "status": "PASSED"},
-            {"stage_num": 10, "name": "EPI-to-T1w 3D Rigid Coregistration", "status": "PASSED"},
-            {"stage_num": 11, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
-            {"stage_num": 12, "name": "Composed Pullback Resampling of STC BOLD into CC200 Grid", "status": "PASSED"},
-            {"stage_num": 13, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
-            {"stage_num": 14, "name": "aCompCor Physiological Noise Extraction", "status": "PASSED"},
-            {"stage_num": 15, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
-            {"stage_num": 16, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
-            {"stage_num": 17, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
-            {"stage_num": 18, "name": "CC200 ROI Time Series Extraction", "status": "PASSED"},
-            {"stage_num": 19, "name": "Pairwise Fisher-z Connectivity Calculation", "status": "PASSED"},
-            {"stage_num": 20, "name": "Quality Control Visual Overlay Generation", "status": "PASSED"},
-            {"stage_num": 21, "name": "Schema-Compliant Provenance Generation", "status": "PASSED"},
+            {"stage_num": 4, "name": "B0 Susceptibility Distortion Correction (DEC-SDC-02)", "status": "PASSED"},
+            {"stage_num": 5, "name": "Motion Transform (+ Optional SDC) Application (Native Reference Series)", "status": "PASSED"},
+            {"stage_num": 6, "name": "Functional Reference Generation", "status": "PASSED"},
+            {"stage_num": 7, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
+            {"stage_num": 8, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
+            {"stage_num": 9, "name": "Tissue Segmentation (CSF, GM, WM)", "status": "PASSED"},
+            {"stage_num": 10, "name": "Morphological Tissue Mask Erosion", "status": "PASSED"},
+            {"stage_num": 11, "name": "EPI-to-T1w 3D Rigid Coregistration", "status": "PASSED"},
+            {"stage_num": 12, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
+            {"stage_num": 13, "name": "Composed Pullback Resampling (Motion + SDC + Coreg + SyN on STC BOLD)", "status": "PASSED"},
+            {"stage_num": 14, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
+            {"stage_num": 15, "name": "aCompCor Physiological Noise Extraction", "status": "PASSED"},
+            {"stage_num": 16, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
+            {"stage_num": 17, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
+            {"stage_num": 18, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
+            {"stage_num": 19, "name": "CC200 ROI Time Series Extraction", "status": "PASSED"},
+            {"stage_num": 20, "name": "Pairwise Fisher-z Connectivity Calculation", "status": "PASSED"},
+            {"stage_num": 21, "name": "Quality Control Visual Overlay Generation", "status": "PASSED"},
+            {"stage_num": 22, "name": "Schema-Compliant Provenance Generation", "status": "PASSED"},
         ],
         "artifacts_verified": stage_artifacts_summary,
         "run1_output_dir": str(run1_res["output_dir"]),

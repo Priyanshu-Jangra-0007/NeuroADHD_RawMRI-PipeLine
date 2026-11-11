@@ -17,7 +17,7 @@ G. 5-region temporal boundary benchmark (first, first5, interior, last5, final) 
    derivative boundary-risk metadata for positive and negative shifts
 H. Independent geometric landmark phantom validation of compose_volume_transform & DIPY
    AffineMap / DiffeomorphicMap forward & inverse conventions (Step 4.2)
-I. Source-acquisition-like 37-slice x 240-volume full 21-stage canonical CC200 E2E run
+I. Source-acquisition-like 37-slice x 240-volume full 22-stage canonical CC200 E2E run
    with correlation recovery, Run 1 vs Run 2 determinism, and CC200 240-vs-241 audit (Step 4.2).
 
 SAFETY:
@@ -961,7 +961,7 @@ def run_composed_transform_landmark_validation() -> Dict[str, Any]:
 
 
 def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
-    """Run full 21-stage pipeline on a source-acquisition-like 37-slice x 240-vol scan -> canonical CC200."""
+    """Run full 22-stage pipeline on a source-acquisition-like 37-slice x 240-vol scan -> canonical CC200."""
     case_root = out_root / "e2e_37slices_240vols"
     ses_dir = case_root / "inputs" / "sub-synthetic037" / "ses-1"
     func_dir = ses_dir / "func"
@@ -1131,7 +1131,7 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
     )
     assert res1["status"] == "SUCCESS"
     prov = res1["provenance"]
-    assert prov["pipeline_stages_total"] == 21
+    assert prov["pipeline_stages_total"] == 22
     assert prov["motion_estimation"]["estimated_on_raw_uncorrected_bold"] is True
     assert prov["motion_estimation"]["estimated_before_slice_timing"] is True
     stc_prov = prov["slice_timing_correction"]
@@ -1181,7 +1181,7 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
     assert feat_vec1.shape == (19900,)
     assert np.all(np.isfinite(feat_vec1))
 
-    # Run 2: Verify strict determinism across complete 21-stage execution
+    # Run 2: Verify strict determinism across complete 22-stage execution
     res2 = run_poc_v2_pipeline(
         bold_path=bold_path,
         bold_json_path=json_path,
@@ -1222,7 +1222,7 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
         "extra_timepoint_origin_explanation": (
             "roi_CC200.csv uses C-PAC layout: 200 ROI rows x 241 columns where column 0 "
             "is 'node/volume' (integer ROI IDs 1..200) and columns '0'..'239' hold the exact "
-            "240 timepoints; Stage 19 connectivity consumes signals of shape (240, 200)."
+            "240 timepoints; Stage 20 connectivity consumes signals of shape (240, 200)."
         ),
         "correlation_recovery": {
             "positive_pair": {
@@ -1581,7 +1581,7 @@ def run_step4_validation(root_dir: Optional[Path] = None) -> Dict[str, Any]:
     _, peak_mem_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
-    print("\nRunning 37-slice x 240-volume source-acquisition -> canonical CC200 21-stage E2E test (Run 1 + Run 2)...")
+    print("\nRunning 37-slice x 240-volume source-acquisition -> canonical CC200 22-stage E2E test (Run 1 + Run 2)...")
     e2e_37slice = run_37slice_240vol_e2e_integration(out_root)
     print(
         f"  -> E2E 37-slice PASSED: src={e2e_37slice['source_bold_shape']} -> "
