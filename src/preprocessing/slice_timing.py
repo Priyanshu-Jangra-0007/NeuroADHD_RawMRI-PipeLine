@@ -1,16 +1,18 @@
 """Metadata-driven slice-timing correction (STC) for 4D resting-state fMRI BOLD series.
 
-Implements Step 4 (DEC-STC-01) using BIDS-compliant timing metadata:
-- Validates RepetitionTime, SliceTiming, and SliceEncodingDirection (i, i-, j, j-, k, k-).
+Implements Step 4 / Step 4.1 (DEC-STC-01) using BIDS-compliant timing metadata:
+- Validates RepetitionTime, SliceTiming, and SliceEncodingDirection (i, i-, j, j-, k, k-)
+  against NIfTI header dim_info slice_dim.
+- When SliceEncodingDirection is absent, derives slice axis strictly from NIfTI header
+  slice_dim with increasing slice-index convention; if slice_dim is also unavailable,
+  skips STC with an explicit reason rather than guessing axis 'k'.
 - Rejects missing/invalid timing metadata without inventing timings from TR alone.
 - Detects simultaneous slice acquisition and skips unnecessary temporal resampling.
 - Prevents double slice-timing correction (SliceTimingCorrected=True guard).
-- Uses SciPy C2 cubic spline interpolation (not-a-knot boundary condition) by default
-  when AFNI 3dTshift is not installed in the container/host environment, with optional
-  quintic B-spline, odd-mirror Fourier phase-shift, and linear backends.
-- Preserves spatial dimensions, spatial 4x4 affine, finite numerical stability,
-  and explicit NIfTI temporal TR zoom while documenting the +reference_time (half-TR)
-  temporal-origin shift relative to volume onset.
+- Uses odd-point-reflected C2 cubic spline interpolation (extrapolate=False over padded
+  knots) by default when AFNI 3dTshift is unavailable, preventing unbounded cubic/quintic
+  polynomial boundary blowup under edge noise and transients while preserving linear trends,
+  interior C2 spline accuracy, and +reference_time (StartTime) temporal origin.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from scipy.fft import irfft, rfft, rfftfreq
 from scipy.interpolate import CubicSpline, make_interp_spline
 
 DEFAULT_STC_METHOD = "cubic_spline"
+DEFAULT_BOUNDARY_PAD_SAMPLES = 4
 SUPPORTED_STC_METHODS = (
     "cubic_spline",
     "quintic_bspline",
@@ -45,6 +48,11 @@ SLICE_ENCODING_DIRECTION_MAP: Dict[str, Tuple[int, bool]] = {
     "j-": (1, True),
     "k": (2, False),
     "k-": (2, True),
+}
+SLICE_DIM_TO_DIRECTION: Dict[int, str] = {
+    0: "i",
+    1: "j",
+    2: "k",
 }
 SIMULTANEOUS_TOL_SEC = 1e-9
 TIME_UNIT_TO_SECONDS = {
@@ -76,14 +84,14 @@ class DoubleSliceTimingCorrectionError(SliceTimingValidationError):
 class SliceTimingValidationReport:
     """Structured validation result for BIDS BOLD slice-timing metadata."""
 
-    status: str  # VALIDATED | SKIPPED_MISSING_METADATA | SKIPPED_SIMULTANEOUS_ACQUISITION
+    status: str  # VALIDATED | SKIPPED_MISSING_METADATA | SKIPPED_SIMULTANEOUS_ACQUISITION | SKIPPED_UNKNOWN_SLICE_AXIS
     tr: float
     reference_time: Optional[float]
-    slice_axis: int
-    slice_encoding_direction: str
-    slice_encoding_direction_reversed: bool
+    slice_axis: Optional[int]
+    slice_encoding_direction: Optional[str]
+    slice_encoding_direction_reversed: Optional[bool]
     slice_encoding_direction_assumed: bool
-    num_slices: int
+    num_slices: Optional[int]
     num_volumes: int
     original_slice_timing: Optional[Tuple[float, ...]]
     voxel_slice_times: Optional[Tuple[float, ...]]
@@ -91,6 +99,8 @@ class SliceTimingValidationReport:
     relative_correction_necessary: bool
     header_tr_seconds: Optional[float]
     header_time_unit: str
+    header_slice_dim: Optional[int] = None
+    slice_axis_source: str = "bids_slice_encoding_direction"
     warnings: List[str] = field(default_factory=list)
     reason: Optional[str] = None
 
@@ -99,11 +109,17 @@ class SliceTimingValidationReport:
             "status": self.status,
             "tr": float(self.tr),
             "reference_time": float(self.reference_time) if self.reference_time is not None else None,
-            "slice_axis": int(self.slice_axis),
+            "slice_axis": int(self.slice_axis) if self.slice_axis is not None else None,
             "slice_encoding_direction": self.slice_encoding_direction,
-            "slice_encoding_direction_reversed": bool(self.slice_encoding_direction_reversed),
+            "slice_encoding_direction_reversed": (
+                bool(self.slice_encoding_direction_reversed)
+                if self.slice_encoding_direction_reversed is not None
+                else None
+            ),
             "slice_encoding_direction_assumed": bool(self.slice_encoding_direction_assumed),
-            "num_slices": int(self.num_slices),
+            "header_slice_dim": int(self.header_slice_dim) if self.header_slice_dim is not None else None,
+            "slice_axis_source": self.slice_axis_source,
+            "num_slices": int(self.num_slices) if self.num_slices is not None else None,
             "num_volumes": int(self.num_volumes),
             "original_slice_timing": list(self.original_slice_timing)
             if self.original_slice_timing is not None
@@ -179,8 +195,8 @@ def _resolve_interpolation_method(interpolation_method: Optional[str]) -> Tuple[
         canonical = alias_map.get(raw, raw)
 
     descriptions = {
-        "cubic_spline": "scipy.interpolate.CubicSpline(bc_type='not-a-knot', extrapolate=True)",
-        "quintic_bspline": "scipy.interpolate.make_interp_spline(k=5)",
+        "cubic_spline": "odd-point-reflected C2 scipy.interpolate.CubicSpline(extrapolate=False)",
+        "quintic_bspline": "odd-point-reflected scipy.interpolate.make_interp_spline(k=5, extrapolate=False)",
         "fourier": "odd-mirror C1-extended scipy.fft.rfft/irfft phase shift",
         "linear": "numpy.interp piecewise linear interpolation",
     }
@@ -328,10 +344,12 @@ def validate_slice_timing_metadata(
             "double slice-timing correction is prohibited."
         )
 
-    # 2. Extract and validate 4D image geometry & NIfTI temporal header
+    # 2. Extract and validate 4D image geometry & NIfTI temporal/slice header
     header_tr_sec: Optional[float] = None
     header_time_unit = "unknown"
-    if isinstance(bold_image, nib.Nifti1Image):
+    header_slice_dim: Optional[int] = None
+    is_nifti_image = isinstance(bold_image, nib.Nifti1Image)
+    if is_nifti_image:
         shape = tuple(int(dim) for dim in bold_image.shape)
         if len(shape) != 4:
             raise InvalidSliceTimingError(
@@ -342,6 +360,10 @@ def validate_slice_timing_metadata(
             raise InvalidSliceTimingError("BOLD NIfTI image contains a non-finite or malformed affine matrix.")
         if abs(float(np.linalg.det(affine[:3, :3]))) < 1e-12:
             raise InvalidSliceTimingError("BOLD NIfTI spatial affine is singular (non-invertible).")
+
+        dim_info = bold_image.header.get_dim_info()
+        if len(dim_info) >= 3 and dim_info[2] in SLICE_DIM_TO_DIRECTION:
+            header_slice_dim = int(dim_info[2])
 
         zooms = tuple(float(z) for z in bold_image.header.get_zooms())
         _, t_unit = bold_image.header.get_xyzt_units()
@@ -413,17 +435,15 @@ def validate_slice_timing_metadata(
                 f"RepetitionTime ({tr}s) disagrees with VolumeTiming intervals."
             )
 
-    # 4. Validate SliceEncodingDirection (C)
+    # 4. Validate SliceEncodingDirection against NIfTI header slice_dim (Requirement 2)
     warnings: List[str] = []
-    if "SliceEncodingDirection" not in metadata or metadata["SliceEncodingDirection"] is None:
-        # BIDS MRI specification defaults SliceEncodingDirection to "k" (positive 3rd spatial axis)
-        direction = "k"
-        direction_assumed = True
-        warnings.append(
-            "SliceEncodingDirection absent in metadata; applied BIDS specification default 'k' "
-            "(positive index order along spatial axis 2)."
-        )
-    else:
+    slice_axis: Optional[int]
+    direction: Optional[str]
+    is_reversed: Optional[bool]
+    direction_assumed: bool
+    slice_axis_source: str
+
+    if "SliceEncodingDirection" in metadata and metadata["SliceEncodingDirection"] is not None:
         raw_dir = metadata["SliceEncodingDirection"]
         if not isinstance(raw_dir, str) or raw_dir not in SLICE_ENCODING_DIRECTION_MAP:
             raise InvalidSliceTimingError(
@@ -431,10 +451,41 @@ def validate_slice_timing_metadata(
                 f"Supported values: {', '.join(SLICE_ENCODING_DIRECTION_MAP.keys())}."
             )
         direction = raw_dir
+        slice_axis, is_reversed = SLICE_ENCODING_DIRECTION_MAP[direction]
         direction_assumed = False
+        slice_axis_source = "bids_slice_encoding_direction"
 
-    slice_axis, is_reversed = SLICE_ENCODING_DIRECTION_MAP[direction]
-    num_slices = int(shape[slice_axis])
+        if header_slice_dim is not None and header_slice_dim != slice_axis:
+            raise InvalidSliceTimingError(
+                f"BIDS SliceEncodingDirection='{direction}' (spatial axis {slice_axis}) conflicts "
+                f"with NIfTI header dim_info slice_dim={header_slice_dim} "
+                f"('{SLICE_DIM_TO_DIRECTION[header_slice_dim]}'). Refusing inconsistent slice geometry."
+            )
+        if is_nifti_image and header_slice_dim is None:
+            warnings.append(
+                f"NIfTI header dim_info slice_dim is unset (None); trusting explicit BIDS "
+                f"SliceEncodingDirection='{direction}' (axis {slice_axis})."
+            )
+    else:
+        if header_slice_dim is not None:
+            slice_axis = header_slice_dim
+            direction = SLICE_DIM_TO_DIRECTION[slice_axis]
+            is_reversed = False
+            direction_assumed = True
+            slice_axis_source = "nifti_header_slice_dim"
+            warnings.append(
+                f"SliceEncodingDirection absent in metadata; derived slice axis '{direction}' "
+                f"(axis {slice_axis}) with increasing slice-index convention from NIfTI header "
+                f"dim_info slice_dim={header_slice_dim}."
+            )
+        else:
+            slice_axis = None
+            direction = None
+            is_reversed = None
+            direction_assumed = False
+            slice_axis_source = "undetermined"
+
+    num_slices: Optional[int] = int(shape[slice_axis]) if slice_axis is not None else None
     num_volumes = int(shape[3])
 
     # 5. Validate reference_time (Phase D)
@@ -476,6 +527,8 @@ def validate_slice_timing_metadata(
             relative_correction_necessary=False,
             header_tr_seconds=header_tr_sec,
             header_time_unit=header_time_unit,
+            header_slice_dim=header_slice_dim,
+            slice_axis_source=slice_axis_source,
             warnings=warnings,
             reason=reason,
         )
@@ -494,11 +547,6 @@ def validate_slice_timing_metadata(
     timing_list = list(raw_slice_timing)
     if len(timing_list) == 0:
         raise InvalidSliceTimingError("Invalid 'SliceTiming': timing array must not be empty.")
-    if len(timing_list) != num_slices:
-        raise InvalidSliceTimingError(
-            f"SliceTiming length ({len(timing_list)}) does not match number of slices ({num_slices}) "
-            f"along NIfTI axis {slice_axis} for SliceEncodingDirection='{direction}'."
-        )
 
     parsed_timings: List[float] = []
     for idx, entry in enumerate(timing_list):
@@ -514,12 +562,48 @@ def validate_slice_timing_metadata(
         parsed_timings.append(t_val)
 
     timing_arr = np.asarray(parsed_timings, dtype=np.float64)
+    order_interp = _classify_slice_order(timing_arr)
+
+    if slice_axis is None or num_slices is None or is_reversed is None:
+        reason = (
+            "SliceEncodingDirection is absent in BIDS metadata and NIfTI header dim_info slice_dim "
+            "is unavailable (None). Refusing to assume axis 'k' universally or fabricate slice "
+            "acquisition ordering; slice-timing correction skipped and original BOLD series preserved."
+        )
+        warnings.append(reason)
+        return SliceTimingValidationReport(
+            status="SKIPPED_UNKNOWN_SLICE_AXIS",
+            tr=tr,
+            reference_time=ref_time,
+            slice_axis=None,
+            slice_encoding_direction=None,
+            slice_encoding_direction_reversed=None,
+            slice_encoding_direction_assumed=False,
+            num_slices=None,
+            num_volumes=num_volumes,
+            original_slice_timing=tuple(parsed_timings),
+            voxel_slice_times=None,
+            slice_order_interpretation=order_interp,
+            relative_correction_necessary=False,
+            header_tr_seconds=header_tr_sec,
+            header_time_unit=header_time_unit,
+            header_slice_dim=None,
+            slice_axis_source="undetermined",
+            warnings=warnings,
+            reason=reason,
+        )
+
+    if len(timing_list) != num_slices:
+        raise InvalidSliceTimingError(
+            f"SliceTiming length ({len(timing_list)}) does not match number of slices ({num_slices}) "
+            f"along NIfTI axis {slice_axis} for SliceEncodingDirection='{direction}'."
+        )
+
     # Reverse index correspondence when SliceEncodingDirection ends in '-'
     voxel_times = timing_arr[::-1].copy() if is_reversed else timing_arr.copy()
 
     # Check simultaneous acquisition (all slices share identical acquisition time)
     is_simultaneous = (num_slices <= 1) or (float(np.ptp(voxel_times)) <= SIMULTANEOUS_TOL_SEC)
-    order_interp = _classify_slice_order(timing_arr)
 
     if is_simultaneous:
         reason = (
@@ -543,6 +627,8 @@ def validate_slice_timing_metadata(
             relative_correction_necessary=False,
             header_tr_seconds=header_tr_sec,
             header_time_unit=header_time_unit,
+            header_slice_dim=header_slice_dim,
+            slice_axis_source=slice_axis_source,
             warnings=warnings,
             reason=reason,
         )
@@ -563,9 +649,33 @@ def validate_slice_timing_metadata(
         relative_correction_necessary=True,
         header_tr_seconds=header_tr_sec,
         header_time_unit=header_time_unit,
+        header_slice_dim=header_slice_dim,
+        slice_axis_source=slice_axis_source,
         warnings=warnings,
         reason=None,
     )
+
+
+def _odd_reflect_pad_series(
+    slice_y: np.ndarray,
+    t_vol: int,
+    k_pad: int = DEFAULT_BOUNDARY_PAD_SAMPLES,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Extend a (N_vox, T) series at both ends using C1 odd point-reflection.
+
+    y(-k) = 2*y(0) - y(k) and y(T-1+k) = 2*y(T-1) - y(T-1-k).
+    Enforces zero boundary curvature (natural spline equivalence), preserves affine/linear
+    trends exactly, prevents unbounded cubic/quintic polynomial extrapolation under boundary
+    noise and transient spikes, and keeps query coordinates strictly within spline knots.
+    """
+    pad = min(int(k_pad), t_vol - 1)
+    if pad <= 0:
+        return np.arange(t_vol, dtype=np.float64), slice_y
+    left_pad = 2.0 * slice_y[:, :1] - slice_y[:, 1 : pad + 1][:, ::-1]
+    right_pad = 2.0 * slice_y[:, -1:] - slice_y[:, t_vol - pad - 1 : t_vol - 1][:, ::-1]
+    y_ext = np.concatenate([left_pad, slice_y, right_pad], axis=1)
+    t_ext = np.arange(-pad, t_vol + pad, dtype=np.float64)
+    return t_ext, y_ext
 
 
 def _interpolate_slice_series(
@@ -578,10 +688,13 @@ def _interpolate_slice_series(
     t_vol = slice_y.shape[1]
     query_indices = t_indices + delta_samples
     if method == "cubic_spline":
-        spline = CubicSpline(t_indices, slice_y, axis=1, bc_type="not-a-knot", extrapolate=True)
+        t_ext, y_ext = _odd_reflect_pad_series(slice_y, t_vol, DEFAULT_BOUNDARY_PAD_SAMPLES)
+        spline = CubicSpline(t_ext, y_ext, axis=1, bc_type="not-a-knot", extrapolate=False)
         return spline(query_indices)
     if method == "quintic_bspline":
-        spline = make_interp_spline(t_indices, slice_y, k=5, axis=1)
+        t_ext, y_ext = _odd_reflect_pad_series(slice_y, t_vol, DEFAULT_BOUNDARY_PAD_SAMPLES)
+        spline = make_interp_spline(t_ext, y_ext, k=5, axis=1)
+        spline.extrapolate = False
         return spline(query_indices)
     if method == "linear":
         # Linear interpolation clamps cleanly at boundary endpoints [0, T-1]
@@ -653,14 +766,27 @@ def build_slice_timing_derivative_metadata(
     )
     out["SliceEncodingDirection"] = report_dict.get("slice_encoding_direction")
     out["SliceEncodingDirectionAssumed"] = bool(report_dict.get("slice_encoding_direction_assumed", False))
+    out["HeaderSliceDim"] = report_dict.get("header_slice_dim")
+    out["SliceAxisSource"] = report_dict.get("slice_axis_source")
     out["SliceAcquisitionOrder"] = report_dict.get("slice_order_interpretation")
     if report_dict.get("original_slice_timing") is not None:
         out["OriginalSliceTiming"] = list(report_dict["original_slice_timing"])
 
+    num_vols = int(report_dict["num_volumes"])
     if is_applied and ref_time is not None:
         out["SliceTimingReferenceTime"] = float(ref_time)
         out["StartTime"] = float(ref_time)
         out["TemporalOriginShiftSeconds"] = float(ref_time)
+        out["BoundaryPaddingStrategy"] = "odd_point_reflection_4tr"
+        out["BoundaryPadSamplesPerSide"] = min(DEFAULT_BOUNDARY_PAD_SAMPLES, max(0, num_vols - 1))
+        out["BoundaryExtrapolationDisabled"] = True
+        out["BoundaryEdgeVolumesAtRisk"] = [0, max(0, num_vols - 1)]
+        out["VolumeCensoringGuidance"] = (
+            "All T volumes and +reference_time StartTime preserved without silent cropping. "
+            "Edge volumes 0 and T-1 rely on odd-point anti-symmetric continuation across unobserved "
+            "boundary times; downstream GLM or scrubbing analyses may optionally censor [0, T-1] "
+            "if single-TR edge transient immunity is required."
+        )
         out["TemporalOriginNote"] = (
             f"All slices aligned to reference_time={float(ref_time):.6f}s within TR={tr:.6f}s "
             f"(+{float(ref_time):.6f}s offset relative to volume onset). "
@@ -677,8 +803,8 @@ def build_slice_timing_derivative_metadata(
     out["SoftwareName"] = report_dict.get("software")
     out["SoftwareVersion"] = report_dict.get("software_version")
     out["ProcessingStatus"] = status
-    out["NumSlices"] = int(report_dict["num_slices"])
-    out["NumVolumes"] = int(report_dict["num_volumes"])
+    out["NumSlices"] = int(report_dict["num_slices"]) if report_dict.get("num_slices") is not None else None
+    out["NumVolumes"] = num_vols
     out["NumCorrectedSlices"] = int(report_dict.get("num_corrected_slices", 0))
     if source_bold_ref:
         out["Sources"] = [source_bold_ref]
@@ -759,7 +885,7 @@ def correct_slice_timing_with_report(
             "status": val_report.status,
             "corrected": False,
             "num_corrected_slices": 0,
-            "num_zero_shift_slices": val_report.num_slices,
+            "num_zero_shift_slices": val_report.num_slices if val_report.num_slices is not None else 0,
             "interpolation_method": "none",
             "interpolation_description": "No temporal interpolation performed.",
             "software": "neuroadhd.preprocessing.slice_timing",
@@ -773,7 +899,12 @@ def correct_slice_timing_with_report(
         }
         return passthrough_img, report_dict
 
-    assert val_report.voxel_slice_times is not None and val_report.reference_time is not None
+    assert (
+        val_report.voxel_slice_times is not None
+        and val_report.reference_time is not None
+        and val_report.slice_axis is not None
+        and val_report.num_slices is not None
+    )
     tr = val_report.tr
     ref_time = val_report.reference_time
     voxel_times = val_report.voxel_slice_times
@@ -848,9 +979,12 @@ def correct_slice_timing_with_report(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "duration_seconds": duration_sec,
         "boundary_handling": (
-            "Non-periodic boundary extrapolation clamped to sub-TR index shift |delta| < 1 sample "
-            "via not-a-knot cubic spline polynomial continuation (avoids FFT wrap-around artifacts)."
+            "Odd point-reflection boundary padding (k_pad=min(4, T-1) samples; y(-k)=2*y(0)-y(k)) "
+            "paired with extrapolate=False (zero-curvature C2 continuation; exact linear trends; "
+            "prevents cubic/quintic polynomial noise/transient overshoot while preserving all T "
+            "volumes and +reference_time StartTime)."
         ),
+        "boundary_pad_samples": min(DEFAULT_BOUNDARY_PAD_SAMPLES, max(0, t_vol - 1)),
         "finite_output_count": int(corrected_data.size),
     }
     return out_img, report_dict

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import gc
 import resource
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -389,6 +389,50 @@ def compose_transformations(
     return composed_map
 
 
+def compose_volume_transform(
+    composed_map: DiffeomorphicMap,
+    motion_transform: Union[AffineMap, np.ndarray],
+) -> DiffeomorphicMap:
+    """Compose a per-volume rigid motion transform with an EPI-to-MNI DiffeomorphicMap.
+
+    In DIPY's pullback direction:
+        - ``composed_map.prealign_inv`` maps x_MNI_warped -> x_ref (M_t1w_to_epi @ M_mni_to_t1w)
+        - ``motion_transform`` maps x_ref -> x_vol(t) (estimated from raw uncorrected BOLD)
+    Combining them gives:
+        vol_prealign_inv = M_ref_to_vol(t) @ composed_map.prealign_inv
+    so ``.transform(raw_or_stc_vol_t)`` resamples directly from native acquisition volume t
+    into standard MNI/CC200 coordinates in a single spatial interpolation step.
+    """
+    motion_aff = np.asarray(
+        motion_transform.affine if hasattr(motion_transform, "affine") else motion_transform,
+        dtype=np.float64,
+    )
+    if motion_aff.shape != (4, 4) or not np.isfinite(motion_aff).all():
+        raise ValueError(f"Expected finite 4x4 motion transform matrix, got shape {motion_aff.shape}")
+
+    base_prealign_inv = (
+        np.asarray(composed_map.prealign_inv, dtype=np.float64)
+        if getattr(composed_map, "prealign_inv", None) is not None
+        else np.eye(4, dtype=np.float64)
+    )
+    vol_prealign_inv = motion_aff @ base_prealign_inv
+
+    vol_map = DiffeomorphicMap(
+        3,
+        disp_shape=composed_map.disp_shape,
+        disp_grid2world=composed_map.disp_grid2world,
+        domain_shape=composed_map.domain_shape,
+        domain_grid2world=composed_map.domain_grid2world,
+        codomain_shape=composed_map.codomain_shape,
+        codomain_grid2world=composed_map.codomain_grid2world,
+        prealign=np.linalg.inv(vol_prealign_inv),
+    )
+    vol_map.is_inverse = composed_map.is_inverse
+    vol_map.backward = composed_map.backward
+    vol_map.forward = composed_map.forward
+    return vol_map
+
+
 def resample_4d_bold(
     bold_4d: nib.Nifti1Image,
     composed_map: DiffeomorphicMap,
@@ -396,11 +440,15 @@ def resample_4d_bold(
     target_affine: np.ndarray,
     interpolation: str = "linear",
     max_memory_gb: float = 2.5,
+    motion_transforms: Optional[Sequence[Union[AffineMap, np.ndarray]]] = None,
 ) -> nib.Nifti1Image:
     """Resample 4D functional series into the target CC200 grid using the composed mapping.
 
     Performs volume-by-volume resampling across time to preserve temporal fidelity,
     prevent intermediate interpolation blur, and guarantee execution below the 2.5 GB RAM ceiling.
+    When ``motion_transforms`` is supplied, composes each volume's rigid motion matrix with
+    ``composed_map`` (EPI-to-T1w + T1w-to-MNI affine + SyN) so STC-corrected unresampled BOLD
+    is spatially resampled in a single interpolation step.
 
     Parameters
     ----------
@@ -416,6 +464,10 @@ def resample_4d_bold(
         Interpolation type: 'linear' for continuous functional data.
     max_memory_gb : float
         Maximum allowed resident memory in GB (default: 2.5 GB).
+    motion_transforms : Sequence[AffineMap | np.ndarray], optional
+        Optional length-T sequence of per-volume rigid motion transforms estimated prior to
+        resampling; when provided, per-volume motion + coregistration + MNI normalization are
+        applied in a single spatial interpolation step.
 
     Returns
     -------
@@ -429,13 +481,22 @@ def resample_4d_bold(
     t_vol = bold_data.shape[3]
     if t_vol < 50:
         raise ValueError(f"Insufficient BOLD timepoints: {t_vol} (minimum 50 required)")
+    if motion_transforms is not None and len(motion_transforms) != t_vol:
+        raise ValueError(
+            f"motion_transforms length ({len(motion_transforms)}) must match BOLD timepoints ({t_vol})."
+        )
 
     # Preallocate output 4D array in float32
     resampled_4d = np.zeros((*target_shape, t_vol), dtype=np.float32)
 
     for t in range(t_vol):
         vol_3d = bold_data[..., t]
-        warped_vol = composed_map.transform(
+        active_map = (
+            compose_volume_transform(composed_map, motion_transforms[t])
+            if motion_transforms is not None
+            else composed_map
+        )
+        warped_vol = active_map.transform(
             vol_3d,
             interpolation=interpolation,
             out_shape=target_shape,

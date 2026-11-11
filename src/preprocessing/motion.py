@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import List, Sequence, Tuple
 
 import nibabel as nib
 import numpy as np
 from dipy.align.imaffine import (
+    AffineMap,
     AffineRegistration,
     MutualInformationMetric,
     transform_centers_of_mass,
@@ -76,18 +77,24 @@ def build_friston_24_regressors(motion_params: np.ndarray) -> np.ndarray:
     return friston_24
 
 
-def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndarray, np.ndarray]:
-    """Perform 3D rigid-body motion correction on a 4D BOLD series using mean volume reference.
+def estimate_motion_parameters(
+    bold_img: nib.Nifti1Image,
+) -> Tuple[List[AffineMap], np.ndarray, np.ndarray]:
+    """Estimate per-volume 3D rigid-body motion transforms without spatial resampling.
+
+    Estimates 6-DOF rigid transforms mapping the temporal mean reference to each raw
+    BOLD volume so motion estimation uses original, un-interpolated BOLD intensities
+    prior to slice-timing correction and subsequent composed spatial resampling.
 
     Parameters
     ----------
     bold_img : nib.Nifti1Image
-        Raw 4D BOLD functional scan.
+        Raw, uncorrected 4D functional BOLD scan.
 
     Returns
     -------
-    Tuple[nib.Nifti1Image, np.ndarray, np.ndarray]
-        - Realigned 4D NIfTI image.
+    Tuple[List[AffineMap], np.ndarray, np.ndarray]
+        - List of T DIPY ``AffineMap`` rigid transforms (M_ref_to_vol(t)).
         - Motion parameters array of shape (T, 6) [trans_x, trans_y, trans_z, rot_x, rot_y, rot_z].
         - Framewise displacement 1D array of shape (T,).
     """
@@ -98,9 +105,9 @@ def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndar
     t_vol = data.shape[3]
     if t_vol < 2:
         raise ValueError(f"At least 2 functional volumes required for 3D motion correction, got {t_vol}")
-    affine = bold_img.affine
+    affine = np.asarray(bold_img.affine, dtype=np.float64)
 
-    # Compute reference: mean volume across all timepoints
+    # Compute reference: mean volume across all uncorrected timepoints
     static_vol = np.mean(data, axis=3)
 
     # Set up DIPY rigid registration
@@ -108,7 +115,7 @@ def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndar
     transform = RigidTransform3D()
     affreg = AffineRegistration(metric=metric, level_iters=[100, 20], sigmas=[2.0, 0.5], factors=[4, 2])
 
-    realigned_data = np.zeros_like(data)
+    rigid_transforms: List[AffineMap] = []
     motion_params = np.zeros((t_vol, 6), dtype=np.float64)
 
     for vol_idx in range(t_vol):
@@ -123,10 +130,7 @@ def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndar
             moving_grid2world=affine,
             starting_affine=c_of_mass.affine,
         )
-
-        # Resample volume using rigid transform
-        resampled_vol = rigid_mat.transform(moving_vol)
-        realigned_data[..., vol_idx] = resampled_vol
+        rigid_transforms.append(rigid_mat)
 
         # Extract translation (x, y, z in mm)
         t_vec = rigid_mat.affine[:3, 3]
@@ -147,5 +151,73 @@ def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndar
         motion_params[vol_idx, 3:6] = np.rad2deg([rx, ry, rz])
 
     fd = compute_framewise_displacement(motion_params)
-    realigned_img = nib.Nifti1Image(realigned_data, affine, bold_img.header)
+    return rigid_transforms, motion_params, fd
+
+
+def apply_motion_transforms(
+    bold_img: nib.Nifti1Image,
+    rigid_transforms: Sequence[AffineMap],
+    interpolation: str = "linear",
+) -> nib.Nifti1Image:
+    """Apply previously estimated 3D rigid motion transforms to a 4D BOLD image.
+
+    Parameters
+    ----------
+    bold_img : nib.Nifti1Image
+        4D functional BOLD image (typically slice-time corrected in original slice geometry).
+    rigid_transforms : Sequence[AffineMap]
+        Sequence of T per-volume DIPY ``AffineMap`` transforms returned by ``estimate_motion_parameters``.
+    interpolation : str
+        Spatial interpolation mode for DIPY ``AffineMap.transform`` (default: 'linear').
+
+    Returns
+    -------
+    nib.Nifti1Image
+        Motion-realigned 4D NIfTI image in native BOLD grid geometry.
+    """
+    data = np.asanyarray(bold_img.dataobj, dtype=np.float32)
+    if data.ndim != 4:
+        raise ValueError(f"Expected 4D functional scan, got {data.ndim}D")
+
+    t_vol = data.shape[3]
+    if len(rigid_transforms) != t_vol:
+        raise ValueError(
+            f"Expected {t_vol} rigid motion transforms matching BOLD timepoints, got {len(rigid_transforms)}."
+        )
+
+    realigned_data = np.zeros_like(data, dtype=np.float32)
+    for vol_idx in range(t_vol):
+        realigned_data[..., vol_idx] = rigid_transforms[vol_idx].transform(
+            data[..., vol_idx], interpolation=interpolation
+        )
+
+    out_header = bold_img.header.copy()
+    out_header.set_data_shape(realigned_data.shape)
+    out_header.set_data_dtype(np.float32)
+    out_header.set_slope_inter(1.0, 0.0)
+    return nib.Nifti1Image(realigned_data, bold_img.affine, out_header)
+
+
+def realign_4d_bold(bold_img: nib.Nifti1Image) -> Tuple[nib.Nifti1Image, np.ndarray, np.ndarray]:
+    """Perform 3D rigid-body motion correction on a 4D BOLD series using mean volume reference.
+
+    Convenience wrapper combining ``estimate_motion_parameters`` and ``apply_motion_transforms``
+    for backward compatibility. When slice-timing correction is active, prefer calling
+    ``estimate_motion_parameters`` before STC and ``apply_motion_transforms`` (or composed
+    MNI pullback resampling) afterward.
+
+    Parameters
+    ----------
+    bold_img : nib.Nifti1Image
+        Raw 4D BOLD functional scan.
+
+    Returns
+    -------
+    Tuple[nib.Nifti1Image, np.ndarray, np.ndarray]
+        - Realigned 4D NIfTI image.
+        - Motion parameters array of shape (T, 6) [trans_x, trans_y, trans_z, rot_x, rot_y, rot_z].
+        - Framewise displacement 1D array of shape (T,).
+    """
+    rigid_transforms, motion_params, fd = estimate_motion_parameters(bold_img)
+    realigned_img = apply_motion_transforms(bold_img, rigid_transforms)
     return realigned_img, motion_params, fd

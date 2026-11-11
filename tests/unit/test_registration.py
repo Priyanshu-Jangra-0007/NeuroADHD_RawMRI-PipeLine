@@ -9,9 +9,11 @@ from dipy.align.transforms import RigidTransform3D, AffineTransform3D
 from dipy.align.imwarp import SymmetricDiffeomorphicRegistration, DiffeomorphicMap
 from dipy.align.metrics import CCMetric
 
+from src.preprocessing.motion import apply_motion_transforms, estimate_motion_parameters
 from src.preprocessing.registration import (
     check_process_memory_gb,
     compose_transformations,
+    compose_volume_transform,
     compute_spatial_dice,
     generate_functional_reference,
     register_epi_to_t1w,
@@ -125,6 +127,83 @@ class TestRegistration(unittest.TestCase):
         resampled_mean = np.mean(np.asanyarray(resampled_img.dataobj), axis=3)
         dice = compute_spatial_dice(resampled_mean > 50, mni > 50)
         self.assertGreater(dice, 0.70)
+
+    def test_composed_volume_transform_single_step_motion_resampling(self):
+        """Composing per-volume motion_transforms with composed_map executes single-step pullback accurately."""
+        shape = (24, 24, 24)
+        affine = np.diag([3.0, 3.0, 3.0, 1.0])
+        t_vol = 52
+        # Build EPI with alternating sub-voxel / voxel shift across volumes and known EPI->T1w->MNI offset
+        mni = np.zeros(shape, dtype=np.float32)
+        mni[7:15, 7:15, 7:15] = 100.0
+
+        epi_4d = np.zeros((*shape, t_vol), dtype=np.float32)
+        for t in range(t_vol):
+            shift = 1 if (t % 2 == 1) else 0
+            epi_4d[8 + shift : 16 + shift, 7:15, 7:15, t] = 100.0 + 0.1 * (t % 4)
+        epi_img = nib.Nifti1Image(epi_4d, affine)
+
+        transforms, motion_params, fd = estimate_motion_parameters(epi_img)
+        self.assertEqual(len(transforms), t_vol)
+        self.assertEqual(motion_params.shape, (t_vol, 6))
+        self.assertEqual(fd.shape, (t_vol,))
+
+        # Single identity SyN + known 1-voxel pullback from EPI mean center (~x+1.5mm..3mm) to MNI
+        mean_epi = nib.Nifti1Image(np.mean(epi_4d, axis=3), affine)
+        mni_img = nib.Nifti1Image(mni, affine)
+        m_epi_to_mni, _ = register_epi_to_t1w(mean_epi, mni_img, level_iters=[20])
+
+        id_syn = DiffeomorphicMap(
+            3,
+            disp_shape=shape,
+            disp_grid2world=affine,
+            domain_shape=shape,
+            domain_grid2world=affine,
+            codomain_shape=shape,
+            codomain_grid2world=affine,
+        )
+        id_syn.is_inverse = True
+        id_syn.backward = np.zeros((*shape, 3), dtype=np.float32)
+        id_syn.forward = np.zeros((*shape, 3), dtype=np.float32)
+
+        composed = compose_transformations(
+            rigid_epi_to_t1w=m_epi_to_mni,
+            affine_t1w_to_mni=np.eye(4, dtype=np.float64),
+            syn_mapping=id_syn,
+            target_shape=shape,
+            target_affine=affine,
+            source_shape=shape,
+            source_affine=affine,
+        )
+
+        # Single-step composed resampling (Motion + EPI-to-MNI)
+        vol0_map = compose_volume_transform(composed, transforms[0])
+        np.testing.assert_allclose(
+            vol0_map.prealign_inv,
+            np.asarray(transforms[0].affine) @ np.asarray(composed.prealign_inv),
+            atol=1e-10,
+        )
+        single_step = resample_4d_bold(
+            epi_img, composed, target_shape=shape, target_affine=affine, motion_transforms=transforms
+        )
+        single_data = np.asanyarray(single_step.dataobj)
+        self.assertEqual(single_step.shape, (*shape, t_vol))
+        np.testing.assert_allclose(single_step.affine, affine)
+
+        # Two-step baseline for comparison: resampled once for motion, once for coreg
+        realigned = apply_motion_transforms(epi_img, transforms)
+        two_step = resample_4d_bold(realigned, composed, target_shape=shape, target_affine=affine)
+
+        # Verify single-step realigns to MNI target accurately and preserves sharper interior variance (less blur)
+        single_mean = np.mean(single_data, axis=3)
+        self.assertGreater(compute_spatial_dice(single_mean > 50, mni > 50), 0.85)
+        two_step_mean = np.mean(np.asanyarray(two_step.dataobj), axis=3)
+        # Fewer interpolations retain higher image contrast gradient (std across intensities)
+        self.assertGreaterEqual(float(np.std(single_mean)), float(np.std(two_step_mean)) - 1e-4)
+
+        # Mismatched length must fail closed
+        with self.assertRaises(ValueError):
+            resample_4d_bold(epi_img, composed, target_shape=shape, target_affine=affine, motion_transforms=transforms[:-1])
 
     def test_resample_mask_nearest_interpolation(self):
         # Create discrete label image with values 0, 1, 2, 5

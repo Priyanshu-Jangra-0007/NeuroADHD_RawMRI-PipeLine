@@ -640,7 +640,7 @@ async function refreshPipelineVerification() {
     const data = await api("/api/pipeline/verification");
     if ($("verificationBadge")) $("verificationBadge").textContent = data.badge || "SYNTHETIC PIPELINE VERIFIED";
     if ($("verifPipelineStatus")) $("verifPipelineStatus").textContent = `VERIFIED (${data.stages_verified}/${data.stages_total} Stages)`;
-    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 20} STAGES`;
+    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 21} STAGES`;
     if ($("verifRealDataStatus")) $("verifRealDataStatus").textContent = data.safety_gate?.real_scan_pipeline_status || "LOCKED (Pending Auth)";
     if ($("verifAtlasStatus")) $("verifAtlasStatus").textContent = `${data.parcellation?.atlas?.slice(0, 20) || "Craddock CC200"} (${data.parcellation?.rois || 200} ROIs)`;
     if ($("verifFeaturesStatus")) $("verifFeaturesStatus").textContent = `${(data.parcellation?.edges || 19900).toLocaleString()} Edges (All Finite)`;
@@ -657,7 +657,7 @@ async function refreshPipelineVerification() {
       if ($("verifStcStatus")) $("verifStcStatus").textContent = stc.status || "—";
       if ($("verifStcTr")) $("verifStcTr").textContent = stc.tr_seconds == null ? "Configurable via BIDS TR" : `${stc.tr_seconds.toFixed(2)} s`;
       if ($("verifStcSliceCount")) $("verifStcSliceCount").textContent = stc.slice_count == null ? "Per-axis NIfTI shape" : `${stc.slice_count} slices`;
-      if ($("verifStcDirection")) $("verifStcDirection").textContent = stc.acquisition_direction || "k (default)";
+      if ($("verifStcDirection")) $("verifStcDirection").textContent = stc.acquisition_direction || "Header-validated";
       if ($("verifStcRefTime")) {
         $("verifStcRefTime").textContent = stc.reference_time_seconds == null
           ? (stc.temporal_origin_shift_note || "+TR/2 offset")

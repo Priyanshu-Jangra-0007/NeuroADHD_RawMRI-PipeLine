@@ -66,8 +66,8 @@ class DashboardApplication:
             "real_data_authorized": False,
             "authorization_state": "NOT_AUTHORIZED",
             "pending_authorization_items": pending,
-            "pipeline": "Existing 20-stage synthetic MRI pipeline",
-            "pipeline_stages_total": 20,
+            "pipeline": "Existing 21-stage synthetic MRI pipeline",
+            "pipeline_stages_total": 21,
             "output_root": "outputs/dashboard_cohorts",
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
@@ -184,7 +184,8 @@ class DashboardApplication:
             controls = step4_report.get("controls", {})
             missing_warnings = [
                 f"Missing SliceTiming control -> {controls.get('missing_slice_timing_skip_status', 'SKIPPED_MISSING_METADATA')} "
-                "(strict mode rejects without inventing timings; missing SliceEncodingDirection defaults per BIDS to 'k' with warning)."
+                "(strict mode rejects without inventing timings; missing SliceEncodingDirection uses NIfTI header slice_dim "
+                "or skips with SKIPPED_UNKNOWN_SLICE_AXIS if undetermined — never assumes 'k')."
             ]
             slice_timing_summary: Dict[str, Any] = {
                 "badge": "SLICE-TIMING CORRECTION VERIFIED — SYNTHETIC ONLY",
@@ -226,8 +227,8 @@ class DashboardApplication:
                 "validation_report_loaded": False,
                 "tr_seconds": None,
                 "slice_count": None,
-                "acquisition_direction": "From BIDS SliceEncodingDirection (i, i-, j, j-, k, k-; default k)",
-                "primary_direction": "k",
+                "acquisition_direction": "From BIDS SliceEncodingDirection (i, i-, j, j-, k, k-) or NIfTI header slice_dim (skips if unknown)",
+                "primary_direction": None,
                 "reference_time_seconds": None,
                 "temporal_origin_shift_note": "+TR/2 offset from volume onset when applied",
                 "interpolation_method": (
@@ -253,29 +254,30 @@ class DashboardApplication:
                 "authorization_status": "NOT_AUTHORIZED",
                 "real_scan_pipeline_status": "LOCKED (WAITING FOR RESEARCH AUTHORIZATION)",
             },
-            "stages_total": 20,
-            "stages_verified": 20,
+            "stages_total": 21,
+            "stages_verified": 21,
             "stages": [
                 {"stage": 1, "name": "BIDS Input & Sidecar Metadata Validation", "status": "PASSED"},
-                {"stage": 2, "name": "Metadata-Driven Slice-Timing Correction (DEC-STC-01)", "status": "PASSED"},
-                {"stage": 3, "name": "3D Rigid Motion Realignment (DIPY) -> Motion + FD", "status": "PASSED"},
-                {"stage": 4, "name": "Functional Reference Generation", "status": "PASSED"},
-                {"stage": 5, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
-                {"stage": 6, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
-                {"stage": 7, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
-                {"stage": 8, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
-                {"stage": 9, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
-                {"stage": 10, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
-                {"stage": 11, "name": "Composed Pullback Resampling into CC200 Grid", "status": "PASSED"},
-                {"stage": 12, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
-                {"stage": 13, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
-                {"stage": 14, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
-                {"stage": 15, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
-                {"stage": 16, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
-                {"stage": 17, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
-                {"stage": 18, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
-                {"stage": 19, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
-                {"stage": 20, "name": "Schema-Compliant Provenance JSON Generation", "status": "PASSED"},
+                {"stage": 2, "name": "3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)", "status": "PASSED"},
+                {"stage": 3, "name": "Metadata-Driven Slice-Timing Correction (DEC-STC-01)", "status": "PASSED"},
+                {"stage": 4, "name": "Motion Transform Application (Native Reference Series)", "status": "PASSED"},
+                {"stage": 5, "name": "Functional Reference Generation", "status": "PASSED"},
+                {"stage": 6, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
+                {"stage": 7, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
+                {"stage": 8, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
+                {"stage": 9, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
+                {"stage": 10, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
+                {"stage": 11, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
+                {"stage": 12, "name": "Composed Pullback Resampling of STC BOLD into CC200 Grid", "status": "PASSED"},
+                {"stage": 13, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
+                {"stage": 14, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
+                {"stage": 15, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
+                {"stage": 16, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
+                {"stage": 17, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
+                {"stage": 18, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
+                {"stage": 19, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
+                {"stage": 20, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
+                {"stage": 21, "name": "Schema-Compliant Provenance JSON Generation", "status": "PASSED"},
             ],
             "slice_timing": slice_timing_summary,
             "motion_qc": {

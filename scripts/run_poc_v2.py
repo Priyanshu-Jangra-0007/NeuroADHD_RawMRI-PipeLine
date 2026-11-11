@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 """NeuroADHD RawMRI PoC V2 Single-Subject Preprocessing Pipeline Runner.
 
-Executes the complete 20-stage preprocessing pipeline on synthetic BIDS datasets.
+Executes the complete 21-stage preprocessing pipeline on synthetic BIDS datasets.
 Real participant processing is disabled by default to uphold data safety restrictions.
 
 Pipeline Stages:
-1.  BIDS Input & Sidecar Metadata Validation (TR, TaskName)
-2.  Metadata-Driven Slice-Timing Correction (DEC-STC-01; Before Spatial Resampling)
-3.  3D Rigid Motion Realignment (DIPY) -> Motion Parameters & Power FD
-4.  Functional Reference Generation (Temporal Mean & Functional Brain Mask)
-5.  Anatomical Brain Extraction (Median Otsu with Hole Filling)
-6.  Log-Polynomial Bias-Field Correction
-7.  Tissue Segmentation (GMM into CSF, GM, WM Probabilities)
-8.  Morphological Tissue Mask Erosion & Quality Verification (Mandatory T1w Reference)
-9.  EPI-to-T1w 3D Rigid Coregistration
-10. T1w-to-MNI SyN Nonlinear Normalization
-11. Composed Single-Step Pullback Resampling into CC200 Grid (Preserving is_inverse=True)
-12. Tissue Mask Standard Grid Resampling (Nearest-Neighbor)
-13. aCompCor Physiological Noise Extraction (5 Components)
-14. Friston-24 Motion Regressor Expansion
-15. Confound Matrix Assembly & Collinearity Condition Check
-16. Simultaneous Nuisance Regression & Butterworth Bandpass (0.01 - 0.10 Hz)
-17. CC200 ROI Time Series Extraction (200 Parcels, resampling_target=None)
-18. Pairwise Fisher-z Connectivity Vector Calculation (19,900 Edges)
-19. Quality Control Visual Overlay Generation (4 Orthogonal Multi-Planar Overlays)
-20. Schema-Compliant Provenance JSON Generation
+1.  BIDS Input & Sidecar Metadata Validation (TR, TaskName, Raw BOLD Load)
+2.  3D Rigid Motion Parameter Estimation on Raw Uncorrected BOLD (DIPY) -> Transforms & Power FD
+3.  Metadata-Driven Slice-Timing Correction (DEC-STC-01; Original Slice Geometry, Pre-Resampling)
+4.  Motion Transform Application to STC BOLD -> Native Realigned Reference Series
+5.  Functional Reference Generation (Temporal Mean EPI & Functional Brain Mask)
+6.  Anatomical Brain Extraction (Median Otsu with Hole Filling)
+7.  Log-Polynomial Bias-Field Correction
+8.  Tissue Segmentation (GMM into CSF, GM, WM Probabilities)
+9.  Morphological Tissue Mask Erosion & Quality Verification (Mandatory T1w Reference)
+10. EPI-to-T1w 3D Rigid Coregistration
+11. T1w-to-MNI SyN Nonlinear Normalization
+12. Composed Single-Step Pullback Resampling of STC BOLD (Motion + Coreg + SyN into CC200 Grid)
+13. Tissue Mask Standard Grid Resampling (Nearest-Neighbor)
+14. aCompCor Physiological Noise Extraction (5 Components)
+15. Friston-24 Motion Regressor Expansion
+16. Confound Matrix Assembly & Collinearity Condition Check
+17. Simultaneous Nuisance Regression & Butterworth Bandpass (0.01 - 0.10 Hz)
+18. CC200 ROI Time Series Extraction (200 Parcels, resampling_target=None)
+19. Pairwise Fisher-z Connectivity Vector Calculation (19,900 Edges)
+20. Quality Control Visual Overlay Generation (4 Orthogonal Multi-Planar Overlays)
+21. Schema-Compliant Provenance JSON Generation
 """
 from __future__ import annotations
 
@@ -63,7 +64,11 @@ from src.parcellation.extractor import (
     extract_cc200_timeseries,
     verify_canonical_cc200_atlas,
 )
-from src.preprocessing.motion import build_friston_24_regressors, realign_4d_bold
+from src.preprocessing.motion import (
+    apply_motion_transforms,
+    build_friston_24_regressors,
+    estimate_motion_parameters,
+)
 from src.preprocessing.nuisance import (
     build_confound_matrix,
     clean_functional_bold,
@@ -492,9 +497,11 @@ def generate_synthetic_phantom_session(
         bold_data[..., t] = vol
 
     bold_nii_path = func_dir / f"{subject_id}_{session_id}_task-rest_bold.nii.gz"
+    slice_axis_dim, _ = SLICE_ENCODING_DIRECTION_MAP.get(slice_encoding_direction, (2, False))
     bold_nii_img = nib.Nifti1Image(bold_data, epi_affine)
     bold_nii_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
     bold_nii_img.header.set_xyzt_units("mm", "sec")
+    bold_nii_img.header.set_dim_info(slice=slice_axis_dim)
     nib.save(bold_nii_img, str(bold_nii_path))
 
     # BOLD Sidecar JSON
@@ -507,8 +514,10 @@ def generate_synthetic_phantom_session(
     }
 
     # 2. Anatomical T1w head volume with internal ventricles and deep WM core
+    # 1.6 mm isotropic spacing gives a 27.2 mm physical brain radius (17 * 1.6),
+    # matching the 27.0 mm phantom EPI/MNI brain (9 * 3.0) without unphysical border stretch.
     t1_shape = (40, 40, 40)
-    t1_affine = np.diag([2.0, 2.0, 2.0, 1.0])
+    t1_affine = np.diag([1.6, 1.6, 1.6, 1.0])
     tx, ty, tz = np.ogrid[: t1_shape[0], : t1_shape[1], : t1_shape[2]]
     tc = (20, 20, 20)
     tr_sq = (tx - tc[0]) ** 2 + (ty - tc[1]) ** 2 + (tz - tc[2]) ** 2
@@ -560,6 +569,7 @@ def generate_synthetic_phantom_session(
         canon_bold_img = nib.Nifti1Image(bold_data, target_affine)
         canon_bold_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
         canon_bold_img.header.set_xyzt_units("mm", "sec")
+        canon_bold_img.header.set_dim_info(slice=slice_axis_dim)
         nib.save(canon_bold_img, str(bold_nii_path))
 
         # Regenerate T1w data matching canonical atlas space
@@ -713,7 +723,7 @@ def run_poc_v2_pipeline(
     slice_timing_interpolation: Optional[str] = None,
     allow_missing_slice_timing: bool = True,
 ) -> Dict[str, Any]:
-    """Execute the complete 20-stage NeuroADHD PoC V2 preprocessing pipeline."""
+    """Execute the complete 21-stage NeuroADHD PoC V2 preprocessing pipeline."""
     bold_path = Path(bold_path)
     bold_json_path = Path(bold_json_path)
     t1w_path = Path(t1w_path)
@@ -788,7 +798,7 @@ def run_poc_v2_pipeline(
         # Stage 1: BIDS Input & Sidecar Metadata Validation
         # -------------------------------------------------------------
         current_stage = "Stage 1: BIDS Input Validation"
-        print(f"\n[Stage 1/20] Validating BIDS metadata from {bold_json_path.name}...")
+        print(f"\n[Stage 1/21] Validating BIDS metadata from {bold_json_path.name}...")
         validator = BIDSInputValidator()
         bids_meta = validator.validate_sidecar_json(bold_json_path)
         tr = bids_meta["repetition_time"]
@@ -827,12 +837,30 @@ def run_poc_v2_pipeline(
         epi_shape = bold_img.shape[:3]
 
         # -------------------------------------------------------------
-        # Stage 2: Metadata-Driven Slice-Timing Correction (DEC-STC-01)
+        # Stage 2: 3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)
         # -------------------------------------------------------------
-        current_stage = "Stage 2: Slice-Timing Correction"
-        print("\n[Stage 2/20] Executing metadata-driven slice-timing correction before motion/spatial resampling...")
+        current_stage = "Stage 2: Motion Parameter Estimation"
+        print(
+            f"\n[Stage 2/21] Estimating 3D rigid motion parameters on raw uncorrected BOLD ({t_vol} volumes)..."
+        )
         bold_input_sha256 = compute_sha256(bold_path)
         bold_json_input_sha256 = compute_sha256(bold_json_path)
+        rigid_motion_transforms, motion_params, fd_vector = estimate_motion_parameters(bold_img)
+        mean_fd = float(np.mean(fd_vector))
+        max_fd = float(np.max(fd_vector))
+        scrubbed = int(np.count_nonzero(fd_vector > 0.5))
+        print(
+            f"  -> Estimated from raw BOLD (pre-STC): Mean FD: {mean_fd:.4f} mm | "
+            f"Max FD: {max_fd:.4f} mm | Scrubbed (>0.5mm): {scrubbed} volumes"
+        )
+
+        # -------------------------------------------------------------
+        # Stage 3: Metadata-Driven Slice-Timing Correction (DEC-STC-01)
+        # -------------------------------------------------------------
+        current_stage = "Stage 3: Slice-Timing Correction"
+        print(
+            "\n[Stage 3/21] Executing metadata-driven slice-timing correction on original slice geometry..."
+        )
         with open(bold_json_path, "r", encoding="utf-8") as bj_f:
             raw_bold_sidecar = json.load(bj_f)
 
@@ -899,7 +927,7 @@ def run_poc_v2_pipeline(
             or compute_sha256(bold_json_path) != bold_json_input_sha256
         ):
             raise RuntimeError(
-                "Input integrity violation: raw BOLD or JSON sidecar was altered during Stage 2 STC."
+                "Input integrity violation: raw BOLD or JSON sidecar was altered during Stage 2/3."
             )
 
         stc_provenance_summary: Dict[str, Any] = {
@@ -908,14 +936,22 @@ def run_poc_v2_pipeline(
             "tr_seconds": float(stc_report["tr"]),
             "reference_time_seconds": stc_report.get("reference_time"),
             "temporal_origin_shift_seconds": float(stc_report.get("temporal_origin_shift_seconds", 0.0)),
-            "slice_axis": int(stc_report["slice_axis"]),
+            "slice_axis": int(stc_report["slice_axis"]) if stc_report.get("slice_axis") is not None else None,
+            "header_slice_dim": stc_report.get("header_slice_dim"),
+            "slice_axis_source": stc_report.get("slice_axis_source"),
             "slice_encoding_direction": stc_report["slice_encoding_direction"],
             "slice_encoding_direction_assumed": bool(stc_report.get("slice_encoding_direction_assumed", False)),
-            "slice_encoding_direction_reversed": bool(stc_report.get("slice_encoding_direction_reversed", False)),
+            "slice_encoding_direction_reversed": (
+                bool(stc_report["slice_encoding_direction_reversed"])
+                if stc_report.get("slice_encoding_direction_reversed") is not None
+                else None
+            ),
             "slice_order_interpretation": stc_report.get("slice_order_interpretation"),
-            "num_slices": int(stc_report["num_slices"]),
+            "num_slices": int(stc_report["num_slices"]) if stc_report.get("num_slices") is not None else None,
             "num_corrected_slices": int(stc_report.get("num_corrected_slices", 0)),
             "interpolation_method": stc_report.get("interpolation_method"),
+            "boundary_handling": stc_report.get("boundary_handling"),
+            "boundary_pad_samples": stc_report.get("boundary_pad_samples"),
             "software": stc_report.get("software"),
             "software_version": stc_report.get("software_version"),
             "afni_3dtshift_available": bool(stc_report.get("afni_3dtshift_available", False)),
@@ -931,53 +967,56 @@ def run_poc_v2_pipeline(
         }
 
         # -------------------------------------------------------------
-        # Stage 3: 3D Rigid Motion Realignment (DIPY) -> Motion + FD
+        # Stage 4: Apply Estimated Motion Transforms to STC BOLD
         # -------------------------------------------------------------
-        current_stage = "Stage 3: Motion Realignment"
-        print(f"\n[Stage 3/20] Realigning slice-timing-processed 4D BOLD series ({t_vol} volumes)...")
-        realigned_bold, motion_params, fd_vector = realign_4d_bold(stc_bold_img)
-        mean_fd = float(np.mean(fd_vector))
-        max_fd = float(np.max(fd_vector))
-        scrubbed = int(np.count_nonzero(fd_vector > 0.5))
-        print(f"  -> Mean FD: {mean_fd:.4f} mm | Max FD: {max_fd:.4f} mm | Scrubbed (>0.5mm): {scrubbed} volumes")
+        current_stage = "Stage 4: Motion Transform Application"
+        print(
+            f"\n[Stage 4/21] Applying pre-estimated rigid motion transforms to STC BOLD ({t_vol} volumes)..."
+        )
+        realigned_bold = apply_motion_transforms(
+            stc_bold_img, rigid_motion_transforms, interpolation="linear"
+        )
+        print("  -> Motion-aligned native BOLD constructed for functional reference.")
 
         # -------------------------------------------------------------
-        # Stage 4: Functional Reference Generation
+        # Stage 5: Functional Reference Generation
         # -------------------------------------------------------------
-        current_stage = "Stage 4: Functional Reference"
-        print("\n[Stage 4/20] Generating 3D functional reference image...")
+        current_stage = "Stage 5: Functional Reference"
+        print("\n[Stage 5/21] Generating 3D functional reference image...")
         mean_epi, epi_brain_mask = generate_functional_reference(realigned_bold)
         print(f"  -> Reference EPI shape: {mean_epi.shape}")
+        del realigned_bold
+        gc.collect()
 
         # -------------------------------------------------------------
-        # Stage 5: Anatomical Brain Extraction
+        # Stage 6: Anatomical Brain Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 5: Anatomical Brain Extraction"
-        print("\n[Stage 5/20] Extracting T1w anatomical brain with hole-filling...")
+        current_stage = "Stage 6: Anatomical Brain Extraction"
+        print("\n[Stage 6/21] Extracting T1w anatomical brain with hole-filling...")
         t1_brain, t1_brain_mask = extract_anatomical_brain(t1w_img, median_radius=2, numpass=2)
         print(f"  -> Extracted brain voxels: {int(np.count_nonzero(t1_brain_mask.dataobj))}")
 
         # -------------------------------------------------------------
-        # Stage 6: Log-Polynomial Bias-Field Correction
+        # Stage 7: Log-Polynomial Bias-Field Correction
         # -------------------------------------------------------------
-        current_stage = "Stage 6: Bias-Field Correction"
-        print("\n[Stage 6/20] Correcting anatomical bias field (order=2)...")
+        current_stage = "Stage 7: Bias-Field Correction"
+        print("\n[Stage 7/21] Correcting anatomical bias field (order=2)...")
         t1_corrected, bias_field = correct_bias_field(t1_brain, t1_brain_mask, order=2)
         print(f"  -> Bias field mean: {float(np.mean(bias_field.dataobj)):.3f}")
 
         # -------------------------------------------------------------
-        # Stage 7: Tissue Segmentation (CSF, GM, WM Probabilities)
+        # Stage 8: Tissue Segmentation (CSF, GM, WM Probabilities)
         # -------------------------------------------------------------
-        current_stage = "Stage 7: Tissue Segmentation"
-        print("\n[Stage 7/20] Segmenting T1w tissue into CSF, GM, WM...")
+        current_stage = "Stage 8: Tissue Segmentation"
+        print("\n[Stage 8/21] Segmenting T1w tissue into CSF, GM, WM...")
         prob_maps = segment_t1w_tissue(t1_corrected, t1_brain_mask, n_classes=3, method="gmm")
         print("  -> Probability maps: CSF, GM, WM computed successfully.")
 
         # -------------------------------------------------------------
-        # Stage 8: Morphological Mask Erosion & Geometry Verification
+        # Stage 9: Morphological Mask Erosion & Geometry Verification
         # -------------------------------------------------------------
-        current_stage = "Stage 8: Tissue Mask Erosion"
-        print("\n[Stage 8/20] Applying 0.96 thresholding & 1-voxel 3D erosion...")
+        current_stage = "Stage 9: Tissue Mask Erosion"
+        print("\n[Stage 9/21] Applying 0.96 thresholding & 1-voxel 3D erosion...")
         tissue_masks = create_eroded_tissue_masks(
             prob_maps,
             reference_t1w_img=t1_corrected,
@@ -989,28 +1028,31 @@ def run_poc_v2_pipeline(
         print(f"  -> Validated: {val_res['wm_voxel_count']} WM voxels, {val_res['csf_voxel_count']} CSF voxels, 0 overlap.")
 
         # -------------------------------------------------------------
-        # Stage 9: EPI-to-T1w Rigid Coregistration
+        # Stage 10: EPI-to-T1w Rigid Coregistration
         # -------------------------------------------------------------
-        current_stage = "Stage 9: Coregistration"
-        print("\n[Stage 9/20] Coregistering functional reference to anatomical brain (DIPY Rigid)...")
+        current_stage = "Stage 10: Coregistration"
+        print("\n[Stage 10/21] Coregistering functional reference to anatomical brain (DIPY Rigid)...")
         m_epi_to_t1w, _ = register_epi_to_t1w(mean_epi, t1_brain, level_iters=[10])
         print("  -> Coregistration rigid pullback matrix derived.")
 
         # -------------------------------------------------------------
-        # Stage 10: T1w-to-MNI SyN Nonlinear Normalization
+        # Stage 11: T1w-to-MNI SyN Nonlinear Normalization
         # -------------------------------------------------------------
-        current_stage = "Stage 10: Nonlinear Normalization"
-        print("\n[Stage 10/20] Computing T1w-to-MNI SyN nonlinear diffeomorphic registration...")
+        current_stage = "Stage 11: Nonlinear Normalization"
+        print("\n[Stage 11/21] Computing T1w-to-MNI SyN nonlinear diffeomorphic registration...")
         m_t1w_to_mni, syn_map = register_t1w_to_mni(
             t1_brain, mni_img, affine_level_iters=[10], syn_level_iters=[5]
         )
         print("  -> Diffeomorphic SyN mapping computed.")
 
         # -------------------------------------------------------------
-        # Stage 11: Composed Pullback Resampling into CC200 Grid
+        # Stage 12: Composed Pullback Resampling into CC200 Grid
         # -------------------------------------------------------------
-        current_stage = "Stage 11: Composed 4D Resampling"
-        print("\n[Stage 11/20] Composing transformations and resampling 4D BOLD into CC200 grid...")
+        current_stage = "Stage 12: Composed 4D Resampling"
+        print(
+            "\n[Stage 12/21] Composing motion + coregistration + normalization and "
+            "resampling STC BOLD into CC200 grid (single spatial interpolation)..."
+        )
         target_shape = atlas_img.shape[:3]
         target_affine = atlas_img.affine
         epi_shape = bold_img.shape[:3]
@@ -1027,20 +1069,21 @@ def run_poc_v2_pipeline(
         )
 
         resampled_bold = resample_4d_bold(
-            realigned_bold,
+            stc_bold_img,
             composed_map,
             target_shape=target_shape,
             target_affine=target_affine,
             interpolation="linear",
             max_memory_gb=max_memory_gb,
+            motion_transforms=rigid_motion_transforms,
         )
         print(f"  -> Resampled BOLD shape: {resampled_bold.shape} [MATCHES CC200 TARGET]")
 
         # -------------------------------------------------------------
-        # Stage 12: Tissue Mask Standard Grid Resampling
+        # Stage 13: Tissue Mask Standard Grid Resampling
         # -------------------------------------------------------------
-        current_stage = "Stage 12: Tissue Mask Resampling"
-        print("\n[Stage 12/20] Resampling eroded WM/CSF masks into CC200 grid via SyN...")
+        current_stage = "Stage 13: Tissue Mask Resampling"
+        print("\n[Stage 13/21] Resampling eroded WM/CSF masks into CC200 grid via SyN...")
         wm_eroded_mni = resample_mask_to_target(
             tissue_masks["mask_wm_eroded"], syn_map, target_shape, target_affine
         )
@@ -1051,28 +1094,28 @@ def run_poc_v2_pipeline(
               f"CSF={int(np.count_nonzero(csf_eroded_mni.dataobj))}")
 
         # -------------------------------------------------------------
-        # Stage 13: aCompCor Physiological Noise Extraction
+        # Stage 14: aCompCor Physiological Noise Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 13: aCompCor Extraction"
-        print("\n[Stage 13/20] Extracting 5 physiological aCompCor components...")
+        current_stage = "Stage 14: aCompCor Extraction"
+        print("\n[Stage 14/21] Extracting 5 physiological aCompCor components...")
         compcor_5 = extract_acompcor_components(
             resampled_bold, wm_eroded_mni, csf_eroded_mni, n_components=5
         )
         print(f"  -> aCompCor extracted: shape {compcor_5.shape}")
 
         # -------------------------------------------------------------
-        # Stage 14: Friston-24 Motion Regressor Expansion
+        # Stage 15: Friston-24 Motion Regressor Expansion
         # -------------------------------------------------------------
-        current_stage = "Stage 14: Friston-24 Expansion"
-        print("\n[Stage 14/20] Expanding 6 motion parameters to Friston-24...")
+        current_stage = "Stage 15: Friston-24 Expansion"
+        print("\n[Stage 15/21] Expanding 6 motion parameters to Friston-24...")
         friston_24 = build_friston_24_regressors(motion_params)
         print(f"  -> Friston-24 shape: {friston_24.shape}")
 
         # -------------------------------------------------------------
-        # Stage 15: Confound Matrix Assembly & Collinearity Check
+        # Stage 16: Confound Matrix Assembly & Collinearity Check
         # -------------------------------------------------------------
-        current_stage = "Stage 15: Confound Matrix Assembly"
-        print("\n[Stage 15/20] Assembling 31-column nuisance confound matrix...")
+        current_stage = "Stage 16: Confound Matrix Assembly"
+        print("\n[Stage 16/21] Assembling 31-column nuisance confound matrix...")
         confounds_df = build_confound_matrix(friston_24, compcor_5)
         # Compute condition number & check rank
         conf_vals = confounds_df.to_numpy()
@@ -1081,36 +1124,36 @@ def run_poc_v2_pipeline(
         print(f"  -> Confound Matrix: {confounds_df.shape[1]} columns | Rank: {matrix_rank}/31 | Cond: {cond_num:.2f}")
 
         # -------------------------------------------------------------
-        # Stage 16: Simultaneous Nuisance Regression & Bandpass
+        # Stage 17: Simultaneous Nuisance Regression & Bandpass
         # -------------------------------------------------------------
-        current_stage = "Stage 16: Nuisance Regression"
-        print("\n[Stage 16/20] Executing simultaneous regression & Butterworth bandpass [0.01-0.10 Hz]...")
+        current_stage = "Stage 17: Nuisance Regression"
+        print("\n[Stage 17/21] Executing simultaneous regression & Butterworth bandpass [0.01-0.10 Hz]...")
         cleaned_bold = clean_functional_bold(
             resampled_bold, confounds_df, tr=tr, low_cutoff_hz=0.01, high_cutoff_hz=0.10
         )
         print(f"  -> Cleaned BOLD shape: {cleaned_bold.shape} (GSR=OFF, TissueMean=OFF)")
 
         # -------------------------------------------------------------
-        # Stage 17: CC200 ROI Time Series Extraction
+        # Stage 18: CC200 ROI Time Series Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 17: CC200 Parcellation"
-        print("\n[Stage 17/20] Extracting CC200 ROI time series across 200 parcels...")
+        current_stage = "Stage 18: CC200 Parcellation"
+        print("\n[Stage 18/21] Extracting CC200 ROI time series across 200 parcels...")
         roi_df, signals = extract_cc200_timeseries(cleaned_bold, atlas_img)
         print(f"  -> Timeseries DataFrame: {roi_df.shape} (200 ROIs x {t_vol} timepoints + 1 label column)")
 
         # -------------------------------------------------------------
-        # Stage 18: Pairwise Fisher-z Connectivity Vector Calculation
+        # Stage 19: Pairwise Fisher-z Connectivity Vector Calculation
         # -------------------------------------------------------------
-        current_stage = "Stage 18: Connectivity Features"
-        print("\n[Stage 18/20] Computing 19,900 Fisher-z connectivity features...")
+        current_stage = "Stage 19: Connectivity Features"
+        print("\n[Stage 19/21] Computing 19,900 Fisher-z connectivity features...")
         z_vector, edge_names = compute_connectivity_vector(signals)
         print(f"  -> Fisher-z edges: {len(z_vector)} | Finite: {np.all(np.isfinite(z_vector))} | Range: [{np.min(z_vector):.3f}, {np.max(z_vector):.3f}]")
 
         # -------------------------------------------------------------
-        # Stage 19: Quality Control Visual Overlay Generation
+        # Stage 20: Quality Control Visual Overlay Generation
         # -------------------------------------------------------------
-        current_stage = "Stage 19: QC Visual Overlays"
-        print("\n[Stage 19/20] Generating 4 orthogonal quality control overlays...")
+        current_stage = "Stage 20: QC Visual Overlays"
+        print("\n[Stage 20/21] Generating 4 orthogonal quality control overlays...")
 
         # 1. Coregistration QC Overlay
         t1_shape = t1_brain.shape[:3]
@@ -1214,10 +1257,10 @@ def run_poc_v2_pipeline(
             )
 
         # -------------------------------------------------------------
-        # Stage 20: Schema-Compliant Provenance JSON Generation
+        # Stage 21: Schema-Compliant Provenance JSON Generation
         # -------------------------------------------------------------
-        current_stage = "Stage 20: Provenance Reporting"
-        print("\n[Stage 20/20] Generating provenance metadata and validating schema...")
+        current_stage = "Stage 21: Provenance Reporting"
+        print("\n[Stage 21/21] Generating provenance metadata and validating schema...")
         runtime_sec = float(time.time() - start_time)
         peak_rss = check_process_memory_gb()
 
@@ -1324,7 +1367,39 @@ def run_poc_v2_pipeline(
             "subject_id": subject_id,
             "site": "SYNTHETIC_BENCHMARK",
             "cohort_split": "synthetic",
-            "pipeline_stages_total": 20,
+            "pipeline_stages_total": 21,
+            "preprocessing_order": [
+                "1. BIDS Input & Sidecar Metadata Validation",
+                "2. 3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)",
+                "3. Metadata-Driven Slice-Timing Correction (DEC-STC-01; Original Slice Geometry)",
+                "4. Motion Transform Application (Native Reference Generation)",
+                "5. Functional Reference Generation",
+                "6. Anatomical Brain Extraction",
+                "7. Log-Polynomial Bias-Field Correction",
+                "8. Tissue Segmentation (CSF, GM, WM)",
+                "9. Morphological Tissue Mask Erosion & Quality Verification",
+                "10. EPI-to-T1w 3D Rigid Coregistration",
+                "11. T1w-to-MNI SyN Nonlinear Normalization",
+                "12. Composed Single-Step Pullback Resampling (Motion + Coreg + MNI + SyN on STC BOLD)",
+                "13. Tissue Mask Standard Grid Resampling",
+                "14. aCompCor Physiological Noise Extraction (5 Components)",
+                "15. Friston-24 Motion Regressor Expansion",
+                "16. Confound Matrix Assembly & Collinearity Check",
+                "17. Simultaneous Nuisance Regression & Bandpass [0.01-0.10 Hz]",
+                "18. CC200 ROI Time Series Extraction (200 Parcels)",
+                "19. Pairwise Fisher-z Connectivity Vector (19,900 Edges)",
+                "20. Quality Control Visual Overlays (4 Views)",
+                "21. Schema-Compliant Provenance JSON Generation",
+            ],
+            "motion_estimation": {
+                "estimated_on_raw_uncorrected_bold": True,
+                "estimated_before_slice_timing": True,
+                "applied_after_slice_timing": True,
+                "single_step_composed_resampling_with_stc_bold": True,
+                "mean_fd_mm": round(mean_fd, 6),
+                "max_fd_mm": round(max_fd, 6),
+                "volumes_fd_gt_0p5mm": scrubbed,
+            },
             "software_versions": {
                 "dipy": str(dipy.__version__),
                 "nilearn": str(nilearn.__version__),

@@ -9,8 +9,10 @@ Contains:
 - qc: Visual registration and parcellation inspection overlays
 """
 from src.preprocessing.motion import (
+    apply_motion_transforms,
     build_friston_24_regressors,
     compute_framewise_displacement,
+    estimate_motion_parameters,
     realign_4d_bold,
 )
 from src.preprocessing.nuisance import (
@@ -31,6 +33,7 @@ from src.preprocessing.qc import (
 )
 from src.preprocessing.registration import (
     compose_transformations,
+    compose_volume_transform,
     compute_spatial_dice,
     generate_functional_reference,
     register_epi_to_t1w,
@@ -75,6 +78,8 @@ __all__ = [
     "detect_stc_software",
     "validate_slice_timing_metadata",
     "write_slice_timing_derivative",
+    "estimate_motion_parameters",
+    "apply_motion_transforms",
     "realign_4d_bold",
     "compute_framewise_displacement",
     "build_friston_24_regressors",
@@ -82,6 +87,7 @@ __all__ = [
     "register_epi_to_t1w",
     "register_t1w_to_mni",
     "compose_transformations",
+    "compose_volume_transform",
     "resample_4d_bold",
     "resample_mask_to_target",
     "compute_spatial_dice",
