@@ -168,9 +168,9 @@ Run the automated test suite with the HMAC integrity key:
 NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ```
 
-**Test Suite Metrics (Measured November 2026, Step 4.1):**
-- **Collected:** 405 tests
-- **Passed:** 398 passed
+**Test Suite Metrics (Measured November 2026, Step 4.2):**
+- **Collected:** 412 tests
+- **Passed:** 405 passed
 - **Skipped:** 7 skipped
 - **Statement Coverage:** 82% across `src/` (`pytest tests/ --cov=src`)
 
@@ -192,7 +192,7 @@ NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ## 8. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
-- [STEP4_SLICE_TIMING_CORRECTION.md](docs/STEP4_SLICE_TIMING_CORRECTION.md): Architecture audit, 21-stage ordering (raw-BOLD motion estimation prior to STC + single-step composed resampling), header `slice_dim` axis resolution, 5-region boundary stability validation, and 37-slice × 240-vol E2E results (`DEC-STC-01`).
+- [STEP4_SLICE_TIMING_CORRECTION.md](docs/STEP4_SLICE_TIMING_CORRECTION.md): Architecture audit, 21-stage ordering (raw-BOLD motion estimation prior to STC + single-step composed resampling), header `slice_dim` axis resolution, 5-region boundary stability & window reporting, CC200 time-axis audit, composed transform landmark validation, and 37-slice × 240-vol E2E results (`DEC-STC-01`).
 - [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
 - [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md): Executive summary, scope, and non-clinical disclaimer.
 - [EXISTING_PROJECT_ARCHITECTURE.md](docs/EXISTING_PROJECT_ARCHITECTURE.md): Audit of existing code, models, and endpoints.
@@ -211,6 +211,11 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 9. Changelog
+
+- **2026-11-11 (Step 4.2 Final Scientific Audit `DEC-STC-01`)**:
+  - Audited and resolved the `200 × 241` vs `(200, 240)` CC200 timepoint report: confirmed `roi_CC200.csv` intentionally prepends column 0 (`"node/volume"` = `1..200`), while [`extract_cc200_timeseries`](src/parcellation/extractor.py), [`compute_connectivity_vector`](src/features/connectivity.py), and [`DashboardDataService.get_timeseries`](src/dashboard/service.py) consume exact 240 aligned timepoints cleanly. Disambiguated `roi_timeseries_shape` vs `roi_csv_shape` in `gate5_roi_coverage` and added opt-in configured volume censoring (`resolve_censor_volumes`, `censor_volumes`) applied post Stage 17 continuous-TR temporal cleaning.
+  - Extended temporal boundary-risk provenance with `BoundaryRiskWindowSamplesPerSide = 5`, `BoundaryRiskWindowVolumes` (`[0..4, T-5..T-1]`), 5-region `BoundaryRegions` (`first_volume`, `first_five_volumes`, `interior_volumes`, `last_five_volumes`, `final_volume`), `BoundaryPaddingStrategy = "odd_point_reflection_4tr"`, `BoundaryExtrapolationDisabled = true`, `AutomaticBoundaryVolumeRemovalApplied = false`, and positive/negative shift regression coverage preserving all `T` volumes and `+reference_time` `StartTime`.
+  - Independently validated composed spatial transforms ([`compose_transformations`](src/preprocessing/registration.py), [`compose_volume_transform`](src/preprocessing/registration.py), [`resample_4d_bold`](src/preprocessing/registration.py)) across 5 asymmetric 3D landmarks (`mean 0.103 mm`, `max 0.198 mm` / `0.079 vox` forward, swapped-order errors `2.67–2.89 mm`, singular-matrix fail-closed guards); updated [`docs/STEP4_SLICE_TIMING_CORRECTION.md`](docs/STEP4_SLICE_TIMING_CORRECTION.md) and verified `412` tests (`405 passed`, `7 skipped`, `82%` `src/` coverage) plus `37×240` E2E (`r = +0.9791` / `-0.9800`).
 
 - **2026-11-11 (Step 4.1 Slice-Timing Workflow, Header Axis & Boundary Corrections `DEC-STC-01`)**:
   - Decoupled motion estimation from resampling (`estimate_motion_parameters`, `apply_motion_transforms`, `compose_volume_transform`) and updated [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) and the dashboard/UI to **21 stages**: Stage 2 estimates motion strictly on raw uncorrected BOLD prior to Stage 3 STC, and Stage 12 composes motion + coregistration + MNI affine + SyN in a single spatial pullback.

@@ -4,10 +4,11 @@ from __future__ import annotations
 import unittest
 import nibabel as nib
 import numpy as np
-from dipy.align.imaffine import AffineRegistration, MutualInformationMetric, transform_centers_of_mass
+from dipy.align.imaffine import AffineMap, AffineRegistration, MutualInformationMetric, transform_centers_of_mass
 from dipy.align.transforms import RigidTransform3D, AffineTransform3D
 from dipy.align.imwarp import SymmetricDiffeomorphicRegistration, DiffeomorphicMap
 from dipy.align.metrics import CCMetric
+from scipy.spatial.transform import Rotation as R_scipy
 
 from src.preprocessing.motion import apply_motion_transforms, estimate_motion_parameters
 from src.preprocessing.registration import (
@@ -1044,6 +1045,283 @@ class TestTissueMaskSpatialGeometry(unittest.TestCase):
         np.testing.assert_allclose(resampled.affine, self.target_affine, atol=1e-4)
         unique_vals = np.unique(np.asanyarray(resampled.dataobj))
         self.assertTrue(set(unique_vals).issubset({0, 1}))
+
+
+class TestComposedTransformPhantomValidation(unittest.TestCase):
+    """Independent geometric landmark phantom validation of composed transforms & DIPY conventions."""
+
+    def setUp(self):
+        self.epi_shape = (32, 32, 24)
+        self.epi_aff = np.diag([3.0, 3.0, 4.0, 1.0])
+        self.epi_aff[:3, 3] = [-48.0, -48.0, -44.0]
+        self.t1_shape = (40, 40, 32)
+        self.t1_aff = np.diag([2.0, 2.0, 2.0, 1.0])
+        self.t1_aff[:3, 3] = [-40.0, -40.0, -32.0]
+        self.mni_shape = (36, 36, 30)
+        self.mni_aff = np.array(
+            [
+                [-2.5, 0.0, 0.0, 45.0],
+                [0.0, 2.5, 0.0, -45.0],
+                [0.0, 0.0, 2.5, -37.5],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        # 5 well-separated asymmetric EPI voxel landmarks spanning all 3D quadrants
+        self.epi_pts_vox = np.array(
+            [[10, 12, 8], [20, 11, 14], [12, 22, 10], [21, 19, 13], [16, 16, 12]],
+            dtype=np.float64,
+        )
+        self.epi_pts_mm = np.array(
+            [(self.epi_aff @ np.array([*p, 1.0]))[:3] for p in self.epi_pts_vox],
+            dtype=np.float64,
+        )
+
+    @staticmethod
+    def _rigid(euler_deg, trans_mm) -> np.ndarray:
+        m = np.eye(4, dtype=np.float64)
+        m[:3, :3] = R_scipy.from_euler("xyz", euler_deg, degrees=True).as_matrix()
+        m[:3, 3] = trans_mm
+        return m
+
+    @staticmethod
+    def _build_diffeo_pair(shape, affine, zero_disp: bool = True):
+        if zero_disp:
+            fwd = np.zeros((*shape, 3), dtype=np.float32)
+            bwd = np.zeros((*shape, 3), dtype=np.float32)
+            return fwd, bwd, (lambda pts: np.zeros_like(pts, dtype=np.float64))
+
+        amp = np.array([3.5, -2.5, 2.0], dtype=np.float64)
+        sigma_d = 18.0
+
+        def u_fwd(pts: np.ndarray) -> np.ndarray:
+            pts_arr = np.asarray(pts, dtype=np.float64)
+            r2 = np.sum(pts_arr ** 2, axis=-1, keepdims=True)
+            return amp * np.exp(-r2 / (2.0 * sigma_d ** 2))
+
+        mx, my, mz = np.indices(shape)
+        ijk = np.stack([mx, my, mz, np.ones_like(mx)], axis=-1)
+        x_mni = np.einsum("ij,...j->...i", affine, ijk)[..., :3]
+        fwd = u_fwd(x_mni).astype(np.float32)
+
+        x_p = x_mni.copy()
+        for _ in range(25):
+            x_p = x_mni - u_fwd(x_p)
+        bwd = (x_p - x_mni).astype(np.float32)
+        return fwd, bwd, u_fwd
+
+    def _evaluate_regime(
+        self,
+        f_mot: np.ndarray,
+        f_epi_t1: np.ndarray,
+        f_t1_mni: np.ndarray,
+        zero_disp: bool = True,
+    ):
+        m_ref_to_vol = np.linalg.inv(f_mot)
+        m_t1_to_epi = np.linalg.inv(f_epi_t1)
+        m_mni_to_t1 = np.linalg.inv(f_t1_mni)
+
+        fwd_f, bwd_f, u_fwd_fn = self._build_diffeo_pair(self.mni_shape, self.mni_aff, zero_disp=zero_disp)
+        syn = DiffeomorphicMap(
+            3,
+            disp_shape=self.mni_shape,
+            disp_grid2world=self.mni_aff,
+            domain_shape=self.mni_shape,
+            domain_grid2world=self.mni_aff,
+            codomain_shape=self.t1_shape,
+            codomain_grid2world=self.t1_aff,
+        )
+        syn.is_inverse = True
+        syn.forward = fwd_f
+        syn.backward = bwd_f
+
+        cmap = compose_transformations(
+            m_t1_to_epi,
+            m_mni_to_t1,
+            syn,
+            target_shape=self.mni_shape,
+            target_affine=self.mni_aff,
+            source_shape=self.epi_shape,
+            source_affine=self.epi_aff,
+        )
+        vmap = compose_volume_transform(cmap, m_ref_to_vol)
+
+        # Synthetic 3D native EPI landmark volume
+        gx, gy, gz = np.indices(self.epi_shape)
+        epi_vol = np.zeros(self.epi_shape, dtype=np.float32)
+        for k, p in enumerate(self.epi_pts_vox):
+            r2 = ((gx - p[0]) * 3.0) ** 2 + ((gy - p[1]) * 3.0) ** 2 + ((gz - p[2]) * 4.0) ** 2
+            epi_vol += (100.0 + 10.0 * k) * np.exp(-r2 / (2.0 * 4.5 ** 2))
+
+        warped_mni = vmap.transform(
+            epi_vol, interpolation="linear", out_shape=self.mni_shape, out_grid2world=self.mni_aff
+        )
+
+        # Analytical target coordinates in MNI mm + MNI inverse landmark phantom
+        f_aff = f_t1_mni @ f_epi_t1 @ f_mot
+        x_p = np.array([(f_aff @ np.array([*x, 1.0]))[:3] for x in self.epi_pts_mm])
+        x_mni_true = x_p + u_fwd_fn(x_p)
+
+        inv_mni = np.linalg.inv(self.mni_aff)
+        mx, my, mz = np.indices(self.mni_shape)
+        mni_vol = np.zeros(self.mni_shape, dtype=np.float32)
+        for k, xm in enumerate(x_mni_true):
+            iv = (inv_mni @ np.array([*xm, 1.0]))[:3]
+            r2 = ((mx - iv[0]) * 2.5) ** 2 + ((my - iv[1]) * 2.5) ** 2 + ((mz - iv[2]) * 2.5) ** 2
+            mni_vol += (100.0 + 10.0 * k) * np.exp(-r2 / (2.0 * 4.5 ** 2))
+
+        recovered_epi = vmap.transform_inverse(
+            mni_vol, interpolation="linear", out_shape=self.epi_shape, out_grid2world=self.epi_aff
+        )
+
+        errs_fwd_mm, errs_inv_mm = [], []
+        mni_zooms = np.linalg.norm(self.mni_aff[:3, :3], axis=0)
+        epi_zooms = np.linalg.norm(self.epi_aff[:3, :3], axis=0)
+        errs_fwd_vox, errs_inv_vox = [], []
+        for k in range(len(self.epi_pts_vox)):
+            xm = x_mni_true[k]
+            iv_exp = (inv_mni @ np.array([*xm, 1.0]))[:3]
+            mask_m = ((mx - iv_exp[0]) ** 2 + (my - iv_exp[1]) ** 2 + (mz - iv_exp[2]) ** 2) <= 9.0
+            wm = np.clip(warped_mni * mask_m, 0.0, None)
+            com_m_vox = np.array([np.sum(mx * wm), np.sum(my * wm), np.sum(mz * wm)]) / np.sum(wm)
+            com_m_mm = (self.mni_aff @ np.array([*com_m_vox, 1.0]))[:3]
+            errs_fwd_mm.append(float(np.linalg.norm(com_m_mm - xm)))
+            errs_fwd_vox.append(float(np.linalg.norm((com_m_mm - xm) / mni_zooms)))
+
+            p = self.epi_pts_vox[k]
+            mask_e = ((gx - p[0]) ** 2 + (gy - p[1]) ** 2 + (gz - p[2]) ** 2) <= 9.0
+            we = np.clip(recovered_epi * mask_e, 0.0, None)
+            com_e_vox = np.array([np.sum(gx * we), np.sum(gy * we), np.sum(gz * we)]) / np.sum(we)
+            com_e_mm = (self.epi_aff @ np.array([*com_e_vox, 1.0]))[:3]
+            errs_inv_mm.append(float(np.linalg.norm(com_e_mm - self.epi_pts_mm[k])))
+            errs_inv_vox.append(float(np.linalg.norm((com_e_mm - self.epi_pts_mm[k]) / epi_zooms)))
+
+        pt_fwd_err = float(
+            np.max(np.linalg.norm(vmap.transform_points_inverse(self.epi_pts_mm) - x_mni_true, axis=1))
+        )
+        pt_inv_err = float(
+            np.max(np.linalg.norm(vmap.transform_points(x_mni_true) - self.epi_pts_mm, axis=1))
+        )
+        return {
+            "vmap": vmap,
+            "cmap": cmap,
+            "epi_vol": epi_vol,
+            "warped_mni": warped_mni,
+            "x_mni_true": x_mni_true,
+            "mean_fwd_err_mm": float(np.mean(errs_fwd_mm)),
+            "max_fwd_err_mm": float(np.max(errs_fwd_mm)),
+            "max_fwd_err_vox": float(np.max(errs_fwd_vox)),
+            "mean_inv_err_mm": float(np.mean(errs_inv_mm)),
+            "max_inv_err_mm": float(np.max(errs_inv_mm)),
+            "max_inv_err_vox": float(np.max(errs_inv_vox)),
+            "point_fwd_max_err_mm": pt_fwd_err,
+            "point_inv_max_err_mm": pt_inv_err,
+        }
+
+    def test_identity_translation_rotation_and_combined_rigid_landmarks(self):
+        """Verify identity, pure translation, pure rotation, and combined rigid composed transforms."""
+        i4 = np.eye(4, dtype=np.float64)
+        regimes = {
+            "identity": (i4, i4, i4),
+            "pure_translation": (
+                self._rigid([0.0, 0.0, 0.0], [3.5, -2.5, 4.0]),
+                self._rigid([0.0, 0.0, 0.0], [-2.0, 4.0, -1.5]),
+                i4,
+            ),
+            "pure_rotation": (
+                self._rigid([8.0, -10.0, 12.0], [0.0, 0.0, 0.0]),
+                self._rigid([-5.0, 7.0, -9.0], [0.0, 0.0, 0.0]),
+                i4,
+            ),
+            "combined_rigid": (
+                self._rigid([9.0, -7.0, 11.0], [3.0, -2.0, 3.5]),
+                self._rigid([-11.0, 8.0, -6.0], [-3.5, 4.0, -2.0]),
+                i4,
+            ),
+        }
+        for name, (fm, fe, ft) in regimes.items():
+            metrics = self._evaluate_regime(fm, fe, ft, zero_disp=True)
+            self.assertLess(metrics["max_fwd_err_mm"], 0.25, f"{name} fwd mm err too high")
+            self.assertLess(metrics["max_inv_err_mm"], 0.35, f"{name} inv mm err too high")
+            self.assertLess(metrics["max_fwd_err_vox"], 0.15, f"{name} fwd vox err too high")
+            self.assertLess(metrics["point_fwd_max_err_mm"], 1e-6, f"{name} point fwd mismatch")
+            self.assertLess(metrics["point_inv_max_err_mm"], 1e-6, f"{name} point inv mismatch")
+
+    def test_non_commuting_composed_syn_forward_inverse_and_swapped_order_fails(self):
+        """Non-commuting motion+coreg+norm+SyN must agree analytically & with sequential resampling; swapped order fails."""
+        f_mot = self._rigid([11.0, 0.0, 0.0], [3.5, -2.0, 4.0])
+        f_epi_t1 = self._rigid([0.0, -13.0, 0.0], [-4.0, 3.0, -2.5])
+        f_t1_mni = self._rigid([0.0, 0.0, 17.0], [2.0, -5.0, 3.0]) @ np.diag([1.04, 0.96, 1.02, 1.0])
+
+        res = self._evaluate_regime(f_mot, f_epi_t1, f_t1_mni, zero_disp=False)
+        self.assertLess(res["mean_fwd_err_mm"], 0.25)
+        self.assertLess(res["max_fwd_err_mm"], 0.30)
+        self.assertLess(res["max_fwd_err_vox"], 0.15)
+        self.assertLess(res["mean_inv_err_mm"], 0.30)
+        self.assertLess(res["max_inv_err_mm"], 0.45)
+        self.assertLess(res["max_inv_err_vox"], 0.20)
+        self.assertLess(res["point_fwd_max_err_mm"], 0.05)
+        self.assertLess(res["point_inv_max_err_mm"], 0.05)
+
+        # Compare single-step composed resampling vs sequential (motion AffineMap -> composed coreg+norm+SyN)
+        mot_map = AffineMap(
+            np.linalg.inv(f_mot),
+            domain_grid_shape=self.epi_shape,
+            domain_grid2world=self.epi_aff,
+            codomain_grid_shape=self.epi_shape,
+            codomain_grid2world=self.epi_aff,
+        )
+        seq_step1 = mot_map.transform(res["epi_vol"], interpolation="linear")
+        seq_mni = res["cmap"].transform(
+            seq_step1, interpolation="linear", out_shape=self.mni_shape, out_grid2world=self.mni_aff
+        )
+        inv_mni = np.linalg.inv(self.mni_aff)
+        mx, my, mz = np.indices(self.mni_shape)
+        seq_vs_single_diffs = []
+        for k, xm in enumerate(res["x_mni_true"]):
+            iv = (inv_mni @ np.array([*xm, 1.0]))[:3]
+            mask = ((mx - iv[0]) ** 2 + (my - iv[1]) ** 2 + (mz - iv[2]) ** 2) <= 9.0
+            w_s = np.clip(res["warped_mni"] * mask, 0.0, None)
+            w_q = np.clip(seq_mni * mask, 0.0, None)
+            c_s = (self.mni_aff @ np.array([np.sum(mx * w_s), np.sum(my * w_s), np.sum(mz * w_s), np.sum(w_s)]) / np.sum(w_s))[:3]
+            c_q = (self.mni_aff @ np.array([np.sum(mx * w_q), np.sum(my * w_q), np.sum(mz * w_q), np.sum(w_q)]) / np.sum(w_q))[:3]
+            seq_vs_single_diffs.append(float(np.linalg.norm(c_s - c_q)))
+        self.assertLess(float(np.max(seq_vs_single_diffs)), 0.15)
+
+        # Negative controls: swapping EITHER motion order OR coreg/norm order must produce large (> 1.5 mm) errors
+        m_ref_to_vol = np.linalg.inv(f_mot)
+        wrong_motion_map = DiffeomorphicMap(
+            3,
+            disp_shape=res["vmap"].disp_shape,
+            disp_grid2world=res["vmap"].disp_grid2world,
+            domain_shape=res["vmap"].domain_shape,
+            domain_grid2world=res["vmap"].domain_grid2world,
+            codomain_shape=res["vmap"].codomain_shape,
+            codomain_grid2world=res["vmap"].codomain_grid2world,
+            prealign=np.linalg.inv(res["cmap"].prealign_inv @ m_ref_to_vol),  # SWAPPED order
+        )
+        wrong_motion_map.is_inverse = True
+        wrong_motion_map.forward = res["vmap"].forward
+        wrong_motion_map.backward = res["vmap"].backward
+        wrong_mot_pts = wrong_motion_map.transform_points_inverse(self.epi_pts_mm)
+        self.assertGreater(float(np.max(np.linalg.norm(wrong_mot_pts - res["x_mni_true"], axis=1))), 1.5)
+
+        wrong_coreg_cmap = compose_transformations(
+            np.linalg.inv(f_t1_mni),  # SWAPPED order
+            np.linalg.inv(f_epi_t1),
+            res["vmap"],
+            target_shape=self.mni_shape,
+            target_affine=self.mni_aff,
+            source_shape=self.epi_shape,
+            source_affine=self.epi_aff,
+        )
+        wrong_coreg_vmap = compose_volume_transform(wrong_coreg_cmap, m_ref_to_vol)
+        wrong_coreg_pts = wrong_coreg_vmap.transform_points_inverse(self.epi_pts_mm)
+        self.assertGreater(float(np.max(np.linalg.norm(wrong_coreg_pts - res["x_mni_true"], axis=1))), 1.5)
+
+        # Singular motion transform fails closed
+        with self.assertRaises(ValueError):
+            compose_volume_transform(res["cmap"], np.zeros((4, 4), dtype=np.float64))
 
 
 if __name__ == "__main__":

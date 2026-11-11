@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 4 / 4.1 Synthetic Ground-Truth Generator and Scientific Validation Script (DEC-STC-01).
+"""Step 4 / 4.1 / 4.2 Synthetic Ground-Truth Generator and Scientific Validation Script (DEC-STC-01).
 
 Generates synthetic 4D BOLD datasets sampled from known continuous-time resting-state
 signals across multiple acquisition regimes inside an external directory outside Git:
@@ -13,9 +13,12 @@ D. Negative SliceEncodingDirection ('k-') reversing slice-to-timing index mappin
 E. Alternative slice axes ('i' on 37x16x16x240 and 'j' on 16x37x16x240)
 F. Header slice_dim fallback controls (i/j/k + unavailable slice_dim -> SKIPPED_UNKNOWN_SLICE_AXIS)
 G. 5-region temporal boundary benchmark (first, first5, interior, last5, final) across
-   smooth, noisy, non-periodic linear trend, and controlled transient signals
-H. Source-acquisition-like 37-slice x 240-volume full 21-stage canonical CC200 E2E run
-   (verifying Stage 2 raw-BOLD motion estimation before Stage 3 STC & downstream CC200).
+   smooth, noisy, non-periodic linear trend, and controlled transient signals +
+   derivative boundary-risk metadata for positive and negative shifts
+H. Independent geometric landmark phantom validation of compose_volume_transform & DIPY
+   AffineMap / DiffeomorphicMap forward & inverse conventions (Step 4.2)
+I. Source-acquisition-like 37-slice x 240-volume full 21-stage canonical CC200 E2E run
+   with correlation recovery, Run 1 vs Run 2 determinism, and CC200 240-vs-241 audit (Step 4.2).
 
 SAFETY:
 - Enforces ResearchAuthorizationGate (execution_policy=STRICTLY_SYNTHETIC_ONLY).
@@ -37,7 +40,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import nibabel as nib
 import numpy as np
 import pandas as pd
+from dipy.align.imaffine import AffineMap
+from dipy.align.imwarp import DiffeomorphicMap
 from scipy.interpolate import CubicSpline
+from scipy.spatial.transform import Rotation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -50,6 +56,11 @@ from scripts.run_poc_v2 import (  # noqa: E402
     compute_sha256,
     run_poc_v2_pipeline,
     verify_canonical_cc200_atlas,
+)
+from src.features.connectivity import compute_connectivity_vector  # noqa: E402
+from src.preprocessing.registration import (  # noqa: E402
+    compose_transformations,
+    compose_volume_transform,
 )
 from src.preprocessing.slice_timing import (  # noqa: E402
     SLICE_ENCODING_DIRECTION_MAP,
@@ -655,6 +666,300 @@ def run_header_axis_controls(
     return axis_summary
 
 
+def run_composed_transform_landmark_validation() -> Dict[str, Any]:
+    """Independently validate compose_volume_transform and DIPY forward/inverse conventions.
+
+    Constructs an asymmetric 5-landmark 3D phantom on an anisotropic native EPI grid
+    (32x32x24, 3.0x3.0x4.0 mm) mapped through non-commuting rigid motion, EPI->T1w
+    coregistration, T1w->MNI affine normalization, and an analytically invertible smooth
+    3D SyN displacement field onto an LAS-flipped MNI grid (36x36x30, 2.5 mm).
+
+    Tests identity, pure translation, pure rotation, combined rigid, and full non-commuting
+    composed transforms with SyN in both forward (.transform) and inverse (.transform_inverse)
+    directions, compares single-step vs sequential resampling, and proves swapped matrix
+    multiplication order fails cleanly.
+    """
+    epi_shape = (32, 32, 24)
+    epi_aff = np.diag([3.0, 3.0, 4.0, 1.0])
+    epi_aff[:3, 3] = [-48.0, -48.0, -44.0]
+    t1_shape = (40, 40, 32)
+    t1_aff = np.diag([2.0, 2.0, 2.0, 1.0])
+    t1_aff[:3, 3] = [-40.0, -40.0, -32.0]
+    mni_shape = (36, 36, 30)
+    mni_aff = np.array(
+        [
+            [-2.5, 0.0, 0.0, 45.0],
+            [0.0, 2.5, 0.0, -45.0],
+            [0.0, 0.0, 2.5, -37.5],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    epi_pts_vox = np.array(
+        [[10, 12, 8], [20, 11, 14], [12, 22, 10], [21, 19, 13], [16, 16, 12]],
+        dtype=np.float64,
+    )
+    epi_pts_mm = np.array(
+        [(epi_aff @ np.array([*p, 1.0]))[:3] for p in epi_pts_vox],
+        dtype=np.float64,
+    )
+    inv_mni = np.linalg.inv(mni_aff)
+    mni_zooms = np.linalg.norm(mni_aff[:3, :3], axis=0)
+    epi_zooms = np.linalg.norm(epi_aff[:3, :3], axis=0)
+    gx, gy, gz = np.indices(epi_shape)
+    mx, my, mz = np.indices(mni_shape)
+
+    def _rigid(euler_deg: Sequence[float], trans_mm: Sequence[float]) -> np.ndarray:
+        m = np.eye(4, dtype=np.float64)
+        m[:3, :3] = Rotation.from_euler("xyz", euler_deg, degrees=True).as_matrix()
+        m[:3, 3] = trans_mm
+        return m
+
+    amp = np.array([3.5, -2.5, 2.0], dtype=np.float64)
+    sigma_d = 18.0
+
+    def _u_fwd(pts: np.ndarray) -> np.ndarray:
+        pts_arr = np.asarray(pts, dtype=np.float64)
+        r2 = np.sum(pts_arr ** 2, axis=-1, keepdims=True)
+        return amp * np.exp(-r2 / (2.0 * sigma_d ** 2))
+
+    m_ijk = np.stack([mx, my, mz, np.ones_like(mx)], axis=-1)
+    x_mni_grid = np.einsum("ij,...j->...i", mni_aff, m_ijk)[..., :3]
+    syn_fwd_field = _u_fwd(x_mni_grid).astype(np.float32)
+    x_p = x_mni_grid.copy()
+    for _ in range(25):
+        x_p = x_mni_grid - _u_fwd(x_p)
+    syn_bwd_field = (x_p - x_mni_grid).astype(np.float32)
+
+    epi_vol = np.zeros(epi_shape, dtype=np.float32)
+    for k, p in enumerate(epi_pts_vox):
+        r2 = ((gx - p[0]) * 3.0) ** 2 + ((gy - p[1]) * 3.0) ** 2 + ((gz - p[2]) * 4.0) ** 2
+        epi_vol += (100.0 + 10.0 * k) * np.exp(-r2 / (2.0 * 4.5 ** 2))
+
+    i4 = np.eye(4, dtype=np.float64)
+    regimes = {
+        "identity": (i4, i4, i4, True),
+        "pure_translation": (
+            _rigid([0.0, 0.0, 0.0], [3.5, -2.5, 4.0]),
+            _rigid([0.0, 0.0, 0.0], [-2.0, 4.0, -1.5]),
+            i4,
+            True,
+        ),
+        "pure_rotation": (
+            _rigid([8.0, -10.0, 12.0], [0.0, 0.0, 0.0]),
+            _rigid([-5.0, 7.0, -9.0], [0.0, 0.0, 0.0]),
+            i4,
+            True,
+        ),
+        "combined_rigid": (
+            _rigid([9.0, -7.0, 11.0], [3.0, -2.0, 3.5]),
+            _rigid([-11.0, 8.0, -6.0], [-3.5, 4.0, -2.0]),
+            i4,
+            True,
+        ),
+        "non_commuting_composed_with_syn": (
+            _rigid([11.0, 0.0, 0.0], [3.5, -2.0, 4.0]),
+            _rigid([0.0, -13.0, 0.0], [-4.0, 3.0, -2.5]),
+            _rigid([0.0, 0.0, 17.0], [2.0, -5.0, 3.0]) @ np.diag([1.04, 0.96, 1.02, 1.0]),
+            False,
+        ),
+    }
+
+    per_regime: Dict[str, Any] = {}
+    all_fwd_errs_mm: List[float] = []
+    all_fwd_errs_vox: List[float] = []
+    all_inv_errs_mm: List[float] = []
+    all_inv_errs_vox: List[float] = []
+    seq_vs_single_max_mm = 0.0
+    swapped_motion_err_mm = 0.0
+    swapped_coreg_err_mm = 0.0
+
+    for name, (f_mot, f_epi_t1, f_t1_mni, zero_disp) in regimes.items():
+        m_ref_to_vol = np.linalg.inv(f_mot)
+        m_t1_to_epi = np.linalg.inv(f_epi_t1)
+        m_mni_to_t1 = np.linalg.inv(f_t1_mni)
+
+        syn = DiffeomorphicMap(
+            3,
+            disp_shape=mni_shape,
+            disp_grid2world=mni_aff,
+            domain_shape=mni_shape,
+            domain_grid2world=mni_aff,
+            codomain_shape=t1_shape,
+            codomain_grid2world=t1_aff,
+        )
+        syn.is_inverse = True
+        if zero_disp:
+            syn.forward = np.zeros((*mni_shape, 3), dtype=np.float32)
+            syn.backward = np.zeros((*mni_shape, 3), dtype=np.float32)
+        else:
+            syn.forward = syn_fwd_field
+            syn.backward = syn_bwd_field
+
+        cmap = compose_transformations(
+            m_t1_to_epi,
+            m_mni_to_t1,
+            syn,
+            target_shape=mni_shape,
+            target_affine=mni_aff,
+            source_shape=epi_shape,
+            source_affine=epi_aff,
+        )
+        vmap = compose_volume_transform(cmap, m_ref_to_vol)
+
+        warped_mni = vmap.transform(
+            epi_vol, interpolation="linear", out_shape=mni_shape, out_grid2world=mni_aff
+        )
+
+        f_aff = f_t1_mni @ f_epi_t1 @ f_mot
+        x_p_pts = np.array([(f_aff @ np.array([*x, 1.0]))[:3] for x in epi_pts_mm])
+        x_mni_true = x_p_pts if zero_disp else (x_p_pts + _u_fwd(x_p_pts))
+
+        mni_vol = np.zeros(mni_shape, dtype=np.float32)
+        for k, xm in enumerate(x_mni_true):
+            iv = (inv_mni @ np.array([*xm, 1.0]))[:3]
+            r2 = ((mx - iv[0]) * 2.5) ** 2 + ((my - iv[1]) * 2.5) ** 2 + ((mz - iv[2]) * 2.5) ** 2
+            mni_vol += (100.0 + 10.0 * k) * np.exp(-r2 / (2.0 * 4.5 ** 2))
+
+        recovered_epi = vmap.transform_inverse(
+            mni_vol, interpolation="linear", out_shape=epi_shape, out_grid2world=epi_aff
+        )
+
+        fwd_mm, inv_mm, fwd_vox, inv_vox = [], [], [], []
+        for k in range(len(epi_pts_vox)):
+            xm = x_mni_true[k]
+            iv_exp = (inv_mni @ np.array([*xm, 1.0]))[:3]
+            mask_m = ((mx - iv_exp[0]) ** 2 + (my - iv_exp[1]) ** 2 + (mz - iv_exp[2]) ** 2) <= 9.0
+            wm = np.clip(warped_mni * mask_m, 0.0, None)
+            com_m_vox = np.array([np.sum(mx * wm), np.sum(my * wm), np.sum(mz * wm)]) / np.sum(wm)
+            com_m_mm = (mni_aff @ np.array([*com_m_vox, 1.0]))[:3]
+            err_f_mm = float(np.linalg.norm(com_m_mm - xm))
+            err_f_vx = float(np.linalg.norm((com_m_mm - xm) / mni_zooms))
+            fwd_mm.append(err_f_mm)
+            fwd_vox.append(err_f_vx)
+
+            p = epi_pts_vox[k]
+            mask_e = ((gx - p[0]) ** 2 + (gy - p[1]) ** 2 + (gz - p[2]) ** 2) <= 9.0
+            we = np.clip(recovered_epi * mask_e, 0.0, None)
+            com_e_vox = np.array([np.sum(gx * we), np.sum(gy * we), np.sum(gz * we)]) / np.sum(we)
+            com_e_mm = (epi_aff @ np.array([*com_e_vox, 1.0]))[:3]
+            err_i_mm = float(np.linalg.norm(com_e_mm - epi_pts_mm[k]))
+            err_i_vx = float(np.linalg.norm((com_e_mm - epi_pts_mm[k]) / epi_zooms))
+            inv_mm.append(err_i_mm)
+            inv_vox.append(err_i_vx)
+
+        pt_fwd_err = float(
+            np.max(np.linalg.norm(vmap.transform_points_inverse(epi_pts_mm) - x_mni_true, axis=1))
+        )
+        pt_inv_err = float(
+            np.max(np.linalg.norm(vmap.transform_points(x_mni_true) - epi_pts_mm, axis=1))
+        )
+
+        assert max(fwd_mm) < 0.30, f"{name}: forward landmark error {max(fwd_mm):.4f} mm exceeded 0.30 mm"
+        assert max(inv_mm) < 0.45, f"{name}: inverse landmark error {max(inv_mm):.4f} mm exceeded 0.45 mm"
+        assert max(fwd_vox) < 0.15, f"{name}: forward voxel error {max(fwd_vox):.4f} exceeded 0.15"
+        assert pt_fwd_err < 0.05 and pt_inv_err < 0.05
+
+        all_fwd_errs_mm.extend(fwd_mm)
+        all_fwd_errs_vox.extend(fwd_vox)
+        all_inv_errs_mm.extend(inv_mm)
+        all_inv_errs_vox.extend(inv_vox)
+
+        regime_entry: Dict[str, Any] = {
+            "mean_forward_error_mm": float(np.mean(fwd_mm)),
+            "max_forward_error_mm": float(np.max(fwd_mm)),
+            "max_forward_error_vox": float(np.max(fwd_vox)),
+            "mean_inverse_error_mm": float(np.mean(inv_mm)),
+            "max_inverse_error_mm": float(np.max(inv_mm)),
+            "max_inverse_error_vox": float(np.max(inv_vox)),
+            "point_forward_max_error_mm": pt_fwd_err,
+            "point_inverse_max_error_mm": pt_inv_err,
+        }
+
+        if name == "non_commuting_composed_with_syn":
+            # Verify single-step vs sequential resampling agreement & swapped-order failure controls
+            mot_map = AffineMap(
+                m_ref_to_vol,
+                domain_grid_shape=epi_shape,
+                domain_grid2world=epi_aff,
+                codomain_grid_shape=epi_shape,
+                codomain_grid2world=epi_aff,
+            )
+            seq_mni = cmap.transform(
+                mot_map.transform(epi_vol, interpolation="linear"),
+                interpolation="linear",
+                out_shape=mni_shape,
+                out_grid2world=mni_aff,
+            )
+            seq_diffs = []
+            for k, xm in enumerate(x_mni_true):
+                iv = (inv_mni @ np.array([*xm, 1.0]))[:3]
+                mask = ((mx - iv[0]) ** 2 + (my - iv[1]) ** 2 + (mz - iv[2]) ** 2) <= 9.0
+                w_s = np.clip(warped_mni * mask, 0.0, None)
+                w_q = np.clip(seq_mni * mask, 0.0, None)
+                c_s = (mni_aff @ np.array([np.sum(mx * w_s), np.sum(my * w_s), np.sum(mz * w_s), np.sum(w_s)]) / np.sum(w_s))[:3]
+                c_q = (mni_aff @ np.array([np.sum(mx * w_q), np.sum(my * w_q), np.sum(mz * w_q), np.sum(w_q)]) / np.sum(w_q))[:3]
+                seq_diffs.append(float(np.linalg.norm(c_s - c_q)))
+            seq_vs_single_max_mm = float(np.max(seq_diffs))
+            assert seq_vs_single_max_mm < 0.15
+
+            wrong_mot_map = DiffeomorphicMap(
+                3,
+                disp_shape=vmap.disp_shape,
+                disp_grid2world=vmap.disp_grid2world,
+                domain_shape=vmap.domain_shape,
+                domain_grid2world=vmap.domain_grid2world,
+                codomain_shape=vmap.codomain_shape,
+                codomain_grid2world=vmap.codomain_grid2world,
+                prealign=np.linalg.inv(cmap.prealign_inv @ m_ref_to_vol),
+            )
+            wrong_mot_map.is_inverse = True
+            wrong_mot_map.forward = vmap.forward
+            wrong_mot_map.backward = vmap.backward
+            swapped_motion_err_mm = float(
+                np.max(np.linalg.norm(wrong_mot_map.transform_points_inverse(epi_pts_mm) - x_mni_true, axis=1))
+            )
+
+            wrong_coreg_cmap = compose_transformations(
+                m_mni_to_t1,
+                m_t1_to_epi,
+                vmap,
+                target_shape=mni_shape,
+                target_affine=mni_aff,
+                source_shape=epi_shape,
+                source_affine=epi_aff,
+            )
+            wrong_coreg_vmap = compose_volume_transform(wrong_coreg_cmap, m_ref_to_vol)
+            swapped_coreg_err_mm = float(
+                np.max(np.linalg.norm(wrong_coreg_vmap.transform_points_inverse(epi_pts_mm) - x_mni_true, axis=1))
+            )
+            assert swapped_motion_err_mm > 1.5 and swapped_coreg_err_mm > 1.5
+            regime_entry["sequential_vs_single_step_max_diff_mm"] = seq_vs_single_max_mm
+            regime_entry["swapped_motion_order_error_mm"] = swapped_motion_err_mm
+            regime_entry["swapped_coreg_order_error_mm"] = swapped_coreg_err_mm
+
+        per_regime[name] = regime_entry
+
+    return {
+        "status": "PASSED",
+        "num_landmarks": int(len(epi_pts_vox)),
+        "mean_landmark_error_mm": float(np.mean(all_fwd_errs_mm)),
+        "max_landmark_error_mm": float(np.max(all_fwd_errs_mm)),
+        "max_error_voxel_units": float(np.max(all_fwd_errs_vox)),
+        "inverse_mean_landmark_error_mm": float(np.mean(all_inv_errs_mm)),
+        "inverse_max_landmark_error_mm": float(np.max(all_inv_errs_mm)),
+        "inverse_max_error_voxel_units": float(np.max(all_inv_errs_vox)),
+        "forward_consistency": "PASSED",
+        "inverse_consistency": "PASSED",
+        "analytical_vs_single_resampling_agreement": "PASSED",
+        "sequential_vs_single_step_max_diff_mm": seq_vs_single_max_mm,
+        "swapped_order_failure_detected": True,
+        "swapped_motion_order_error_mm": swapped_motion_err_mm,
+        "swapped_coreg_order_error_mm": swapped_coreg_err_mm,
+        "per_regime": per_regime,
+    }
+
+
 def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
     """Run full 21-stage pipeline on a source-acquisition-like 37-slice x 240-vol scan -> canonical CC200."""
     case_root = out_root / "e2e_37slices_240vols"
@@ -707,8 +1012,19 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
     for step, z_idx in enumerate(order):
         slice_timings[z_idx] = round(float(step * tr / 37.0), 8)
 
+    # Pure cortical GM parcels inside 37-slice FOV with 0 overlap against synthetic CSF/WM masks:
+    # Positive correlated pair: Parcels 66 & 128; Negative anti-correlated pair: Parcels 93 & 69
+    pos_pair = (66, 128)
+    neg_pair = (93, 69)
+    amp_norm_xy = float(np.sqrt(0.5 * (1.0 ** 2 + 0.4 ** 2)))
     rng = np.random.default_rng(123)
     vol_onsets = np.arange(n_vols, dtype=np.float64) * tr
+    parcel_noise = {}
+    for p in range(1, 201):
+        n_p = rng.normal(0.0, 1.0, size=n_vols)
+        n_p = (n_p - np.mean(n_p)) / (float(np.std(n_p)) or 1.0)
+        parcel_noise[p] = n_p
+
     bold_data = np.zeros((*epi_shape, n_vols), dtype=np.float32)
     for parcel_id in range(1, 201):
         mask_p = epi_parcels == parcel_id
@@ -719,8 +1035,19 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
             nv = int(np.sum(sl_xy))
             if nv > 0:
                 t_sec = vol_onsets + slice_timings[int(z_idx)]
-                sig = (100.0 + 8.0 * np.sin(2.0 * np.pi * freq * t_sec + phase_p)).astype(np.float32)[None, :]
-                bold_data[sl_xy, int(z_idx), :] = sig + rng.normal(0.0, 0.5, size=(nv, n_vols)).astype(np.float32)
+                if parcel_id in pos_pair:
+                    drv = (np.sin(2.0 * np.pi * 0.035 * t_sec) + 0.4 * np.cos(2.0 * np.pi * 0.022 * t_sec)) / amp_norm_xy
+                    curve = 0.96 * drv + 0.20 * parcel_noise[parcel_id]
+                elif parcel_id == neg_pair[0]:
+                    drv = (np.sin(2.0 * np.pi * 0.045 * t_sec) + 0.4 * np.sin(2.0 * np.pi * 0.018 * t_sec)) / amp_norm_xy
+                    curve = 0.96 * drv + 0.20 * parcel_noise[parcel_id]
+                elif parcel_id == neg_pair[1]:
+                    drv = (np.sin(2.0 * np.pi * 0.045 * t_sec) + 0.4 * np.sin(2.0 * np.pi * 0.018 * t_sec)) / amp_norm_xy
+                    curve = -0.96 * drv + 0.20 * parcel_noise[parcel_id]
+                else:
+                    curve = 0.7 * np.sin(2.0 * np.pi * freq * t_sec + phase_p) + 0.3 * parcel_noise[parcel_id]
+                sig = (100.0 + 8.0 * curve).astype(np.float32)[None, :]
+                bold_data[sl_xy, int(z_idx), :] = sig + rng.normal(0.0, 0.4, size=(nv, n_vols)).astype(np.float32)
 
     bold_path = func_dir / "sub-synthetic037_ses-1_task-rest_bold.nii.gz"
     bold_img = nib.Nifti1Image(bold_data, epi_affine)
@@ -790,35 +1117,91 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
         encoding="utf-8",
     )
 
-    res = run_poc_v2_pipeline(
+    res1 = run_poc_v2_pipeline(
         bold_path=bold_path,
         bold_json_path=json_path,
         t1w_path=t1_path,
         atlas_path=canonical_atlas,
         template_path=mni_path,
-        output_dir=case_root / "outputs",
+        output_dir=case_root / "outputs_run1",
         subject_id="sub-synthetic037",
         session_id="ses-1",
         atlas_mode="canonical",
         manifest_path=man_path,
     )
-    assert res["status"] == "SUCCESS"
-    prov = res["provenance"]
+    assert res1["status"] == "SUCCESS"
+    prov = res1["provenance"]
     assert prov["pipeline_stages_total"] == 21
+    assert prov["motion_estimation"]["estimated_on_raw_uncorrected_bold"] is True
     assert prov["motion_estimation"]["estimated_before_slice_timing"] is True
-    assert prov["slice_timing_correction"]["status"] == "APPLIED"
-    assert prov["slice_timing_correction"]["num_slices"] == 37
-    assert prov["slice_timing_correction"]["slice_axis"] == 2
+    stc_prov = prov["slice_timing_correction"]
+    assert stc_prov["status"] == "APPLIED"
+    assert stc_prov["num_slices"] == 37
+    assert stc_prov["slice_axis"] == 2
+    assert stc_prov["boundary_risk_window_volumes"] == [0, 1, 2, 3, 4, 235, 236, 237, 238, 239]
+    assert stc_prov["automatic_boundary_volume_removal_applied"] is False
 
-    deriv_nii = Path(res["output_dir"]) / prov["slice_timing_correction"]["derivative_nii"]
+    deriv_nii = Path(res1["output_dir"]) / stc_prov["derivative_nii"]
     deriv_img = nib.load(str(deriv_nii))
     assert deriv_img.shape == (64, 64, 37, 240)
+    deriv_json = json.loads((Path(res1["output_dir"]) / stc_prov["derivative_json"]).read_text(encoding="utf-8"))
+    assert deriv_json["StartTime"] == 1.0
+    assert deriv_json["BoundaryEdgeVolumesAtRisk"] == [0, 239]
+    assert deriv_json["BoundaryRiskWindowVolumes"] == [0, 1, 2, 3, 4, 235, 236, 237, 238, 239]
+    assert deriv_json["AutomaticBoundaryVolumeRemovalApplied"] is False
 
-    roi_df = pd.read_csv(res["artifacts"]["roi_csv"])
-    assert roi_df.shape == (200, 241)
-    feat_vec = np.load(res["artifacts"]["features_npy"])
-    assert feat_vec.shape == (19900,)
-    assert np.all(np.isfinite(feat_vec))
+    roi_df1 = pd.read_csv(res1["artifacts"]["roi_csv"])
+    assert roi_df1.shape == (200, 241)
+    assert roi_df1.columns[0] == "node/volume"
+    time_cols = [str(i) for i in range(240)]
+    assert list(roi_df1.columns[1:]) == time_cols
+
+    gate5 = prov["validation_gates"]["gate5_roi_coverage"]
+    assert gate5["n_timepoints_input"] == 240
+    assert gate5["n_timepoints_retained"] == 240
+    assert gate5["roi_timeseries_shape"] == [200, 240]
+    assert gate5["roi_csv_shape"] == [200, 241]
+    assert gate5["roi_label_column"] == "node/volume"
+    assert gate5["volume_censoring_applied"] is False
+
+    ts1 = roi_df1[time_cols].to_numpy(dtype=np.float64)
+    assert ts1.shape == (200, 240)
+    assert np.all(np.isfinite(ts1))
+
+    sig_p1 = roi_df1[roi_df1["node/volume"] == pos_pair[0]][time_cols].to_numpy().flatten()
+    sig_p2 = roi_df1[roi_df1["node/volume"] == pos_pair[1]][time_cols].to_numpy().flatten()
+    sig_n1 = roi_df1[roi_df1["node/volume"] == neg_pair[0]][time_cols].to_numpy().flatten()
+    sig_n2 = roi_df1[roi_df1["node/volume"] == neg_pair[1]][time_cols].to_numpy().flatten()
+    r_pos = float(np.corrcoef(sig_p1, sig_p2)[0, 1])
+    r_neg = float(np.corrcoef(sig_n1, sig_n2)[0, 1])
+    assert r_pos > 0.70, f"Expected recovered positive correlation > 0.70, got {r_pos:.4f}"
+    assert r_neg < -0.65, f"Expected recovered negative correlation < -0.65, got {r_neg:.4f}"
+
+    feat_vec1 = np.load(res1["artifacts"]["features_npy"])
+    assert feat_vec1.shape == (19900,)
+    assert np.all(np.isfinite(feat_vec1))
+
+    # Run 2: Verify strict determinism across complete 21-stage execution
+    res2 = run_poc_v2_pipeline(
+        bold_path=bold_path,
+        bold_json_path=json_path,
+        t1w_path=t1_path,
+        atlas_path=canonical_atlas,
+        template_path=mni_path,
+        output_dir=case_root / "outputs_run2",
+        subject_id="sub-synthetic037",
+        session_id="ses-1",
+        atlas_mode="canonical",
+        manifest_path=man_path,
+    )
+    assert res2["status"] == "SUCCESS"
+    roi_df2 = pd.read_csv(res2["artifacts"]["roi_csv"])
+    feat_vec2 = np.load(res2["artifacts"]["features_npy"])
+    ts2 = roi_df2[time_cols].to_numpy(dtype=np.float64)
+    max_ts_diff = float(np.max(np.abs(ts1 - ts2)))
+    max_feat_diff = float(np.max(np.abs(feat_vec1 - feat_vec2)))
+    assert max_ts_diff < 1e-7, f"37-slice E2E timeseries determinism violated: {max_ts_diff}"
+    assert max_feat_diff < 1e-7, f"37-slice E2E Fisher-z determinism violated: {max_feat_diff}"
 
     return {
         "status": "PASSED",
@@ -826,16 +1209,44 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
         "derivative_bold_shape": list(deriv_img.shape),
         "canonical_target_shape": list(CANONICAL_CC200_SHAPE),
         "slice_timing_length": len(slice_timings),
-        "slice_axis": prov["slice_timing_correction"]["slice_axis"],
-        "slice_encoding_direction": prov["slice_timing_correction"]["slice_encoding_direction"],
+        "slice_axis": stc_prov["slice_axis"],
+        "slice_encoding_direction": stc_prov["slice_encoding_direction"],
         "estimated_motion_before_stc": prov["motion_estimation"]["estimated_before_slice_timing"],
         "single_step_composed_resampling": True,
         "pipeline_stages_total": prov["pipeline_stages_total"],
-        "roi_timeseries_shape": list(roi_df.shape),
-        "n_fisher_z_features": int(len(feat_vec)),
-        "all_features_finite": bool(np.all(np.isfinite(feat_vec))),
-        "runtime_seconds": float(res["runtime_seconds"]),
-        "peak_rss_gb": float(res["peak_rss_gb"]),
+        "n_timepoints_input": int(gate5["n_timepoints_input"]),
+        "n_timepoints_retained": int(gate5["n_timepoints_retained"]),
+        "roi_timeseries_shape": [200, int(ts1.shape[1])],
+        "roi_csv_shape": list(roi_df1.shape),
+        "roi_label_column": "node/volume",
+        "extra_timepoint_origin_explanation": (
+            "roi_CC200.csv uses C-PAC layout: 200 ROI rows x 241 columns where column 0 "
+            "is 'node/volume' (integer ROI IDs 1..200) and columns '0'..'239' hold the exact "
+            "240 timepoints; Stage 19 connectivity consumes signals of shape (240, 200)."
+        ),
+        "correlation_recovery": {
+            "positive_pair": {
+                "rois": [f"Parcel_{pos_pair[0]:03d}", f"Parcel_{pos_pair[1]:03d}"],
+                "recovered_pearson_r": r_pos,
+                "threshold": "> 0.70",
+            },
+            "negative_pair": {
+                "rois": [f"Parcel_{neg_pair[0]:03d}", f"Parcel_{neg_pair[1]:03d}"],
+                "recovered_pearson_r": r_neg,
+                "threshold": "< -0.65",
+            },
+        },
+        "determinism": {
+            "max_abs_diff_timeseries": max_ts_diff,
+            "max_abs_diff_fisher_z": max_feat_diff,
+            "tolerance": 1e-7,
+            "deterministic_equality": "PASSED",
+        },
+        "n_fisher_z_features": int(len(feat_vec1)),
+        "all_features_finite": bool(np.all(np.isfinite(feat_vec1))),
+        "runtime_seconds_run1": float(res1["runtime_seconds"]),
+        "runtime_seconds_run2": float(res2["runtime_seconds"]),
+        "peak_rss_gb": float(max(res1["peak_rss_gb"], res2["peak_rss_gb"])),
     }
 
 
@@ -1096,14 +1507,14 @@ def run_step4_validation(root_dir: Optional[Path] = None) -> Dict[str, Any]:
     except InvalidSliceTimingError:
         pass
 
-    # Additional header-axis fallback, 5-region boundary suite, and 37-slice x 240-vol E2E checks
+    # Additional header-axis fallback, 5-region boundary suite, composed transforms, and 37-slice x 240-vol E2E checks
     print("\nRunning NIfTI header slice_dim axis controls...")
     header_axis_controls = run_header_axis_controls(
         out_root=out_root, tr=tr, n_vols=n_vols, n_slices=n_slices_std
     )
     print("  -> Header slice_dim fallback (0->i, 1->j, 2->k), unknown-axis skip, and conflict controls PASSED")
 
-    print("\nRunning 5-region cubic spline boundary validation suite...")
+    print("\nRunning 5-region cubic spline boundary validation suite & positive/negative shift metadata controls...")
     boundary_validation = run_boundary_validation_suite()
     for shift_lbl, reg_dict in boundary_validation.items():
         n_old_f = reg_dict["noisy_oscillation"]["unpadded_not_a_knot_extrap"]["first_volume"]["rmse_after"]
@@ -1115,19 +1526,74 @@ def run_step4_validation(root_dir: Optional[Path] = None) -> Dict[str, Any]:
             f"Transient vol[0] RMSE: {t_old_f:.4f} -> {t_new_f:.4f}"
         )
 
-    print("\nRunning 37-slice x 240-volume source-acquisition -> canonical CC200 21-stage E2E test...")
-    e2e_37slice = run_37slice_240vol_e2e_integration(out_root)
+    boundary_shift_metadata_controls: Dict[str, Any] = {}
+    ctrl_timings = np.linspace(0.0, tr, 11, endpoint=False).tolist()
+    for shift_name, ref_t_ctrl, seed_ctrl in (
+        ("negative_shift_regime", float(ctrl_timings[0]), 601),
+        ("positive_shift_regime", float(ctrl_timings[-1]), 602),
+    ):
+        s_ds = build_synthetic_stc_dataset(
+            case_dir=out_root / f"control_{shift_name}",
+            case_id=shift_name,
+            spatial_shape=(6, 6, 11),
+            n_vols=120,
+            tr=tr,
+            reference_time=ref_t_ctrl,
+            slice_timing=ctrl_timings,
+            slice_encoding_direction="k",
+            seed=seed_ctrl,
+        )
+        s_img, s_prov = write_slice_timing_derivative(
+            s_ds["bold_nii"], s_ds["bold_json"], s_ds["bold_nii"].parent.parent / "derivatives", reference_time=ref_t_ctrl
+        )
+        assert s_img.shape == (6, 6, 11, 120)
+        d_meta = json.loads(Path(s_prov["derivative_json_path"]).read_text(encoding="utf-8"))
+        assert d_meta["StartTime"] == ref_t_ctrl
+        assert d_meta["TemporalOriginShiftSeconds"] == ref_t_ctrl
+        assert d_meta["BoundaryPaddingStrategy"] == "odd_point_reflection_4tr"
+        assert d_meta["BoundaryExtrapolationDisabled"] is True
+        assert d_meta["BoundaryEdgeVolumesAtRisk"] == [0, 119]
+        assert d_meta["BoundaryRiskWindowSamplesPerSide"] == 5
+        assert d_meta["BoundaryRiskWindowVolumes"] == [0, 1, 2, 3, 4, 115, 116, 117, 118, 119]
+        assert d_meta["AutomaticBoundaryVolumeRemovalApplied"] is False
+        assert "BoundaryRiskWindowVolumes" in d_meta["VolumeCensoringGuidance"]
+        boundary_shift_metadata_controls[shift_name] = {
+            "reference_time": ref_t_ctrl,
+            "num_volumes_preserved": int(s_img.shape[3]),
+            "StartTime": d_meta["StartTime"],
+            "BoundaryEdgeVolumesAtRisk": d_meta["BoundaryEdgeVolumesAtRisk"],
+            "BoundaryRiskWindowVolumes": d_meta["BoundaryRiskWindowVolumes"],
+            "BoundaryRegions": d_meta["BoundaryRegions"],
+            "AutomaticBoundaryVolumeRemovalApplied": d_meta["AutomaticBoundaryVolumeRemovalApplied"],
+        }
+
+    print("\nRunning independent geometric landmark validation of composed spatial transforms...")
+    composed_transform_validation = run_composed_transform_landmark_validation()
     print(
-        f"  -> E2E 37-slice PASSED: src={e2e_37slice['source_bold_shape']} -> "
-        f"roi={e2e_37slice['roi_timeseries_shape']} | features={e2e_37slice['n_fisher_z_features']} | "
-        f"runtime={e2e_37slice['runtime_seconds']:.2f}s | peak_rss={e2e_37slice['peak_rss_gb']:.2f} GB"
+        f"  -> Composed Transform Validation PASSED: "
+        f"mean_fwd={composed_transform_validation['mean_landmark_error_mm']:.4f} mm | "
+        f"max_fwd={composed_transform_validation['max_landmark_error_mm']:.4f} mm "
+        f"({composed_transform_validation['max_error_voxel_units']:.4f} vox) | "
+        f"swapped_order_err={composed_transform_validation['swapped_motion_order_error_mm']:.3f} / "
+        f"{composed_transform_validation['swapped_coreg_order_error_mm']:.3f} mm"
     )
 
     _, peak_mem_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
+    print("\nRunning 37-slice x 240-volume source-acquisition -> canonical CC200 21-stage E2E test (Run 1 + Run 2)...")
+    e2e_37slice = run_37slice_240vol_e2e_integration(out_root)
+    print(
+        f"  -> E2E 37-slice PASSED: src={e2e_37slice['source_bold_shape']} -> "
+        f"ts={e2e_37slice['roi_timeseries_shape']} (csv={e2e_37slice['roi_csv_shape']}) | "
+        f"r_pos={e2e_37slice['correlation_recovery']['positive_pair']['recovered_pearson_r']:.4f} | "
+        f"r_neg={e2e_37slice['correlation_recovery']['negative_pair']['recovered_pearson_r']:.4f} | "
+        f"det_ts={e2e_37slice['determinism']['max_abs_diff_timeseries']:.2e} | "
+        f"runtime={e2e_37slice['runtime_seconds_run1']:.2f}s | peak_rss={e2e_37slice['peak_rss_gb']:.2f} GB"
+    )
+
     report = {
-        "step": "Step 4.1: Slice-Timing Correction Final Scientific Validation (DEC-STC-01)",
+        "step": "Step 4.2: Slice-Timing Correction Final Scientific Audit (DEC-STC-01)",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "VERIFIED",
         "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
@@ -1142,15 +1608,17 @@ def run_step4_validation(root_dir: Optional[Path] = None) -> Dict[str, Any]:
         "spatial_dimensions_default": [16, 16, 37],
         "signal_model_frequencies_hz": [f for _, f, _ in SIGNAL_COMPONENTS],
         "acceptance_criterion": {
-            "basis": "Hall & Meyer (1976) C4 cubic spline interior error bound + monotonic improvement over uncorrected sampling + bounded boundary response under noise/transients",
+            "basis": "Hall & Meyer (1976) C4 cubic spline interior error bound + monotonic improvement over uncorrected sampling + bounded boundary response under noise/transients + independent composed spatial transform landmark agreement",
             "theoretical_interior_rmse_bound": theoretical_interior_bound,
             "required_min_mean_pearson_r": 0.999,
             "required_finite_fraction": 1.0,
         },
-        "peak_traced_memory_mib": round(peak_mem_bytes / (1024.0 * 1024.0), 3),
+        "peak_stc_traced_memory_mib": round(peak_mem_bytes / (1024.0 * 1024.0), 3),
         "cases": case_results,
         "header_axis_controls": header_axis_controls,
         "boundary_validation_5_regions": boundary_validation,
+        "boundary_shift_metadata_controls": boundary_shift_metadata_controls,
+        "composed_transform_validation": composed_transform_validation,
         "e2e_37slice_240vol_canonical": e2e_37slice,
         "controls": {
             "simultaneous_acquisition_status": sim_rep["status"],

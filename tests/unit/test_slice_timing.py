@@ -765,6 +765,82 @@ def test_20b_five_region_boundary_stability_noisy_and_transient(tmp_path: Path):
         assert d_json["BoundaryPaddingStrategy"] == "odd_point_reflection_4tr"
         assert d_json["BoundaryExtrapolationDisabled"] is True
         assert d_json["BoundaryEdgeVolumesAtRisk"] == [0, short_t - 1]
+        assert d_json["BoundaryRiskWindowVolumes"] == list(range(short_t))
+        assert d_json["AutomaticBoundaryVolumeRemovalApplied"] is False
+
+
+def test_20c_boundary_risk_window_and_positive_negative_shift_regimes(tmp_path: Path):
+    """Verify 5-region boundary metadata and accuracy under explicit positive, negative, and centered STC shifts."""
+    tr = 2.0
+    n_vols = 120
+    n_slices = 11
+    timings = np.linspace(0.0, tr, n_slices, endpoint=False).tolist()
+
+    # Test negative-only shift regime (ref=0.05 -> delta <= 0 across late slices),
+    # positive-only shift regime (ref=1.80 -> delta >= 0 across early slices),
+    # and centered TR/2 (both positive and negative shifts in one scan).
+    for case_label, ref_t, s_dir in (
+        ("negative_shift_ref_start_k", float(timings[0]), "k"),
+        ("positive_shift_ref_end_k", float(timings[-1]), "k"),
+        ("mixed_shift_ref_mid_k_minus", tr / 2.0, "k-"),
+    ):
+        img, gt, meta, _ = _make_analytical_bold(
+            (4, 4, n_slices),
+            n_vols=n_vols,
+            tr=tr,
+            slice_timing=timings,
+            direction=s_dir,
+            reference_time=ref_t,
+        )
+        cdir = tmp_path / case_label
+        cdir.mkdir(parents=True, exist_ok=True)
+        b_p = cdir / "sub-synth_task-rest_bold.nii.gz"
+        j_p = cdir / "sub-synth_task-rest_bold.json"
+        nib.save(img, str(b_p))
+        j_p.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+        out_img, prov = write_slice_timing_derivative(b_p, j_p, cdir / "derivatives", reference_time=ref_t)
+        assert out_img.shape == (4, 4, n_slices, n_vols)  # All T=120 volumes preserved
+
+        d_json = json.loads(Path(prov["derivative_json_path"]).read_text(encoding="utf-8"))
+        assert d_json["StartTime"] == pytest.approx(ref_t)
+        assert d_json["TemporalOriginShiftSeconds"] == pytest.approx(ref_t)
+        assert d_json["BoundaryPaddingStrategy"] == "odd_point_reflection_4tr"
+        assert d_json["BoundaryExtrapolationDisabled"] is True
+        assert d_json["BoundaryEdgeVolumesAtRisk"] == [0, n_vols - 1]
+        assert d_json["BoundaryRiskWindowSamplesPerSide"] == 5
+        assert d_json["BoundaryRiskWindowVolumes"] == [0, 1, 2, 3, 4, 115, 116, 117, 118, 119]
+        assert d_json["AutomaticBoundaryVolumeRemovalApplied"] is False
+
+        regions = d_json["BoundaryRegions"]
+        assert regions["first_volume"] == [0]
+        assert regions["first_five_volumes"] == [0, 1, 2, 3, 4]
+        assert regions["interior_volumes"] == {"start_index": 5, "end_index_inclusive": 114, "count": 110}
+        assert regions["last_five_volumes"] == [115, 116, 117, 118, 119]
+        assert regions["final_volume"] == [119]
+
+        guidance = d_json["VolumeCensoringGuidance"]
+        assert "[0, T-1]" in guidance
+        assert "BoundaryRiskWindowVolumes" in guidance
+        assert "opt-in" in guidance
+
+        # Verify regional RMSE properties for both shift polarities
+        raw_arr = np.asarray(img.dataobj, dtype=np.float64)
+        out_arr = np.asarray(out_img.dataobj, dtype=np.float64)
+        assert np.isfinite(out_arr).all()
+        rmse_interior = float(np.sqrt(np.mean((out_arr[..., 5:-5] - gt[..., 5:-5]) ** 2)))
+        rmse_raw_int = float(np.sqrt(np.mean((raw_arr[..., 5:-5] - gt[..., 5:-5]) ** 2)))
+        assert rmse_interior < 0.015
+        assert rmse_interior < rmse_raw_int * 0.05
+
+        # Negative shifts hit left boundary (0..4); positive shifts hit right boundary (T-5..T-1);
+        # both remain far more accurate than uncorrected raw sampling.
+        rmse_first5 = float(np.sqrt(np.mean((out_arr[..., :5] - gt[..., :5]) ** 2)))
+        rmse_raw_first5 = float(np.sqrt(np.mean((raw_arr[..., :5] - gt[..., :5]) ** 2)))
+        rmse_last5 = float(np.sqrt(np.mean((out_arr[..., -5:] - gt[..., -5:]) ** 2)))
+        rmse_raw_last5 = float(np.sqrt(np.mean((raw_arr[..., -5:] - gt[..., -5:]) ** 2)))
+        assert rmse_first5 < rmse_raw_first5 * 0.35
+        assert rmse_last5 < rmse_raw_last5 * 0.35
 
 
 def test_21_22_23_shape_affine_header_tr_starttime_and_determinism(tmp_path: Path):
@@ -1256,7 +1332,76 @@ def test_realistic_37slice_240vol_source_to_61slice_e2e(tmp_path: Path):
         assert deriv_img.shape == (28, 28, 37, 240)
 
         roi_df = pd.read_csv(res["artifacts"]["roi_csv"])
-        assert roi_df.shape == (200, 241)  # 200 ROIs x 240 timepoints preserved across 37->61 resampling
+        assert roi_df.shape == (200, 241)  # 200 ROIs x ('node/volume' label col + 240 timepoints)
+        assert roi_df.columns[0] == "node/volume"
+        assert list(roi_df.columns[1:]) == [str(i) for i in range(240)]
+
+        gate5 = res["provenance"]["validation_gates"]["gate5_roi_coverage"]
+        assert gate5["n_timepoints_input"] == 240
+        assert gate5["n_timepoints_retained"] == 240
+        assert gate5["roi_timeseries_shape"] == [200, 240]
+        assert gate5["roi_csv_shape"] == [200, 241]
+        assert gate5["roi_label_column"] == "node/volume"
+        assert gate5["volume_censoring_applied"] is False
+
+        deriv_json_p = Path(res["output_dir"]) / stc_p["derivative_json"]
+        deriv_meta = json.loads(deriv_json_p.read_text(encoding="utf-8"))
+        assert deriv_meta["StartTime"] == pytest.approx(1.0)
+        assert deriv_meta["TemporalOriginShiftSeconds"] == pytest.approx(1.0)
+        assert deriv_meta["BoundaryPaddingStrategy"] == "odd_point_reflection_4tr"
+        assert deriv_meta["BoundaryExtrapolationDisabled"] is True
+        assert deriv_meta["BoundaryEdgeVolumesAtRisk"] == [0, 239]
+        assert deriv_meta["BoundaryRiskWindowVolumes"] == [0, 1, 2, 3, 4, 235, 236, 237, 238, 239]
+        assert deriv_meta["AutomaticBoundaryVolumeRemovalApplied"] is False
+
         feat_vec = np.load(res["artifacts"]["features_npy"])
         assert feat_vec.shape == (19900,)
         assert np.all(np.isfinite(feat_vec))
+
+
+def test_run_poc_v2_240vol_explicit_boundary_censoring_opt_in(tmp_path: Path):
+    """Default 240-vol run preserves 240 timepoints; opt-in censoring produces exact remaining count."""
+    with mock.patch.dict(os.environ, {"NEUROADHD_HMAC_KEY": "step4_2_censor_e2e_key"}, clear=False):
+        os.environ.pop("NEUROADHD_MODEL_DIR", None)
+        paths = generate_synthetic_phantom_session(tmp_path / "in_240", subject_id="sub-synthetic240", t_vol=240, seed=41)
+
+        res_default = run_poc_v2_pipeline(
+            bold_path=paths["bold_nii"],
+            bold_json_path=paths["bold_json"],
+            t1w_path=paths["t1w_nii"],
+            atlas_path=paths["cc200_atlas"],
+            template_path=paths["mni_template"],
+            output_dir=tmp_path / "out_default",
+            subject_id="sub-synthetic240",
+            session_id="ses-1",
+            manifest_path=paths["synthetic_manifest"],
+        )
+        df_def = pd.read_csv(res_default["artifacts"]["roi_csv"])
+        assert df_def.shape == (200, 241)
+        assert res_default["provenance"]["validation_gates"]["gate5_roi_coverage"]["roi_timeseries_shape"] == [200, 240]
+
+        # Explicit censoring of the 10-volume boundary risk window [0..4, 235..239]
+        censor_list = [0, 1, 2, 3, 4, 235, 236, 237, 238, 239]
+        res_cen = run_poc_v2_pipeline(
+            bold_path=paths["bold_nii"],
+            bold_json_path=paths["bold_json"],
+            t1w_path=paths["t1w_nii"],
+            atlas_path=paths["cc200_atlas"],
+            template_path=paths["mni_template"],
+            output_dir=tmp_path / "out_censored",
+            subject_id="sub-synthetic240",
+            session_id="ses-1",
+            manifest_path=paths["synthetic_manifest"],
+            censor_volumes=censor_list,
+        )
+        df_cen = pd.read_csv(res_cen["artifacts"]["roi_csv"])
+        assert df_cen.shape == (200, 231)
+        assert df_cen.columns[0] == "node/volume"
+        assert list(df_cen.columns[1:]) == [str(i) for i in range(5, 235)]
+        gate5_cen = res_cen["provenance"]["validation_gates"]["gate5_roi_coverage"]
+        assert gate5_cen["n_timepoints_input"] == 240
+        assert gate5_cen["n_timepoints_retained"] == 230
+        assert gate5_cen["roi_timeseries_shape"] == [200, 230]
+        assert gate5_cen["roi_csv_shape"] == [200, 231]
+        assert gate5_cen["volume_censoring_applied"] is True
+        assert gate5_cen["censored_volumes"] == censor_list

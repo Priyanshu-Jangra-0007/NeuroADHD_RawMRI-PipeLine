@@ -1,8 +1,8 @@
-# Step 4 / 4.1: Metadata-Driven Slice-Timing Correction (`DEC-STC-01`)
+# Step 4 / 4.1 / 4.2: Metadata-Driven Slice-Timing Correction (`DEC-STC-01`)
 
 ## 1. Overview & Safety Boundaries
 
-Step 4 and Step 4.1 implement scientifically validated, metadata-driven BIDS slice-timing correction (STC) inside [`src/preprocessing/slice_timing.py`](../src/preprocessing/slice_timing.py) and integrate it cleanly into the **21-stage** [`scripts/run_poc_v2.py`](../scripts/run_poc_v2.py) preprocessing pipeline.
+Step 4, Step 4.1, and Step 4.2 implement and scientifically audit metadata-driven BIDS slice-timing correction (STC) inside [`src/preprocessing/slice_timing.py`](../src/preprocessing/slice_timing.py), time-axis-preserving CC200 extraction in [`src/parcellation/extractor.py`](../src/parcellation/extractor.py), composed spatial resampling in [`src/preprocessing/registration.py`](../src/preprocessing/registration.py), and the **21-stage** [`scripts/run_poc_v2.py`](../scripts/run_poc_v2.py) preprocessing pipeline.
 
 **Strict Safety Invariants:**
 - `execution_policy = STRICTLY_SYNTHETIC_ONLY`
@@ -70,7 +70,7 @@ followed by `CubicSpline(t_ext, y_ext, axis=1, bc_type='not-a-knot', extrapolate
 2. **Interior Invariance:** Interior volumes (`[5, T-6]`) keep exact unperturbed $C^2$ cubic spline weights ($\|w\|_1 = 1.5435$, $\|w\|_2 = 0.8727$; RMSE $= 0.0030$, bit-identical to unpadded `not-a-knot`).
 3. **Boundary Stability under Noise & Transients:** Cuts noisy edge RMSE up to **50%** and cuts transient boundary overshoot **$4.28\times$–$4.65\times$** (`22.99 -> 5.37` at `vol 0`, `23.07 -> 4.96` at `vol T-1`; up to $28\times$ at $\delta = -0.95\text{ TR}$).
 4. **Measured Tradeoff (Zero-Curvature Bias on Noiseless Extrema):** Anti-symmetric point reflection enforces $y''(0)=y''(T-1)=0$ (natural-spline equivalence). For noiseless oscillatory signals evaluated beyond `[0, T-1]`, ignoring nonzero boundary curvature $y''(0)$ increases single-edge noiseless RMSE from `0.1873` to `0.2403` at `vol 0` ($\delta=-0.45\text{ TR}$) and `0.2670` to `0.6258` at phase-aligned curvature extrema (`vol T-1`, $\delta=+0.45\text{ TR}$) while still halving raw acquisition error on start frames (`1.4586 -> 0.2403`).
-5. **No Silent Cropping + Provenance Risk Tagging:** All $T$ volumes and `+reference_time` `StartTime` are preserved; derivative JSON sidecars record `BoundaryPaddingStrategy = "odd_point_reflection_4tr"`, `BoundaryExtrapolationDisabled = true`, `BoundaryEdgeVolumesAtRisk = [0, T-1]`, and explicit `VolumeCensoringGuidance`.
+5. **No Silent Cropping + Five-Region Boundary Risk Metadata (`Step 4.2`):** All $T$ volumes and `+reference_time` `StartTime` are preserved (`AutomaticBoundaryVolumeRemovalApplied = false`); derivative JSON sidecars and provenance record `BoundaryPaddingStrategy = "odd_point_reflection_4tr"`, `BoundaryExtrapolationDisabled = true`, `BoundaryEdgeVolumesAtRisk = [0, T-1]`, `BoundaryRiskWindowSamplesPerSide = 5`, `BoundaryRiskWindowVolumes = [0..4, T-5..T-1]`, `BoundaryRegions` (distinguishing `first_volume`, `first_five_volumes`, `interior_volumes`, `last_five_volumes`, `final_volume`), and clarified `VolumeCensoringGuidance`. Tested explicitly on both negative (`reference_time = 0.0 s`) and positive (`reference_time = 1.81818 s`) STC shifts (`N = 120`, zero silent truncation).
 
 ### Five-Region Boundary Benchmark (`N = 120`, `250 voxels`, `TR = 2.0s`, $\sigma = 0.25$ Gaussian Noise)
 
@@ -100,14 +100,24 @@ followed by `CubicSpline(t_ext, y_ext, axis=1, bc_type='not-a-knot', extrapolate
 ## 5. Temporal Reference Point & Provenance Immutability
 
 - **Default Reference Time:** `TR / 2.0` (`+1.0 s` for `TR = 2.0 s`), configurable within `[0, TR)`.
-- **Temporal-Origin Shift:** BIDS derivative sidecars record `SliceTimingCorrected: true`, `SliceTimingReferenceTime`, `StartTime = reference_time`, `TemporalOriginShiftSeconds = reference_time`, `OriginalSliceTiming`, `Sources`, plus the Step 4.1 boundary provenance fields (`BoundaryPaddingStrategy`, `BoundaryExtrapolationDisabled`, `BoundaryEdgeVolumesAtRisk`, `VolumeCensoringGuidance`, `HeaderSliceDim`, `SliceAxisSource`).
+- **Temporal-Origin Shift:** BIDS derivative sidecars record `SliceTimingCorrected: true`, `SliceTimingReferenceTime`, `StartTime = reference_time`, `TemporalOriginShiftSeconds = reference_time`, `OriginalSliceTiming`, `Sources`, plus boundary provenance (`BoundaryPaddingStrategy`, `BoundaryExtrapolationDisabled`, `BoundaryEdgeVolumesAtRisk`, `BoundaryRiskWindowSamplesPerSide`, `BoundaryRiskWindowVolumes`, `BoundaryRegions`, `AutomaticBoundaryVolumeRemovalApplied: false`, `VolumeCensoringGuidance`, `HeaderSliceDim`, `SliceAxisSource`).
 - **Immutability:** Raw BIDS BOLD NIfTI and JSON sidecars remain byte-identical (verified via pre/post SHA-256 checksums); derivatives are emitted solely under `derivatives/*_desc-stc_bold.{nii.gz,json,_provenance.json}`.
 
 ---
 
-## 6. Quantitative Synthetic Validation (`scripts/validate_step4_slice_timing.py`)
+## 6. CC200 Time-Axis Audit & Configured Censoring (`Step 4.2`)
 
-### 6.1 Analytical Multi-Tone Validation (`16x16x37x240`, Hall–Meyer $C^4$ Interior Bound = `0.023130`)
+### 6.1 Root Cause of `200 × 241` vs `200 × 240`
+Tracing the complete data path from Stage 12 resampled BOLD `(63, 75, 61, 240)` through Stage 17 (`clean_functional_bold`), Stage 18 (`extract_cc200_timeseries`), Stage 19 (`compute_connectivity_vector`), and the dashboard (`DashboardDataService.get_timeseries`) confirms:
+- **Intentional C-PAC CSV Identifier Column:** `extract_cc200_timeseries()` uses `NiftiLabelsMasker` (no padding, no reference volume prepending, no cropping) to extract `signals` of shape **`(240, 200)`** (`T × 200`). It transposes to `(200, 240)` and inserts column `0` (`df.insert(0, "node/volume", np.arange(1, 201))`), producing the exported CSV `roi_CC200.csv` with shape **`(200, 241)`** (`"node/volume"` + `"0".."239"`).
+- **Zero Time-Axis Corruption Downstream:** Stage 19 consumes `signals` `(240, 200)` directly (no label column), and `DashboardDataService.get_timeseries()` asserts `fieldnames[0] == "node/volume"` and slices `list(row.keys())[1:]`, yielding `n_timepoints = 240`. Every ROI has uniform, aligned length `240` with zero silent duplication or padding.
+- **Disambiguated Provenance Reporting & Opt-In Censoring:** Earlier Step 4.1 reporting ambiguously printed `roi_df.shape` (`[200, 241]`) as the time-series shape. `validation_gates.gate5_roi_coverage` in `scripts/run_poc_v2.py` now cleanly separates `n_timepoints_input`, `n_timepoints_retained`, `roi_timeseries_shape` (`[200, T_retained]`), `roi_csv_shape` (`[200, T_retained + 1]`), `roi_label_column` (`"node/volume"`), `volume_censoring_applied`, and `censored_volumes`. Explicit `censor_volumes` is supported via `resolve_censor_volumes()`, `extract_cc200_timeseries()`, and `run_poc_v2_pipeline(..., censor_volumes=...)` (applied in Stage 18 after continuous-TR Stage 17 temporal filtering), failing closed on booleans, out-of-range indices, or `< 50` retained volumes.
+
+---
+
+## 7. Quantitative Synthetic Validation (`scripts/validate_step4_slice_timing.py`)
+
+### 7.1 Analytical Multi-Tone Validation (`16x16x37x240`, Hall–Meyer $C^4$ Interior Bound = `0.023130`)
 
 | Case ID | Regime & Axis | Whole-Series RMSE Before -> After (% Drop) | Interior RMSE (`[2:-2]`) | Phase Error (rad) Before -> After | Mean Pearson $r$ | Max Determinism Diff |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -118,21 +128,42 @@ followed by `CubicSpline(t_ext, y_ext, axis=1, bc_type='not-a-knot', extrapolate
 | `case_e_axis_i` | Axis `i` (`37x16x16`) | `0.5270 -> 0.01566` (`97.03%`) | `0.00216` | `0.1192 -> 0.00008` | `0.999991` | `0.0e+00` |
 | `case_e_axis_j` | Axis `j` (`16x37x16`) | `0.3712 -> 0.01070` (`97.12%`) | `0.00151` | `0.0751 -> 0.00006` | `0.999996` | `0.0e+00` |
 
-### 6.2 Header Axis Controls & Negative Direction Discrimination
+### 7.2 Header Axis Controls & Negative Direction Discrimination
 - Missing `SliceEncodingDirection` with header `slice_dim = 0, 1, 2` resolved cleanly to `i, j, k` (`interior_rmse_after = 0.00150` across all 3 axes).
 - Missing `SliceEncodingDirection` with unset `slice_dim = None` skipped cleanly (`SKIPPED_UNKNOWN_SLICE_AXIS`, `corrected = false`, bit-identical BOLD preserved).
 - Explicit direction vs conflicting `slice_dim` raised `InvalidSliceTimingError` fail-closed.
 - `k-` outperformed unreversed `k` (`0.01114` vs `0.73972` RMSE, $66.4\times$ accuracy improvement).
 
-### 6.3 Realistic 37-Slice × 240-Volume End-to-End 21-Stage Integration
-Executed full 21-stage preprocessing (`run_poc_v2_pipeline`) on a source-acquisition-like synthetic BIDS scan (`64x64x37x240`, `37` interleaved slice timings, $3.0 \times 3.5 \times 4.0\text{ mm}^3$, `TR = 2.0 s`, all 200 canonical CC200 parcels in FOV) mapped onto canonical MNI/CC200 `(63, 75, 61)`:
-- **Stage Ordering Verified:** Stage 2 estimated motion directly on raw uncorrected BOLD (`Mean FD = 0.2791 mm`); Stage 3 applied STC across `37/37` slices (`desc-stc_bold.nii.gz` shape `(64, 64, 37, 240)`); Stage 12 composed `motion_transforms` + coregistration + SyN in one spatial pullback into `(63, 75, 61, 240)`.
-- **Downstream CC200 Outputs:** `roi_CC200.csv` shape `(200, 241)` (`240` timepoints preserved), `19,900` finite Fisher-$z$ features (`[-2.950, 2.698]`), Peak RSS `0.86 GB` ($\le 2.50\text{ GB}$ ceiling), total runtime `396.96s` (`< 600s` budget).
+### 7.3 Independent Composed Spatial Transform Landmark Validation (`Step 4.2`)
+Audited [`compose_transformations`](../src/preprocessing/registration.py), [`compose_volume_transform`](../src/preprocessing/registration.py), and [`resample_4d_bold`](../src/preprocessing/registration.py) across 5 asymmetric 3D landmarks on a synthetic `32×32×24` (`3×3×4 mm` RAS) EPI $\to$ `36×36×30` (`2.5 mm` LAS) MNI grid, checking both forward (`.transform` + `.transform_points_inverse`) and inverse (`.transform_inverse` + `.transform_points`) mappings:
+
+| Regime | Fwd COM Mean / Max Err (`mm`) | Fwd Max (`vox`) | Inv COM Mean / Max Err (`mm`) | Point Fwd / Inv Max (`mm`) |
+| :--- | :--- | :--- | :--- | :--- |
+| `identity` | `0.0998 / 0.1377` | `0.0551` | `0.0814 / 0.1427` | `0.0 / 0.0` |
+| `pure_translation` | `0.1245 / 0.1983` | `0.0793` | `0.0800 / 0.1455` | `0.0 / 0.0` |
+| `pure_rotation` | `0.0900 / 0.1370` | `0.0548` | `0.0831 / 0.1669` | `7.3e-15 / 6.6e-15` |
+| `combined_rigid` | `0.0861 / 0.1470` | `0.0588` | `0.0803 / 0.1718` | `4.4e-15 / 7.5e-15` |
+| `non_commuting_composed_with_syn` | `0.1162 / 0.1502` | `0.0601` | `0.1690 / 0.3327` | `0.0174 / 0.0089` |
+
+- **Sequential vs Single-Step Composed Resampling:** Max landmark difference `0.0618 mm`.
+- **Negative Multiplication-Order Controls:** Swapping motion order (`prealign_inv @ motion` instead of `motion @ prealign_inv`) produces `2.6650 mm` landmark error; swapping coreg/normalization order (`affine_t1w_to_mni @ rigid_epi_to_t1w`) produces `2.8925 mm` landmark error. Singular `4×4` motion matrices fail closed (`ValueError`).
+
+### 7.4 Realistic 37-Slice × 240-Volume End-to-End 21-Stage Integration
+Executed full 21-stage preprocessing (`run_poc_v2_pipeline`) on a source-acquisition-like synthetic BIDS scan (`64x64x37x240`, `37` interleaved slice timings, $3.0 \times 3.5 \times 4.0\text{ mm}^3$, `TR = 2.0 s`, all 200 canonical CC200 parcels in FOV) mapped onto canonical MNI/CC200 `(63, 75, 61)` for two independent runs (`Run 1` + `Run 2`):
+- **Stage Ordering Verified:** Stage 2 estimated motion directly on raw uncorrected BOLD; Stage 3 applied STC across `37/37` slices (`desc-stc_bold.nii.gz` shape `(64, 64, 37, 240)`); Stage 12 composed `motion_transforms` + coregistration + SyN in one spatial pullback into `(63, 75, 61, 240)`.
+- **CC200 Time Axis & Correlation Recovery:** `n_timepoints_input = 240`, `n_timepoints_retained = 240`, `roi_timeseries_shape = (200, 240)`, `roi_csv_shape = (200, 241)` (`roi_label_column = "node/volume"`). Pure-GM positive correlation (`Parcel_066`, `Parcel_128`) recovered **`r = +0.9791`** (`> 0.70`); pure-GM negative correlation (`Parcel_093`, `Parcel_069`) recovered **`r = -0.9800`** (`< -0.65`); `19,900` finite Fisher-$z$ features.
+- **Determinism & Resource Budget:** `Run 1` vs `Run 2` `max_abs_diff_timeseries = 0.0`, `max_abs_diff_fisher_z = 0.0`; runtime `81.68 s` (Run 1) / `78.55 s` (Run 2); Peak RSS `1.02 GB` ($\le 2.50\text{ GB}$ ceiling).
+
+### 7.5 Canonical 61-Slice Step 3 Regression Verification (`scripts/validate_step3_pipeline.py`)
+Verified end-to-end compatibility against the canonical Step 3 synthetic benchmark (`63×75×61×240`, `61/61` interleaved `k` slices, `TR = 2.0 s`, Stage 2 raw-BOLD motion estimation pre-STC):
+- **Status & Time Axis:** `VERIFIED` (`21/21` stages); `timeseries_shape = [200, 240]`, `boundary_risk_window_volumes = [0..4, 235..239]`, `automatic_boundary_volume_removal_applied = false`.
+- **Correlation Recovery:** Positive pair (`Parcel_012`, `Parcel_045`) **`r = +0.9818`** (`> 0.70`); Negative pair (`Parcel_070`, `Parcel_085`) **`r = -0.9864`** (`< -0.65`); `19,900` finite Fisher-$z$ edges (`[-2.491, 2.346]`).
+- **Determinism & Budget:** `Run 1` vs `Run 2` `max_abs_diff_timeseries = 0.0`, `max_abs_diff_fisher_z = 0.0`; `Run 1` runtime `102.81 s`; Peak RSS `0.95 GB` ($\le 2.50\text{ GB}$ ceiling).
 
 ---
 
-## 7. Known Limitations
+## 8. Known Limitations
 
 1. **SciPy Backend vs AFNI `3dTshift`:** AFNI `3dTshift` and FSL `slicetimer` remain absent in this host/container environment; temporal interpolation uses SciPy `CubicSpline` with odd-point boundary reflection (`4 TR`) and `extrapolate=False` rather than AFNI binary output.
-2. **Optional Boundary Censoring:** Edge volumes `[0, T-1]` exhibit natural-boundary zero-curvature bias on noiseless oscillatory extrema (while cutting noisy/transient instability); all $T$ volumes are retained cleanly and `[0, T-1]` are flagged via `BoundaryEdgeVolumesAtRisk` if downstream modeling wishes to censor edge frames.
+2. **Optional Boundary Censoring:** Edge volumes `[0, T-1]` (and spline reflection knot window `BoundaryRiskWindowVolumes = [0..4, T-5..T-1]`) exhibit natural-boundary zero-curvature bias on noiseless oscillatory extrema (while cutting noisy/transient instability); all $T$ volumes are retained cleanly unless callers explicitly pass `censor_volumes`.
 3. **Real-Data Concordance Still Locked:** Because `real_data_authorized = false` (`overall_authorization_state = NOT_AUTHORIZED`), real participant BOLD execution (`sub-01`) and historical C-PAC concordance remain disabled (`NOT_ASSESSED`).

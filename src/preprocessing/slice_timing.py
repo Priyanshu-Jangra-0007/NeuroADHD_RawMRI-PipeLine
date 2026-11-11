@@ -35,6 +35,7 @@ from scipy.interpolate import CubicSpline, make_interp_spline
 
 DEFAULT_STC_METHOD = "cubic_spline"
 DEFAULT_BOUNDARY_PAD_SAMPLES = 4
+DEFAULT_BOUNDARY_RISK_WINDOW_SAMPLES = 5
 SUPPORTED_STC_METHODS = (
     "cubic_spline",
     "quintic_bspline",
@@ -746,6 +747,66 @@ def _build_output_nifti(
     return nib.Nifti1Image(data, np.asarray(affine, dtype=np.float64), out_header)
 
 
+def compute_temporal_boundary_regions(
+    num_volumes: int,
+    boundary_half_width: int = DEFAULT_BOUNDARY_RISK_WINDOW_SAMPLES,
+) -> Dict[str, Any]:
+    """Classify boundary and interior volume indices for temporal spline risk reporting.
+
+    Distinguishes five non-negative temporal regions while preserving all T volumes:
+    - ``first_volume``: [0]
+    - ``first_five_volumes``: [0..min(5, T)-1]
+    - ``interior_volumes``: [5..T-6] when T > 10 (empty when T <= 10)
+    - ``last_five_volumes``: [max(0, T-5)..T-1]
+    - ``final_volume``: [T-1]
+    """
+    n_t = int(num_volumes)
+    half_w = max(1, int(boundary_half_width))
+    if n_t <= 0:
+        return {
+            "num_volumes": 0,
+            "boundary_half_width": half_w,
+            "first_volume": [],
+            "first_five_volumes": [],
+            "interior_volumes": {"start_index": None, "end_index_inclusive": None, "count": 0},
+            "last_five_volumes": [],
+            "final_volume": [],
+            "edge_volumes_at_risk": [],
+            "risk_window_volumes": [],
+        }
+
+    first_five = list(range(0, min(half_w, n_t)))
+    last_five = list(range(max(0, n_t - half_w), n_t))
+    if n_t > 2 * half_w:
+        int_start = half_w
+        int_end = n_t - half_w - 1
+        interior_info = {
+            "start_index": int_start,
+            "end_index_inclusive": int_end,
+            "count": n_t - 2 * half_w,
+        }
+    else:
+        interior_info = {
+            "start_index": None,
+            "end_index_inclusive": None,
+            "count": 0,
+        }
+
+    edge_at_risk = [0, n_t - 1] if n_t > 1 else [0]
+    risk_window = sorted(set(first_five) | set(last_five))
+    return {
+        "num_volumes": n_t,
+        "boundary_half_width": half_w,
+        "first_volume": [0],
+        "first_five_volumes": first_five,
+        "interior_volumes": interior_info,
+        "last_five_volumes": last_five,
+        "final_volume": [n_t - 1],
+        "edge_volumes_at_risk": edge_at_risk,
+        "risk_window_volumes": risk_window,
+    }
+
+
 def build_slice_timing_derivative_metadata(
     raw_metadata: Dict[str, Any],
     report_dict: Dict[str, Any],
@@ -774,6 +835,10 @@ def build_slice_timing_derivative_metadata(
 
     num_vols = int(report_dict["num_volumes"])
     if is_applied and ref_time is not None:
+        boundary_info = compute_temporal_boundary_regions(
+            num_volumes=num_vols,
+            boundary_half_width=DEFAULT_BOUNDARY_RISK_WINDOW_SAMPLES,
+        )
         out["SliceTimingReferenceTime"] = float(ref_time)
         out["StartTime"] = float(ref_time)
         out["TemporalOriginShiftSeconds"] = float(ref_time)
@@ -781,11 +846,25 @@ def build_slice_timing_derivative_metadata(
         out["BoundaryPadSamplesPerSide"] = min(DEFAULT_BOUNDARY_PAD_SAMPLES, max(0, num_vols - 1))
         out["BoundaryExtrapolationDisabled"] = True
         out["BoundaryEdgeVolumesAtRisk"] = [0, max(0, num_vols - 1)]
+        out["BoundaryRiskWindowSamplesPerSide"] = int(boundary_info["boundary_half_width"])
+        out["BoundaryRiskWindowVolumes"] = list(boundary_info["risk_window_volumes"])
+        out["BoundaryRegions"] = {
+            "first_volume": list(boundary_info["first_volume"]),
+            "first_five_volumes": list(boundary_info["first_five_volumes"]),
+            "interior_volumes": dict(boundary_info["interior_volumes"]),
+            "last_five_volumes": list(boundary_info["last_five_volumes"]),
+            "final_volume": list(boundary_info["final_volume"]),
+        }
+        out["AutomaticBoundaryVolumeRemovalApplied"] = False
         out["VolumeCensoringGuidance"] = (
-            "All T volumes and +reference_time StartTime preserved without silent cropping. "
-            "Edge volumes 0 and T-1 rely on odd-point anti-symmetric continuation across unobserved "
-            "boundary times; downstream GLM or scrubbing analyses may optionally censor [0, T-1] "
-            "if single-TR edge transient immunity is required."
+            "All T volumes and +reference_time StartTime are preserved without silent cropping. "
+            "Edge volumes [0, T-1] carry the highest single-TR boundary sensitivity (odd-point reflection "
+            "zero-curvature bias on noiseless extrema vs ~4x transient/noise damping), while the full "
+            "5-TR edge window BoundaryRiskWindowVolumes ([0..4] and [T-5..T-1]) captures spline "
+            "reflection knot coupling under both negative and positive temporal shifts before reaching "
+            "interior_volumes ([5..T-6]). Downstream GLM or censoring analyses remain strictly opt-in: "
+            "censor [0, T-1] for single-TR edge immunity or BoundaryRiskWindowVolumes for conservative "
+            "5-TR boundary transient/curvature exclusion."
         )
         out["TemporalOriginNote"] = (
             f"All slices aligned to reference_time={float(ref_time):.6f}s within TR={tr:.6f}s "
@@ -795,6 +874,7 @@ def build_slice_timing_derivative_metadata(
     else:
         out["StartTime"] = 0.0
         out["TemporalOriginShiftSeconds"] = 0.0
+        out["AutomaticBoundaryVolumeRemovalApplied"] = False
         out["TemporalOriginNote"] = (
             f"No temporal interpolation applied (status={status}); original temporal origin preserved."
         )
@@ -962,6 +1042,10 @@ def correct_slice_timing_with_report(
     )
     duration_sec = float(time.perf_counter() - t0)
 
+    boundary_info = compute_temporal_boundary_regions(
+        num_volumes=t_vol,
+        boundary_half_width=DEFAULT_BOUNDARY_RISK_WINDOW_SAMPLES,
+    )
     report_dict = {
         **val_report.to_dict(),
         "status": "APPLIED",
@@ -984,7 +1068,20 @@ def correct_slice_timing_with_report(
             "prevents cubic/quintic polynomial noise/transient overshoot while preserving all T "
             "volumes and +reference_time StartTime)."
         ),
+        "boundary_padding_strategy": "odd_point_reflection_4tr",
         "boundary_pad_samples": min(DEFAULT_BOUNDARY_PAD_SAMPLES, max(0, t_vol - 1)),
+        "boundary_extrapolation_disabled": True,
+        "boundary_edge_volumes_at_risk": list(boundary_info["edge_volumes_at_risk"]),
+        "boundary_risk_window_samples_per_side": int(boundary_info["boundary_half_width"]),
+        "boundary_risk_window_volumes": list(boundary_info["risk_window_volumes"]),
+        "boundary_regions": {
+            "first_volume": list(boundary_info["first_volume"]),
+            "first_five_volumes": list(boundary_info["first_five_volumes"]),
+            "interior_volumes": dict(boundary_info["interior_volumes"]),
+            "last_five_volumes": list(boundary_info["last_five_volumes"]),
+            "final_volume": list(boundary_info["final_volume"]),
+        },
+        "automatic_boundary_volume_removal_applied": False,
         "finite_output_count": int(corrected_data.size),
     }
     return out_img, report_dict

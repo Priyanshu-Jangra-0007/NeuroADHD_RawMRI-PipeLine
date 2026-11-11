@@ -62,6 +62,7 @@ from src.parcellation.extractor import (
     CANONICAL_CC200_AFFINE,
     CANONICAL_CC200_SHAPE,
     extract_cc200_timeseries,
+    resolve_censor_volumes,
     verify_canonical_cc200_atlas,
 )
 from src.preprocessing.motion import (
@@ -722,6 +723,7 @@ def run_poc_v2_pipeline(
     slice_timing_reference_time: Optional[float] = None,
     slice_timing_interpolation: Optional[str] = None,
     allow_missing_slice_timing: bool = True,
+    censor_volumes: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     """Execute the complete 21-stage NeuroADHD PoC V2 preprocessing pipeline."""
     bold_path = Path(bold_path)
@@ -833,6 +835,9 @@ def run_poc_v2_pipeline(
         t_vol = bold_img.shape[3] if bold_img.ndim == 4 else 0
         if t_vol < 50:
             raise ValueError(f"Insufficient BOLD timepoints: {t_vol} (minimum 50 required)")
+        censored_sorted, kept_volume_indices = resolve_censor_volumes(
+            censor_volumes, t_vol, min_retained=50
+        )
 
         epi_shape = bold_img.shape[:3]
 
@@ -951,7 +956,14 @@ def run_poc_v2_pipeline(
             "num_corrected_slices": int(stc_report.get("num_corrected_slices", 0)),
             "interpolation_method": stc_report.get("interpolation_method"),
             "boundary_handling": stc_report.get("boundary_handling"),
+            "boundary_padding_strategy": stc_report.get("boundary_padding_strategy"),
             "boundary_pad_samples": stc_report.get("boundary_pad_samples"),
+            "boundary_extrapolation_disabled": stc_report.get("boundary_extrapolation_disabled"),
+            "boundary_edge_volumes_at_risk": stc_report.get("boundary_edge_volumes_at_risk"),
+            "boundary_risk_window_samples_per_side": stc_report.get("boundary_risk_window_samples_per_side"),
+            "boundary_risk_window_volumes": stc_report.get("boundary_risk_window_volumes"),
+            "boundary_regions": stc_report.get("boundary_regions"),
+            "automatic_boundary_volume_removal_applied": False,
             "software": stc_report.get("software"),
             "software_version": stc_report.get("software_version"),
             "afni_3dtshift_available": bool(stc_report.get("afni_3dtshift_available", False)),
@@ -1138,8 +1150,16 @@ def run_poc_v2_pipeline(
         # -------------------------------------------------------------
         current_stage = "Stage 18: CC200 Parcellation"
         print("\n[Stage 18/21] Extracting CC200 ROI time series across 200 parcels...")
-        roi_df, signals = extract_cc200_timeseries(cleaned_bold, atlas_img)
-        print(f"  -> Timeseries DataFrame: {roi_df.shape} (200 ROIs x {t_vol} timepoints + 1 label column)")
+        roi_df, signals = extract_cc200_timeseries(
+            cleaned_bold,
+            atlas_img,
+            censor_volumes=censored_sorted if censor_volumes is not None else None,
+        )
+        t_retained = int(signals.shape[0])
+        print(
+            f"  -> Timeseries DataFrame: {roi_df.shape} (CSV: 200 ROIs x ['node/volume' + {t_retained} timepoints]; "
+            f"time-axis shape: (200, {t_retained}))"
+        )
 
         # -------------------------------------------------------------
         # Stage 19: Pairwise Fisher-z Connectivity Vector Calculation
@@ -1334,6 +1354,13 @@ def run_poc_v2_pipeline(
                 "status": "PASSED" if gate5_passed else "FAILED",
                 "n_rois": int(n_rois),
                 "zero_variance_rois": int(constant_rois),
+                "n_timepoints_input": int(t_vol),
+                "n_timepoints_retained": int(signals.shape[0]),
+                "roi_timeseries_shape": [int(n_rois), int(signals.shape[0])],
+                "roi_csv_shape": [int(roi_df.shape[0]), int(roi_df.shape[1])],
+                "roi_label_column": "node/volume",
+                "volume_censoring_applied": bool(len(censored_sorted) > 0),
+                "censored_volumes": [int(v) for v in censored_sorted],
             },
             "gate6_feature_schema_conformance": {
                 "status": "PASSED" if gate6_passed else "FAILED",

@@ -265,9 +265,10 @@ def compose_transformations(
 
     Pullback Sampling Composition for DiffeomorphicMap:
     ---------------------------------------------------
-    ``DiffeomorphicMap.transform(epi_image)`` samples voxel intensities into the domain (MNI/CC200)
-    grid. The ``prealign`` matrix must map a physical point in domain space (x_MNI) into codomain
-    space (x_EPI):
+    With DIPY ``is_inverse = True``, ``DiffeomorphicMap.transform(epi_image)`` calls
+    ``_warp_backward(epi_image)``, sampling voxel intensities from the native EPI (domain)
+    image onto the MNI/CC200 (codomain) output grid. The ``prealign_inv`` matrix must map
+    a physical point in target MNI space (x_MNI) into native EPI space (x_EPI):
         x_EPI = P * x_MNI
     Substituting the chain:
         x_T1w = M_mni_to_t1w * x_MNI
@@ -292,13 +293,14 @@ def compose_transformations(
     syn_mapping : DiffeomorphicMap
         SyN deformation mapping computed between T1w (moving) and MNI (static).
     target_shape : Tuple[int, int, int], optional
-        Shape of the CC200/MNI output grid (e.g. (63, 75, 61)). Maps to DIPY ``domain_shape``.
+        Shape of the CC200/MNI output grid (e.g. (63, 75, 61)). Stored on DIPY ``codomain_shape``
+        so ``is_inverse=True`` ``.transform(epi)`` outputs onto the MNI/CC200 grid.
     target_affine : np.ndarray, optional
-        4x4 affine of CC200/MNI output grid. Maps to DIPY ``domain_grid2world``.
+        4x4 affine of CC200/MNI output grid. Stored on DIPY ``codomain_grid2world``.
     source_shape : Tuple[int, int, int], optional
-        Shape of native functional EPI input grid. Maps to DIPY ``codomain_shape``.
+        Shape of native functional EPI input grid. Stored on DIPY ``domain_shape``.
     source_affine : np.ndarray, optional
-        4x4 affine of native functional EPI input grid. Maps to DIPY ``codomain_grid2world``.
+        4x4 affine of native functional EPI input grid. Stored on DIPY ``domain_grid2world``.
     domain_shape, domain_affine, codomain_shape, codomain_affine : optional
         Legacy keyword aliases supported for backward compatibility.
 
@@ -403,12 +405,17 @@ def compose_volume_transform(
     so ``.transform(raw_or_stc_vol_t)`` resamples directly from native acquisition volume t
     into standard MNI/CC200 coordinates in a single spatial interpolation step.
     """
+    if not isinstance(composed_map, DiffeomorphicMap):
+        raise TypeError(f"Expected DiffeomorphicMap for composed_map, got {type(composed_map).__name__}")
+
     motion_aff = np.asarray(
         motion_transform.affine if hasattr(motion_transform, "affine") else motion_transform,
         dtype=np.float64,
     )
     if motion_aff.shape != (4, 4) or not np.isfinite(motion_aff).all():
         raise ValueError(f"Expected finite 4x4 motion transform matrix, got shape {motion_aff.shape}")
+    if abs(float(np.linalg.det(motion_aff[:3, :3]))) < 1e-10:
+        raise ValueError("Motion transform matrix is singular or degenerate (det ~ 0).")
 
     base_prealign_inv = (
         np.asarray(composed_map.prealign_inv, dtype=np.float64)
@@ -416,6 +423,8 @@ def compose_volume_transform(
         else np.eye(4, dtype=np.float64)
     )
     vol_prealign_inv = motion_aff @ base_prealign_inv
+    if abs(float(np.linalg.det(vol_prealign_inv[:3, :3]))) < 1e-10:
+        raise ValueError("Composed volume transform produced a singular matrix.")
 
     vol_map = DiffeomorphicMap(
         3,

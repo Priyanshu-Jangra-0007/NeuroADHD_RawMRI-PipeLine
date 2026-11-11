@@ -20,6 +20,7 @@ from src.parcellation.extractor import (
     CANONICAL_CC200_SHA256,
     CANONICAL_CC200_SHAPE,
     extract_cc200_timeseries,
+    resolve_censor_volumes,
     verify_canonical_cc200_atlas,
 )
 
@@ -247,6 +248,119 @@ class TestConnectivityAndParcellation(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 verify_canonical_cc200_atlas(canonical_named_bad_file)
             self.assertIn("SHA-256 mismatch", str(ctx.exception))
+
+    def _build_synthetic_200_parcel_grid(self, t_vol: int = 240, seed: int = 2026):
+        """Build a compact 200-parcel synthetic atlas and matching 4D BOLD image."""
+        rng = np.random.default_rng(seed)
+        shape = (20, 20, 20)
+        atlas_data = np.zeros(shape, dtype=np.int32)
+        idx = 1
+        for x in range(1, 19, 3):
+            for y in range(1, 19, 3):
+                for z in range(1, 19, 3):
+                    if idx <= 200:
+                        atlas_data[x : x + 2, y : y + 2, z : z + 2] = idx
+                        idx += 1
+        atlas_img = nib.Nifti1Image(atlas_data, np.eye(4))
+
+        t_grid = np.arange(t_vol, dtype=np.float64) * 2.0
+        bold_data = np.zeros((*shape, t_vol), dtype=np.float32)
+        driver_pos = 10.0 * np.sin(2.0 * np.pi * 0.035 * t_grid)
+        driver_neg = 10.0 * np.sin(2.0 * np.pi * 0.055 * t_grid + 0.5)
+        for roi_id in range(1, 201):
+            mask = atlas_data == roi_id
+            if roi_id in (1, 2):
+                sig = 100.0 + driver_pos + rng.normal(0.0, 0.05, size=t_vol)
+            elif roi_id == 3:
+                sig = 100.0 + driver_neg + rng.normal(0.0, 0.05, size=t_vol)
+            elif roi_id == 4:
+                sig = 100.0 - driver_neg + rng.normal(0.0, 0.05, size=t_vol)
+            else:
+                freq = 0.02 + (roi_id % 19) * 0.003
+                sig = 100.0 + 4.0 * np.sin(2.0 * np.pi * freq * t_grid + roi_id * 0.17) + rng.normal(0.0, 0.1, size=t_vol)
+            bold_data[mask, :] = sig.astype(np.float32)
+        bold_img = nib.Nifti1Image(bold_data, np.eye(4))
+        return bold_img, atlas_img
+
+    def test_240_volumes_produce_exact_240_roi_timepoints_and_label_column(self):
+        """240 BOLD volumes must produce exactly 240 ROI timepoints and 1 'node/volume' label col (241 CSV cols)."""
+        bold_img, atlas_img = self._build_synthetic_200_parcel_grid(t_vol=240, seed=11)
+        df, signals = extract_cc200_timeseries(bold_img, atlas_img)
+
+        # Pure time series matrix is (240, 200); transposed CSV adds column 0 ('node/volume' = 1..200)
+        self.assertEqual(signals.shape, (240, 200))
+        self.assertEqual(df.shape, (200, 241))
+        self.assertEqual(df.columns[0], "node/volume")
+        expected_time_cols = [str(i) for i in range(240)]
+        self.assertEqual(list(df.columns[1:]), expected_time_cols)
+        np.testing.assert_array_equal(df["node/volume"].to_numpy(), np.arange(1, 201))
+
+        # Every ROI has uniform finite length 240 with zero duplication or padding
+        ts_matrix = df[expected_time_cols].to_numpy(dtype=np.float64)
+        self.assertEqual(ts_matrix.shape, (200, 240))
+        self.assertTrue(np.all(np.isfinite(ts_matrix)))
+        np.testing.assert_allclose(ts_matrix.T, signals, atol=1e-7)
+
+    def test_configured_volume_censoring_exact_length_and_validation(self):
+        """Configured volume censoring must drop only censored frames and keep aligned time axes across all 200 ROIs."""
+        bold_img, atlas_img = self._build_synthetic_200_parcel_grid(t_vol=240, seed=12)
+
+        # Censor the 10-volume boundary risk window [0..4] and [235..239] with duplicate/unsorted indices
+        censor_cfg = [239, 0, 1, 2, 3, 4, 235, 236, 237, 238, 0]
+        df_cen, sig_cen = extract_cc200_timeseries(bold_img, atlas_img, censor_volumes=censor_cfg)
+        df_full, sig_full = extract_cc200_timeseries(bold_img, atlas_img)
+
+        expected_kept = list(range(5, 235))
+        self.assertEqual(sig_cen.shape, (230, 200))
+        self.assertEqual(df_cen.shape, (200, 231))
+        self.assertEqual(list(df_cen.columns[1:]), [str(i) for i in expected_kept])
+        np.testing.assert_allclose(sig_cen, sig_full[expected_kept, :], atol=1e-7)
+        np.testing.assert_allclose(df_cen[[str(i) for i in expected_kept]].to_numpy().T, sig_cen, atol=1e-7)
+
+        # Fail-closed validation checks for resolve_censor_volumes / extract_cc200_timeseries
+        with self.assertRaises(ValueError):
+            extract_cc200_timeseries(bold_img, atlas_img, censor_volumes=[-1])
+        with self.assertRaises(ValueError):
+            extract_cc200_timeseries(bold_img, atlas_img, censor_volumes=[240])
+        with self.assertRaises(ValueError):
+            extract_cc200_timeseries(bold_img, atlas_img, censor_volumes=[True])  # type: ignore[list-item]
+        with self.assertRaises(ValueError):
+            resolve_censor_volumes(list(range(195)), t_vol=240, min_retained=50)
+
+    def test_connectivity_uses_aligned_timepoints_without_label_column(self):
+        """Pairwise connectivity must operate on aligned timepoints only and exclude 'node/volume'."""
+        bold_img, atlas_img = self._build_synthetic_200_parcel_grid(t_vol=240, seed=13)
+        df, signals = extract_cc200_timeseries(bold_img, atlas_img)
+
+        z_vec, names = compute_connectivity_vector(signals)
+        self.assertEqual(len(z_vec), 19900)
+        self.assertEqual(names[0], "ROI_001__ROI_002")
+
+        time_cols = [str(i) for i in range(240)]
+        r_12 = float(np.corrcoef(df.loc[0, time_cols], df.loc[1, time_cols])[0, 1])
+        r_34 = float(np.corrcoef(df.loc[2, time_cols], df.loc[3, time_cols])[0, 1])
+        self.assertGreater(r_12, 0.99)
+        self.assertLess(r_34, -0.99)
+        idx_34 = names.index("ROI_003__ROI_004")
+        self.assertAlmostEqual(float(np.tanh(z_vec[0])), r_12, places=6)
+        self.assertAlmostEqual(float(np.tanh(z_vec[idx_34])), r_34, places=6)
+
+        # Inject a localized spike at volume 5 and verify censoring restores exact baseline correlation
+        arr = np.asanyarray(bold_img.dataobj).copy()
+        atlas_arr = np.asanyarray(atlas_img.dataobj)
+        arr[atlas_arr == 1, 5] += 5000.0
+        arr[atlas_arr == 2, 5] -= 5000.0
+        spiked_img = nib.Nifti1Image(arr, bold_img.affine)
+
+        _, sig_spiked = extract_cc200_timeseries(spiked_img, atlas_img)
+        r_spiked = float(np.corrcoef(sig_spiked[:, 0], sig_spiked[:, 1])[0, 1])
+        self.assertLess(r_spiked, 0.2)
+
+        df_clean, sig_clean = extract_cc200_timeseries(spiked_img, atlas_img, censor_volumes=[5])
+        self.assertEqual(sig_clean.shape, (239, 200))
+        self.assertEqual(df_clean.shape, (200, 240))
+        z_clean, _ = compute_connectivity_vector(sig_clean)
+        self.assertGreater(float(np.tanh(z_clean[0])), 0.99)
 
 
 if __name__ == "__main__":
