@@ -40,6 +40,10 @@ RAW RESTING-STATE fMRI SCAN (BIDS format: *_bold.nii.gz + *.json)
                            ↓
              RAW DATA & METADATA VALIDATION
                            ↓
+        METADATA-DRIVEN SLICE-TIMING CORRECTION
+  - BIDS RepetitionTime, SliceTiming & SliceEncodingDirection (i/j/k, +/-)
+  - SciPy C2 Cubic Spline temporal shift to TR/2 (StartTime provenance)
+                           ↓
              STANDARDIZED fMRI PREPROCESSING
   - Motion Correction & Friston 24-parameter matrix
   - Non-linear MNI152 Standard Space Normalization
@@ -183,6 +187,7 @@ NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ## 8. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
+- [STEP4_SLICE_TIMING_CORRECTION.md](docs/STEP4_SLICE_TIMING_CORRECTION.md): Architecture audit, 20-stage ordering, BIDS slice-timing validation, interpolation rationale, and synthetic validation results (`DEC-STC-01`).
 - [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
 - [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md): Executive summary, scope, and non-clinical disclaimer.
 - [EXISTING_PROJECT_ARCHITECTURE.md](docs/EXISTING_PROJECT_ARCHITECTURE.md): Audit of existing code, models, and endpoints.
@@ -201,6 +206,11 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 9. Changelog
+
+- **2026-11-11 (Step 4 Metadata-Driven Slice-Timing Correction `DEC-STC-01`)**:
+  - Implemented [`src/preprocessing/slice_timing.py`](src/preprocessing/slice_timing.py) supporting BIDS `RepetitionTime`, `SliceTiming`, and `SliceEncodingDirection` (`i, i-, j, j-, k, k-`), multiband sequences, simultaneous skip, non-periodic SciPy C² cubic spline interpolation, `+TR/2` temporal-origin provenance, double-STC prevention, and immutable BIDS derivative output.
+  - Integrated Stage 2 slice-timing correction before motion realignment / spatial resampling in the 20-stage [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) pipeline.
+  - Added external synthetic ground-truth benchmark [`scripts/validate_step4_slice_timing.py`](scripts/validate_step4_slice_timing.py), dashboard UI/API telemetry, unit/negative test suite [`tests/unit/test_slice_timing.py`](tests/unit/test_slice_timing.py), and [`docs/STEP4_SLICE_TIMING_CORRECTION.md`](docs/STEP4_SLICE_TIMING_CORRECTION.md).
 
 - **2026-11-10 (Pipeline Clean-up & Documentation Audit)**:
   - Added automated stale `RUNNING` cohort detection and atomic recovery to `TERMINATED` state in `scripts/serve_dashboard.py`.

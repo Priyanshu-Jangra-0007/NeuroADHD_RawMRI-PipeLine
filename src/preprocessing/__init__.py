@@ -1,6 +1,7 @@
 """Preprocessing modules for NeuroADHD_RawMRI PoC V2.
 
 Contains:
+- slice_timing: Metadata-driven BIDS slice-timing correction (DEC-STC-01)
 - motion: Rigid volume realignment, FD calculation, Friston-24 regressors
 - registration: Coregistration, MNI SyN normalization, composed resampling
 - segmentation: Brain extraction, bias correction, tissue segmentation (CSF/GM/WM)
@@ -44,8 +45,36 @@ from src.preprocessing.segmentation import (
     segment_t1w_tissue,
     validate_tissue_masks,
 )
+from src.preprocessing.slice_timing import (
+    DEFAULT_STC_METHOD,
+    SUPPORTED_STC_METHODS,
+    DoubleSliceTimingCorrectionError,
+    InvalidSliceTimingError,
+    MissingSliceTimingError,
+    SliceTimingValidationError,
+    SliceTimingValidationReport,
+    build_slice_timing_derivative_metadata,
+    correct_slice_timing,
+    correct_slice_timing_with_report,
+    detect_stc_software,
+    validate_slice_timing_metadata,
+    write_slice_timing_derivative,
+)
 
 __all__ = [
+    "DEFAULT_STC_METHOD",
+    "SUPPORTED_STC_METHODS",
+    "DoubleSliceTimingCorrectionError",
+    "InvalidSliceTimingError",
+    "MissingSliceTimingError",
+    "SliceTimingValidationError",
+    "SliceTimingValidationReport",
+    "build_slice_timing_derivative_metadata",
+    "correct_slice_timing",
+    "correct_slice_timing_with_report",
+    "detect_stc_software",
+    "validate_slice_timing_metadata",
+    "write_slice_timing_derivative",
     "realign_4d_bold",
     "compute_framewise_displacement",
     "build_friston_24_regressors",

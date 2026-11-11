@@ -12,10 +12,11 @@ This script executes Phase B, C, D, and E of Step 3 using SYNTHETIC MRI DATA ONL
        * Independent noise across remaining parcels
    - Canonical CC200 Atlas (200 ROIs)
    - Signed synthetic integrity manifest
-2. Run 1: Complete 19-Stage Pipeline Execution
+2. Run 1: Complete 20-Stage Pipeline Execution
+   - Includes Stage 2 Metadata-Driven Slice-Timing Correction (DEC-STC-01)
    - Measures stage runtimes and peak memory
    - Verifies recovery of injected correlations (r_pos > 0.70, r_neg < -0.65)
-   - Audits all 19 stage outputs and validation gates
+   - Audits all 20 stage outputs and validation gates
 3. Run 2: Determinism and Reproducibility Verification
    - Re-runs identical pipeline with identical seed
    - Asserts numerical determinism (|Run 1 - Run 2| < 1e-7) across CC200 time series and 19,900 Fisher-z edges
@@ -111,59 +112,63 @@ def generate_step3_synthetic_dataset(
     motion_cols = ["trans_x_mm", "trans_y_mm", "trans_z_mm", "rot_x_deg", "rot_y_deg", "rot_z_deg"]
     pd.DataFrame(gt_motion, columns=motion_cols).to_csv(gt_motion_path, sep="\t", index=False)
 
-    # 3. Injected Functional Signals (with bandpass-friendly frequencies ~0.02 - 0.05 Hz)
-    time_sec = t_arr * tr
+    # 3. Injected Functional Signals with Realistic Interleaved Slice Timing along k (z axis)
+    n_slices_z = int(target_shape[2])
+    interleaved_order = list(range(0, n_slices_z, 2)) + list(range(1, n_slices_z, 2))
+    slice_timings = [0.0] * n_slices_z
+    for acq_step, z_idx in enumerate(interleaved_order):
+        slice_timings[z_idx] = round(float(acq_step * float(tr) / n_slices_z), 8)
 
-    # Primary shared signal X for Parcel 12 and Parcel 45 (f ~ 0.035 Hz, in bandpass 0.01 - 0.10 Hz)
-    sig_X = np.sin(2.0 * np.pi * 0.035 * time_sec) + 0.4 * np.cos(2.0 * np.pi * 0.022 * time_sec)
-    sig_X = (sig_X - np.mean(sig_X)) / np.std(sig_X)
+    amp_norm_xy = float(np.sqrt(0.5 * (1.0 ** 2 + 0.4 ** 2)))
 
-    # Inverted shared signal Y for Parcel 70 and Parcel 85 (f ~ 0.045 Hz, in bandpass 0.01 - 0.10 Hz)
-    sig_Y = np.sin(2.0 * np.pi * 0.045 * time_sec) + 0.4 * np.sin(2.0 * np.pi * 0.018 * time_sec)
-    sig_Y = (sig_Y - np.mean(sig_Y)) / np.std(sig_Y)
+    def _parcel_curve(parcel_id: int, t_sec: np.ndarray, noise_vec: np.ndarray) -> np.ndarray:
+        sig_x = (np.sin(2.0 * np.pi * 0.035 * t_sec) + 0.4 * np.cos(2.0 * np.pi * 0.022 * t_sec)) / amp_norm_xy
+        sig_y = (np.sin(2.0 * np.pi * 0.045 * t_sec) + 0.4 * np.sin(2.0 * np.pi * 0.018 * t_sec)) / amp_norm_xy
+        if parcel_id in (12, 45):
+            return 0.96 * sig_x + 0.22 * noise_vec
+        if parcel_id == 70:
+            return 0.96 * sig_y + 0.22 * noise_vec
+        if parcel_id == 85:
+            return -0.96 * sig_y + 0.22 * noise_vec
+        freq = 0.015 + ((parcel_id % 35) * 0.002)
+        osc = np.sin(2.0 * np.pi * freq * t_sec)
+        return 0.7 * osc + 0.3 * noise_vec
 
-    parcel_signals: Dict[int, np.ndarray] = {}
+    parcel_noise: Dict[int, np.ndarray] = {}
     for p in range(1, 201):
-        if p == 12:
-            noise = np.random.normal(0, 1.0, t_vol)
-            noise = (noise - np.mean(noise)) / np.std(noise)
-            parcel_signals[p] = 0.96 * sig_X + 0.22 * noise
-        elif p == 45:
-            noise = np.random.normal(0, 1.0, t_vol)
-            noise = (noise - np.mean(noise)) / np.std(noise)
-            parcel_signals[p] = 0.96 * sig_X + 0.22 * noise
-        elif p == 70:
-            noise = np.random.normal(0, 1.0, t_vol)
-            noise = (noise - np.mean(noise)) / np.std(noise)
-            parcel_signals[p] = 0.96 * sig_Y + 0.22 * noise
-        elif p == 85:
-            noise = np.random.normal(0, 1.0, t_vol)
-            noise = (noise - np.mean(noise)) / np.std(noise)
-            parcel_signals[p] = -0.96 * sig_Y + 0.22 * noise
-        else:
-            freq = 0.015 + ((p % 35) * 0.002)
-            osc = np.sin(2.0 * np.pi * freq * time_sec)
-            noise = np.random.normal(0, 1.0, t_vol)
-            parcel_signals[p] = 0.7 * osc + 0.3 * noise
+        noise = np.random.normal(0, 1.0, t_vol)
+        std_n = float(np.std(noise))
+        parcel_noise[p] = (noise - np.mean(noise)) / (std_n if std_n > 1e-12 else 1.0)
 
-    # 4. Generate 4D BOLD Array
+    # 4. Generate 4D BOLD Array (each slice z sampled at t_arr * tr + slice_timings[z])
     bold_data = np.zeros((*target_shape, t_vol), dtype=np.float32)
+    vol_onsets = t_arr * tr
     for p in range(1, 201):
-        mask_p = (canonical_atlas_data == p)
-        n_vox = int(np.sum(mask_p))
-        if n_vox > 0:
-            base_curve = (100.0 + parcel_signals[p] * 8.0).astype(np.float32)[None, :]
-            vox_noise = np.random.normal(0, 0.4, (n_vox, t_vol)).astype(np.float32)
-            bold_data[mask_p, :] = base_curve + vox_noise
+        mask_p = canonical_atlas_data == p
+        z_indices = np.unique(np.where(mask_p)[2])
+        for z_idx in z_indices:
+            slice_mask_xy = mask_p[:, :, z_idx]
+            n_vox_z = int(np.sum(slice_mask_xy))
+            if n_vox_z > 0:
+                t_sec_z = vol_onsets + float(slice_timings[int(z_idx)])
+                sig_p_z = _parcel_curve(p, t_sec_z, parcel_noise[p])
+                base_curve = (100.0 + sig_p_z * 8.0).astype(np.float32)[None, :]
+                vox_noise = np.random.normal(0, 0.4, (n_vox_z, t_vol)).astype(np.float32)
+                bold_data[slice_mask_xy, int(z_idx), :] = base_curve + vox_noise
 
     bold_nii_path = func_dir / f"{subject_id}_{session_id}_task-rest_bold.nii.gz"
-    nib.save(nib.Nifti1Image(bold_data, target_affine), str(bold_nii_path))
+    bold_img = nib.Nifti1Image(bold_data, target_affine)
+    bold_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
+    bold_img.header.set_xyzt_units("mm", "sec")
+    nib.save(bold_img, str(bold_nii_path))
 
-    # BOLD Sidecar JSON
+    # BOLD Sidecar JSON with explicit BIDS SliceTiming & SliceEncodingDirection
     bold_json_path = func_dir / f"{subject_id}_{session_id}_task-rest_bold.json"
     sidecar_dict = {
         "RepetitionTime": float(tr),
         "TaskName": "rest",
+        "SliceTiming": slice_timings,
+        "SliceEncodingDirection": "k",
         "FlipAngle": 75.0,
         "Manufacturer": "Synthetic",
         "MagneticFieldStrength": 3.0,
@@ -293,8 +298,8 @@ def run_validation() -> Dict[str, Any]:
     t_gen = time.time() - t_gen_start
     print(f"  -> Synthetic dataset generated in {t_gen:.2f}s at {ds_paths['session_dir']}")
 
-    # 2. Run 1: Complete 19-Stage Execution
-    print("\n[Phase 2] Executing Run 1 (19-Stage Pipeline Execution & Performance Audit)...")
+    # 2. Run 1: Complete 20-Stage Execution
+    print("\n[Phase 2] Executing Run 1 (20-Stage Pipeline Execution & Performance Audit)...")
     run1_res = run_poc_v2_pipeline(
         bold_path=ds_paths["bold_nii"],
         bold_json_path=ds_paths["bold_json"],
@@ -347,7 +352,7 @@ def run_validation() -> Dict[str, Any]:
     assert np.all(np.isfinite(feat_vector)), "Fisher-z vector contains non-finite values (NaN/Inf)"
 
     # 5. Artifact Existence and Non-Empty Verification
-    print("\n[Phase 4] Verifying all 19 stage output artifacts...")
+    print("\n[Phase 4] Verifying all 20 stage output artifacts...")
     stage_artifacts_summary = {}
     for art_key, art_path in run1_res["artifacts"].items():
         p = Path(art_path)
@@ -395,8 +400,9 @@ def run_validation() -> Dict[str, Any]:
         "step": "Step 3: Neuroimaging Preprocessing Pipeline Validation",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "VERIFIED",
-        "pipeline_stages_total": 19,
-        "pipeline_stages_verified": 19,
+        "pipeline_stages_total": 20,
+        "pipeline_stages_verified": 20,
+        "slice_timing_correction": run1_res.get("slice_timing"),
         "safety_guards": {
             "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
             "real_data_authorized": False,
@@ -441,24 +447,25 @@ def run_validation() -> Dict[str, Any]:
         },
         "stages": [
             {"stage_num": 1, "name": "BIDS Input & Sidecar Metadata Validation", "status": "PASSED"},
-            {"stage_num": 2, "name": "3D Rigid Motion Realignment & Power FD", "status": "PASSED"},
-            {"stage_num": 3, "name": "Functional Reference Generation", "status": "PASSED"},
-            {"stage_num": 4, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
-            {"stage_num": 5, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
-            {"stage_num": 6, "name": "Tissue Segmentation (CSF, GM, WM)", "status": "PASSED"},
-            {"stage_num": 7, "name": "Morphological Tissue Mask Erosion", "status": "PASSED"},
-            {"stage_num": 8, "name": "EPI-to-T1w 3D Rigid Coregistration", "status": "PASSED"},
-            {"stage_num": 9, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
-            {"stage_num": 10, "name": "Composed Pullback Resampling into CC200 Grid", "status": "PASSED"},
-            {"stage_num": 11, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
-            {"stage_num": 12, "name": "aCompCor Physiological Noise Extraction", "status": "PASSED"},
-            {"stage_num": 13, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
-            {"stage_num": 14, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
-            {"stage_num": 15, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
-            {"stage_num": 16, "name": "CC200 ROI Time Series Extraction", "status": "PASSED"},
-            {"stage_num": 17, "name": "Pairwise Fisher-z Connectivity Calculation", "status": "PASSED"},
-            {"stage_num": 18, "name": "Quality Control Visual Overlay Generation", "status": "PASSED"},
-            {"stage_num": 19, "name": "Schema-Compliant Provenance Generation", "status": "PASSED"},
+            {"stage_num": 2, "name": "Metadata-Driven Slice-Timing Correction (DEC-STC-01)", "status": "PASSED"},
+            {"stage_num": 3, "name": "3D Rigid Motion Realignment & Power FD", "status": "PASSED"},
+            {"stage_num": 4, "name": "Functional Reference Generation", "status": "PASSED"},
+            {"stage_num": 5, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
+            {"stage_num": 6, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
+            {"stage_num": 7, "name": "Tissue Segmentation (CSF, GM, WM)", "status": "PASSED"},
+            {"stage_num": 8, "name": "Morphological Tissue Mask Erosion", "status": "PASSED"},
+            {"stage_num": 9, "name": "EPI-to-T1w 3D Rigid Coregistration", "status": "PASSED"},
+            {"stage_num": 10, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
+            {"stage_num": 11, "name": "Composed Pullback Resampling into CC200 Grid", "status": "PASSED"},
+            {"stage_num": 12, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
+            {"stage_num": 13, "name": "aCompCor Physiological Noise Extraction", "status": "PASSED"},
+            {"stage_num": 14, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
+            {"stage_num": 15, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
+            {"stage_num": 16, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
+            {"stage_num": 17, "name": "CC200 ROI Time Series Extraction", "status": "PASSED"},
+            {"stage_num": 18, "name": "Pairwise Fisher-z Connectivity Calculation", "status": "PASSED"},
+            {"stage_num": 19, "name": "Quality Control Visual Overlay Generation", "status": "PASSED"},
+            {"stage_num": 20, "name": "Schema-Compliant Provenance Generation", "status": "PASSED"},
         ],
         "artifacts_verified": stage_artifacts_summary,
         "run1_output_dir": str(run1_res["output_dir"]),
