@@ -106,6 +106,8 @@ class DashboardApplication:
         if not blockers:
             blockers = report.get("issues", [])[:5]
 
+        readiness = self.authorization_readiness_status()
+
         return {
             "execution_policy": report.get("execution_policy", "STRICTLY_SYNTHETIC_ONLY"),
             "authorization_status": report.get("overall_authorization_state", "NOT_AUTHORIZED"),
@@ -123,7 +125,42 @@ class DashboardApplication:
             "pending_items_count": pending_cnt,
             "total_items_count": report.get("total_items", 23),
             "blockers": blockers,
+            "evidence_readiness": readiness,
         }
+
+    def authorization_readiness_status(self) -> Dict[str, Any]:
+        from src.validation.authorization_evidence import (
+            AuthorizationEvidenceValidator,
+            DEFAULT_PROTOCOL_ID,
+            DEFAULT_PROTOCOL_VERSION,
+        )
+
+        try:
+            summary = AuthorizationEvidenceValidator(base_dir=PROJECT_ROOT).summarize_dashboard_readiness()
+            # Ensure fail-closed, secret-free UI payload even if custom register fields exist
+            summary["real_data_authorized"] = False
+            summary["readiness_permits_execution"] = False
+            return summary
+        except Exception as exc:
+            return {
+                "overall_authorization_state": "NOT_AUTHORIZED",
+                "readiness_state": "PENDING_EVIDENCE",
+                "display_readiness_state": "PENDING",
+                "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+                "real_data_authorized": False,
+                "readiness_permits_execution": False,
+                "iec_evidence_status": "PENDING",
+                "dataset_dua_status": "PENDING",
+                "institutional_authorization_status": "PENDING",
+                "privacy_infosec_status": "PENDING",
+                "participant_scope_status": "PENDING (sub-01; 0/6 N=6 pilot participants approved)",
+                "protocol_version": DEFAULT_PROTOCOL_VERSION,
+                "protocol_id": DEFAULT_PROTOCOL_ID,
+                "evidence_expiry_state": "NO_EXPIRY_DATE",
+                "governance_tracker_pending": 12,
+                "governance_tracker_total": 12,
+                "outstanding_requirements": [f"Authorization readiness check failed closed: {type(exc).__name__}"],
+            }
 
     def pipeline_verification_status(self) -> Dict[str, Any]:
         validation_root = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation"))
@@ -825,6 +862,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._send_json(APP.health())
             if route == "/api/authorization":
                 return self._send_json(APP.authorization_status())
+            if route == "/api/authorization/readiness":
+                return self._send_json(APP.authorization_readiness_status())
             if route == "/api/pipeline/verification":
                 return self._send_json(APP.pipeline_verification_status())
             if route == "/api/intake/sessions":

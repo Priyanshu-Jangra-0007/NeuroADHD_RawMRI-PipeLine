@@ -118,6 +118,45 @@
             <li>Loading authorization status…</li>
           </ul>
         </div>
+
+        <div class="auth-blockers-box" id="authReadinessView" style="margin-top: 14px;">
+          <div class="auth-blockers-head" style="justify-content: space-between;">
+            <span><span class="shield-mini">📋</span> <strong>Step 8 Documentary Evidence &amp; Scope Readiness</strong></span>
+            <span class="crc-tag" id="authReadinessStateBadge">PENDING (NOT_AUTHORIZED)</span>
+          </div>
+          <p class="panel-desc" style="margin-top: 4px; margin-bottom: 10px;">
+            Distinguishes <code>PENDING</code>, <code>READY_FOR_AUTHORIZATION_REVIEW</code>, <code>APPROVED_SCOPED</code>, <code>EXPIRED</code>, <code>REVOKED</code>, and <code>NOT_AUTHORIZED</code>. A readiness status never permits real-data execution.
+          </p>
+          <div class="auth-status-grid">
+            <div class="auth-status-item">
+              <span class="auth-item-label">IEC Evidence Status</span>
+              <strong class="auth-item-val" id="authReadinessIec">PENDING</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Dataset DUA Status</span>
+              <strong class="auth-item-val" id="authReadinessDua">PENDING</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Institutional Auth Status</span>
+              <strong class="auth-item-val" id="authReadinessInst">PENDING</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Privacy / InfoSec Status</span>
+              <strong class="auth-item-val" id="authReadinessPrivacy">PENDING</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Participant Scope</span>
+              <strong class="auth-item-val" id="authReadinessParticipant">PENDING (sub-01; 0/6 pilot)</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Protocol / Evidence Expiry</span>
+              <strong class="auth-item-val" id="authReadinessProtocolExpiry">PoC-V2-23stage · NO_EXPIRY_DATE</strong>
+            </div>
+          </div>
+          <ul class="auth-blockers-list" id="authReadinessOutstanding" style="margin-top: 10px;">
+            <li>Loading outstanding readiness requirements…</li>
+          </ul>
+        </div>
       </section>
 
       <section class="panel verification-panel" id="verification">
