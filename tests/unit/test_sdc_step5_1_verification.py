@@ -39,6 +39,7 @@ from scripts.run_poc_v2 import (
     generate_synthetic_phantom_session,
     run_poc_v2_pipeline,
 )
+from scripts.run_synthetic_cohort import _verify_run_artifacts
 from src.dashboard.service import DashboardDataService
 from src.preprocessing.registration import (
     apply_composed_sdc_volume,
@@ -48,9 +49,12 @@ from src.preprocessing.registration import (
 )
 from src.preprocessing.susceptibility_distortion import (
     PHASE_ENCODING_DIRECTION_MAP,
+    QC_METRIC_INTERPRETATION,
     SDC_STATUS_APPLIED_DIRECT_FIELDMAP,
+    SDC_STATUS_REJECTED_QC_DEGRADED,
     SDC_STATUS_SKIPPED_NO_ASSOCIATED_FIELDMAP,
     InvalidSDCInputError,
+    SDCError,
     build_topup_acquisition_parameters,
     discover_sdc_inputs,
     evaluate_sdc_correction_qc,
@@ -228,14 +232,14 @@ def test_step5_1_item1_header_affine_shifted_fieldmap_recovered(tmp_path: Path):
     assert res.correction_qc["ncc_after"] > 0.99
 
 
-def test_step5_1_item1_bug_unaligned_magnitude_to_bold_registration_recovers_shift(tmp_path: Path):
-    """Minimal failing test (Bug #1): magnitude+fieldmap with unrecorded spatial shift must register to BOLD.
+def test_step5_1_item1_qc_gate_rejects_degraded_misaligned_fieldmap(tmp_path: Path):
+    """Post-correction QC gate (Bug #1): reject SDC when shifted fieldmap degrades NCC vs reference.
 
-    When a companion *_magnitude.nii.gz and *_fieldmap.nii.gz share the nominal header affine
-    with BOLD but the scanned brain/fieldmap has a known spatial translation shift (-12 mm X, -12 mm Y)
-    between fieldmap acquisition and EPI acquisition, image-based magnitude-to-BOLD registration is
-    required to recover the shift. Currently estimate_susceptibility_field() ignores *_magnitude.nii.gz
-    and applies the unshifted header resampling, leaving the shifted fieldmap misregistered.
+    Fieldmap-to-BOLD alignment relies on header affines (magnitude-based registration is not
+    implemented). When a companion *_magnitude.nii.gz and *_fieldmap.nii.gz have an unrecorded
+    spatial shift (-12 mm X, -12 mm Y) that degrades alignment (ncc_after < ncc_before), the QC gate
+    must reject the warp (corrected=False, status='REJECTED_QC_DEGRADED', reason in provenance) and
+    must raise SDCError under strict_sdc=True.
     """
     shape = (28, 28, 20)
     true_3d, _ = _make_asymmetric_brain_3d(shape)
@@ -262,6 +266,7 @@ def test_step5_1_item1_bug_unaligned_magnitude_to_bold_registration_recovers_shi
     shifted_b0 = np.roll(b0_true_in_bold, shift=shift_vox, axis=(0, 1, 2)).astype(np.float32)
 
     ses_dir = tmp_path / "sub-synthetic5102" / "ses-1"
+    deriv_dir = tmp_path / "derivatives_rejected"
     bold_p, bold_j = _write_direct_fmap_session(
         ses_dir,
         "sub-synthetic5102",
@@ -275,12 +280,31 @@ def test_step5_1_item1_bug_unaligned_magnitude_to_bold_registration_recovers_shi
     res = run_susceptibility_distortion_correction(
         bold_p,
         bold_j,
+        derivative_dir=deriv_dir,
+        subject_id="sub-synthetic5102",
+        session_id="ses-1",
         reference_img=nib.Nifti1Image(true_3d, affine),
     )
-    assert res.corrected is True
+    assert res.status == SDC_STATUS_REJECTED_QC_DEGRADED
+    assert res.corrected is False
+    assert res.displacement_vox is None
+    assert res.unwarped_mean_3d is None
     assert res.correction_qc is not None
-    # If magnitude-to-BOLD registration recovered the (-12, -12, 0) mm shift, alignment improves strongly
-    assert res.correction_qc["ncc_after"] > res.correction_qc["ncc_before"] and res.correction_qc["ncc_after"] > 0.985
+    assert res.correction_qc["ncc_after"] < res.correction_qc["ncc_before"]
+    assert res.reason is not None and "REJECTED_QC_DEGRADED" in res.reason
+    prov_dict = res.to_provenance_dict()
+    assert prov_dict["status"] == SDC_STATUS_REJECTED_QC_DEGRADED
+    assert prov_dict["corrected"] is False
+    assert prov_dict["reason"] == res.reason
+    assert not (deriv_dir / "sub-synthetic5102_ses-1_task-rest_desc-sdc_displacement.nii.gz").exists()
+
+    with pytest.raises(SDCError, match="REJECTED_QC_DEGRADED"):
+        run_susceptibility_distortion_correction(
+            bold_p,
+            bold_j,
+            strict_sdc=True,
+            reference_img=nib.Nifti1Image(true_3d, affine),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -623,17 +647,15 @@ def test_step5_1_item5_nonlinear_composition_order_point_tracking():
 # ---------------------------------------------------------------------------
 
 
-def test_step5_1_item6_bug_sdc_qc_wording_explains_meaning_and_limits():
-    """Minimal failing test (Bug #3): SDC QC reports/API must state what QC metrics mean & what they do NOT prove.
+def test_step5_1_item6_sdc_qc_wording_explains_meaning_and_limits():
+    """Verify QC_METRIC_INTERPRETATION explains ncc/nmi/mask_dice/min_jacobian and what they do NOT prove."""
+    for metric_key in ("ncc", "nmi", "mask_dice", "min_jacobian"):
+        assert metric_key in QC_METRIC_INTERPRETATION["measures"]
+    assert QC_METRIC_INTERPRETATION["does_not_prove"]
 
-    Currently evaluate_sdc_correction_qc() emits only raw numbers/booleans (ncc_before/after, nmi_before/after,
-    mask_dice_before/after) with zero explanatory or scope-limitation wording, and
-    DashboardApplication.pipeline_verification_status()['susceptibility_distortion'] lacks wording stating
-    what those metrics do NOT prove (e.g., T1w correlation gain does not prove ground-truth B0 accuracy,
-    through-plane dropout recovery, or clinical validity).
-    """
     vol, _ = _make_asymmetric_brain_3d((20, 20, 15))
     qc = evaluate_sdc_correction_qc(vol, vol, vol)
+    assert qc["metric_interpretation"] == QC_METRIC_INTERPRETATION
     qc_text = json.dumps(qc).lower()
     assert any(k in qc_text for k in ("meaning", "description", "measures", "interpretation")), (
         "evaluate_sdc_correction_qc() must include wording explaining what the QC metrics mean"
@@ -643,8 +665,11 @@ def test_step5_1_item6_bug_sdc_qc_wording_explains_meaning_and_limits():
     )
 
     verif_sdc = serve_dashboard.DashboardApplication().pipeline_verification_status()["susceptibility_distortion"]
+    assert verif_sdc["qc_metric_interpretation"] == QC_METRIC_INTERPRETATION
     verif_text = json.dumps({k: v for k, v in verif_sdc.items() if k != "report"}).lower()
     assert "not prove" in verif_text or "does not prove" in verif_text or "limitations" in verif_text
+    for metric_key in ("ncc", "nmi", "mask_dice", "min_jacobian"):
+        assert metric_key in verif_text
 
 
 # ---------------------------------------------------------------------------
@@ -724,19 +749,32 @@ def test_step5_1_skipped_visibility_in_provenance_json(skipped_e2e_run: Dict[str
     assert sdc["corrected"] is False
 
 
-def test_step5_1_skipped_visibility_in_output_manifest_json_bug(skipped_e2e_run: Dict[str, Any]):
-    """Minimal failing test (Bug #4): Test 2/3: skipped correction must be visible in output_manifest.json.
-
-    Currently scripts/run_poc_v2.py writes only {status, subject_id, timestamp_utc, artifacts}
-    covering the 12 core files, omitting slice_timing_correction/susceptibility_distortion_correction
-    statuses and derivative STC/SDC report JSONs from output_manifest.json.
-    """
-    manifest_path = skipped_e2e_run["output_dir"] / "output_manifest.json"
+def test_step5_1_skipped_visibility_in_output_manifest_json(skipped_e2e_run: Dict[str, Any]):
+    """Test 2/3: Skipped STC & SDC statuses appear in additive correction_status in output_manifest.json."""
+    out_dir = skipped_e2e_run["output_dir"]
+    manifest_path = out_dir / "output_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest_text = json.dumps(manifest)
-    assert "SKIPPED_" in manifest_text, (
-        "output_manifest.json does not surface skipped STC/SDC correction status"
-    )
+
+    # Existing keys & 12-artifact map remain intact
+    assert manifest["status"] == "SUCCESS"
+    assert manifest["subject_id"] == skipped_e2e_run["subject_id"]
+    assert "timestamp_utc" in manifest
+    assert len(manifest["artifacts"]) == 12
+
+    corr = manifest["correction_status"]
+    assert corr["slice_timing_correction"]["status"].startswith("SKIPPED_")
+    assert corr["slice_timing_correction"]["corrected"] is False
+    assert corr["susceptibility_distortion_correction"]["status"] == SDC_STATUS_SKIPPED_NO_ASSOCIATED_FIELDMAP
+    assert corr["susceptibility_distortion_correction"]["corrected"] is False
+
+    # Existing consumers (cohort runner & DashboardDataService artifact hash verification) still pass
+    verified = _verify_run_artifacts(out_dir)
+    assert len(verified["artifacts"]) == 12
+    svc = DashboardDataService(skipped_e2e_run["cohort_root"])
+    detail = svc.get_subject_detail(skipped_e2e_run["cohort_id"], skipped_e2e_run["subject_id"])
+    assert detail["subject_id"] == skipped_e2e_run["subject_id"]
+    content, _ = svc.get_artifact(skipped_e2e_run["cohort_id"], skipped_e2e_run["subject_id"], "provenance.json")
+    assert b"SKIPPED_NO_ASSOCIATED_FIELDMAP" in content
 
 
 def test_step5_1_skipped_visibility_in_dashboard_api_response(skipped_e2e_run: Dict[str, Any]):
