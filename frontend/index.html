@@ -20,6 +20,7 @@
       <nav class="nav">
         <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> Overview</a>
         <a class="nav-link" href="#authorization"><span class="nav-icon">🔒</span> Authorization</a>
+        <a class="nav-link" href="#pilot-readiness"><span class="nav-icon">◧</span> Pilot readiness</a>
         <a class="nav-link" href="#verification"><span class="nav-icon">✓</span> Verification</a>
         <a class="nav-link" href="#upload"><span class="nav-icon">⇧</span> MRI uploads</a>
         <a class="nav-link" href="#runs"><span class="nav-icon">⌁</span> Pipeline runs</a>
@@ -156,6 +157,77 @@
           <ul class="auth-blockers-list" id="authReadinessOutstanding" style="margin-top: 10px;">
             <li>Loading outstanding readiness requirements…</li>
           </ul>
+        </div>
+      </section>
+
+      <section class="panel auth-panel" id="pilot-readiness">
+        <div class="panel-head">
+          <div>
+            <div class="panel-kicker">STEP 9 FEASIBILITY PREPARATION · STRICTLY SYNTHETIC ONLY</div>
+            <h2>Synthetic N=6 Pilot Readiness</h2>
+          </div>
+          <span class="auth-locked-badge" id="pilotAuthBadge">NOT AUTHORIZED FOR REAL MRI</span>
+        </div>
+        <div class="qc-banner" style="margin-bottom: 12px;">
+          <span>!</span>
+          <div>
+            <strong id="pilotPersistentWarning">REAL-DATA PILOT BLOCKED — INSTITUTIONAL AUTHORIZATION NOT GRANTED</strong>
+            <small>Feasibility rehearsal on synthetic placeholders only · No clinical diagnoses or real participant IDs</small>
+          </div>
+        </div>
+        <div class="auth-status-grid">
+          <div class="auth-status-item">
+            <span class="auth-item-label">Pilot Slots</span>
+            <strong class="auth-item-val" id="pilotSlotsCount">6</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Synthetic Dry-Run Status</span>
+            <strong class="auth-item-val" id="pilotSynthStatus">READY_FOR_SYNTHETIC_DRY_RUN</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Real-Data Auth Status</span>
+            <strong class="auth-item-val locked" id="pilotAuthStatus">NOT_AUTHORIZED (PENDING)</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">QC Thresholds</span>
+            <strong class="auth-item-val" id="pilotQcSummary">QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">Resource Peak / Runtime</span>
+            <strong class="auth-item-val" id="pilotResourceSummary">—</strong>
+          </div>
+          <div class="auth-status-item">
+            <span class="auth-item-label">External Tools</span>
+            <strong class="auth-item-val" id="pilotToolsSummary">Checking host tools…</strong>
+          </div>
+        </div>
+        <div class="auth-blockers-box" style="margin-top: 12px;">
+          <div class="auth-blockers-head">
+            <span class="shield-mini">ⓘ</span>
+            <strong>Missing External Tool Warnings &amp; Readiness Constraints</strong>
+          </div>
+          <ul class="auth-blockers-list" id="pilotToolWarningsList">
+            <li>Loading host tool readiness checks…</li>
+          </ul>
+        </div>
+        <div class="table-wrap" style="margin-top: 14px;">
+          <table class="run-table" id="pilotSlotsTable">
+            <thead>
+              <tr>
+                <th>SLOT</th>
+                <th>REAL-DATA AUTH</th>
+                <th>SYNTHETIC RUN</th>
+                <th>STC</th>
+                <th>SDC</th>
+                <th>DEFACING</th>
+                <th>FEATURES / QC</th>
+                <th>RUNTIME / RSS / NOTES</th>
+              </tr>
+            </thead>
+            <tbody id="pilotSlotsBody">
+              <tr><td colspan="8" class="empty-cell">Loading N=6 pilot readiness slots…</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
