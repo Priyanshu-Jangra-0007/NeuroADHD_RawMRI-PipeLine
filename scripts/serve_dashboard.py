@@ -261,7 +261,10 @@ class DashboardApplication:
                 "report": None,
             }
 
-        from src.preprocessing.susceptibility_distortion import detect_sdc_software
+        from src.preprocessing.susceptibility_distortion import (
+            QC_METRIC_INTERPRETATION,
+            detect_sdc_software,
+        )
 
         sdc_sw = detect_sdc_software()
         if isinstance(step5_report, dict) and isinstance(step5_report.get("e2e_direct_fieldmap"), dict):
@@ -301,6 +304,7 @@ class DashboardApplication:
                     "folding_voxel_count": j_qc.get("folding_voxel_count"),
                     "single_step_composed_tre_mm": step5_report.get("composed_transform_tre", {}).get("single_step_max_tre_mm"),
                 },
+                "qc_metric_interpretation": QC_METRIC_INTERPRETATION,
                 "warnings": [
                     "When external FSL topup/prelude/fugue binaries are absent, PEPOLAR/phasediff scans return SKIPPED_TOOL_UNAVAILABLE with zero fabricated warps.",
                     "Unassociated fieldmaps or SyN-b0 fallback never substitute for validated physical B0 susceptibility correction.",
@@ -328,6 +332,7 @@ class DashboardApplication:
                     f"direct fieldmap (Hz / rad/s) calibrated solver ready"
                 ),
                 "validation_metrics": None,
+                "qc_metric_interpretation": QC_METRIC_INTERPRETATION,
                 "warnings": [
                     "Missing FSL binaries never trigger fabricated warps: PEPOLAR/phasediff skip cleanly with SKIPPED_TOOL_UNAVAILABLE unless topup/prelude/fugue are installed.",
                     "Real clinical MRI processing remains locked until supervisor/IEC/HMAC authorization.",

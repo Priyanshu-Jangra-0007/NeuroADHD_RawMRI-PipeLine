@@ -291,8 +291,15 @@ def run_physics_and_bids_controls(out_root: Path) -> Dict[str, Any]:
     assert cfg_37["subsamp_schedule"] == [1, 1, 1, 1]
     assert cfg_37["slice_modification_applied"] is False
 
-    acq_unequal = build_topup_acquisition_parameters(["j", "j"], [0.045, 0.068])
+    acq_unequal = build_topup_acquisition_parameters(["j", "j-"], [0.045, 0.068])
     assert len(acq_unequal) == 2
+
+    same_dir_unequal_rejected = False
+    try:
+        build_topup_acquisition_parameters(["j", "j"], [0.045, 0.068])
+    except InvalidSDCInputError:
+        same_dir_unequal_rejected = True
+    assert same_dir_unequal_rejected
 
     degenerate_rejected = False
     try:
