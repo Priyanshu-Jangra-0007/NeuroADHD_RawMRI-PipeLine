@@ -658,6 +658,25 @@ async function refreshAuthorizationStatus() {
     if (blockersList && auth.blockers) {
       blockersList.innerHTML = auth.blockers.map((b) => `<li>${escapeHtml(b)}</li>`).join("");
     }
+
+    const readiness = auth.evidence_readiness;
+    if (readiness) {
+      if ($("authReadinessStateBadge")) {
+        $("authReadinessStateBadge").textContent = `${readiness.display_readiness_state || "PENDING"} (${readiness.overall_authorization_state || "NOT_AUTHORIZED"})`;
+      }
+      if ($("authReadinessIec")) $("authReadinessIec").textContent = readiness.iec_evidence_status || "PENDING";
+      if ($("authReadinessDua")) $("authReadinessDua").textContent = readiness.dataset_dua_status || "PENDING";
+      if ($("authReadinessInst")) $("authReadinessInst").textContent = readiness.institutional_authorization_status || "PENDING";
+      if ($("authReadinessPrivacy")) $("authReadinessPrivacy").textContent = readiness.privacy_infosec_status || "PENDING";
+      if ($("authReadinessParticipant")) $("authReadinessParticipant").textContent = readiness.participant_scope_status || "PENDING (0/6 pilot)";
+      if ($("authReadinessProtocolExpiry")) {
+        $("authReadinessProtocolExpiry").textContent = `${readiness.protocol_version || "PoC-V2-23stage"} · ${readiness.evidence_expiry_state || "NO_EXPIRY_DATE"}`;
+      }
+      const outList = $("authReadinessOutstanding");
+      if (outList && Array.isArray(readiness.outstanding_requirements)) {
+        outList.innerHTML = readiness.outstanding_requirements.map((req) => `<li>${escapeHtml(req)}</li>`).join("");
+      }
+    }
   } catch (err) {
     if ($("authBlockersList")) {
       $("authBlockersList").innerHTML = "<li>Could not fetch research authorization status from server.</li>";
