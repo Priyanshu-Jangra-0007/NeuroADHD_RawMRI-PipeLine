@@ -201,6 +201,56 @@ class TestDashboardDataService(unittest.TestCase):
         conn = self.service.get_connectivity(self.cohort_id, self.subject_id)
         self.assertEqual(conn["n_edges"], 19900)
 
+    def test_output_manifest_with_defacing_status_and_provenance_passes_hash_verification(self):
+        provenance_path = self.run_dir / "provenance.json"
+        prov = json.loads(provenance_path.read_text(encoding="utf-8"))
+        prov["pipeline_stages_total"] = 23
+        prov["defacing"] = {
+            "status": "SKIPPED_TOOL_UNAVAILABLE",
+            "defaced": False,
+            "modality": "T1w",
+            "algorithm": "pydeface (unavailable)",
+            "manual_visual_review_required": True,
+            "metadata_sanitization": {
+                "status": "SANITIZED",
+                "removed_identifier_fields": ["PatientName", "PatientID"],
+                "raw_identifier_values_logged": False,
+            },
+            "privacy_export_gate": {
+                "overall_status": "SKIPPED_TOOL_UNAVAILABLE",
+                "export_ready_for_review": False,
+            },
+        }
+        provenance_path.write_text(json.dumps(prov), encoding="utf-8")
+
+        manifest_path = self.run_dir / "output_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["provenance.json"]["sha256"] = self._sha(provenance_path)
+        manifest["defacing_status"] = {
+            "status": "SKIPPED_TOOL_UNAVAILABLE",
+            "defaced": False,
+            "privacy_export_status": "SKIPPED_TOOL_UNAVAILABLE",
+            "export_ready_for_review": False,
+            "manual_visual_review_required": True,
+        }
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        cohort_manifest_path = self.cohort_dir / "cohort_manifest.json"
+        cohort_manifest = json.loads(cohort_manifest_path.read_text(encoding="utf-8"))
+        cohort_manifest["subjects"][0]["output_manifest_sha256"] = self._sha(manifest_path)
+        cohort_manifest_path.write_text(json.dumps(cohort_manifest), encoding="utf-8")
+
+        detail = self.service.get_subject_detail(self.cohort_id, self.subject_id)
+        self.assertEqual(detail["defacing"]["status"], "SKIPPED_TOOL_UNAVAILABLE")
+        self.assertEqual(detail["defacing"]["privacy_export_gate"]["overall_status"], "SKIPPED_TOOL_UNAVAILABLE")
+        self.assertFalse(detail["defacing"]["metadata_sanitization"]["raw_identifier_values_logged"])
+        content, _ = self.service.get_artifact(self.cohort_id, self.subject_id, "roi_CC200.csv")
+        self.assertIn(b"node/volume", content)
+        ts = self.service.get_timeseries(self.cohort_id, self.subject_id, 1)
+        self.assertEqual(ts["n_timepoints"], 3)
+        conn = self.service.get_connectivity(self.cohort_id, self.subject_id)
+        self.assertEqual(conn["n_edges"], 19900)
+
     def test_tampered_artifact_is_rejected(self):
         path = self.run_dir / "roi_CC200.csv"
         path.write_text("tampered", encoding="utf-8")

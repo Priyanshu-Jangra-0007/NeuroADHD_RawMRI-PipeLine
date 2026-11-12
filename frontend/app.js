@@ -166,6 +166,7 @@ async function loadSubject(subjectId) {
 
     const stc = detail.slice_timing_correction;
     const sdc = detail.susceptibility_distortion_correction;
+    const defacing = detail.defacing;
     const formatSdcState = (sdcObj) => {
       if (!sdcObj || !sdcObj.status) return "Not assessed";
       const st = String(sdcObj.status);
@@ -179,6 +180,9 @@ async function loadSubject(subjectId) {
       : "—";
     const sdcJacMin = sdc?.jacobian_qc?.min_jacobian != null
       ? `${Number(sdc.jacobian_qc.min_jacobian).toFixed(3)} (fold=${sdc.jacobian_qc.folding_voxel_count ?? 0})`
+      : "—";
+    const defaceHashText = defacing?.input_sha256
+      ? `in:${String(defacing.input_sha256).slice(0, 10)}… / out:${defacing.output_sha256 ? String(defacing.output_sha256).slice(0, 10) + "…" : "unchanged"}`
       : "—";
     const facts = [
       ["TR", detail.tr_seconds == null ? "—" : `${detail.tr_seconds} s`],
@@ -197,6 +201,13 @@ async function loadSubject(subjectId) {
       ["SDC PE / readout", sdc?.bold_phase_encoding_direction ? `${sdc.bold_phase_encoding_direction} (${sdc.bold_total_readout_time_seconds ?? "—"} s)` : "—"],
       ["SDC max displacement", sdcDispMax],
       ["SDC min Jacobian", sdcJacMin],
+      ["Defacing status", defacing?.status ?? "Not recorded"],
+      ["Defacing algorithm", defacing?.algorithm ? `${defacing.algorithm} (${defacing.algorithm_version || "n/a"})` : "—"],
+      ["Defacing modality / mask", defacing ? `${defacing.modality || "T1w"} · mask=${defacing.defacing_mask_available ? "available" : "none"}` : "—"],
+      ["Defacing hashes", defaceHashText],
+      ["Metadata sanitization", defacing?.metadata_sanitization?.status ?? "—"],
+      ["Privacy audit", defacing?.privacy_export_gate?.overall_status ?? "—"],
+      ["Manual review", defacing?.manual_visual_review_required === false ? "Reviewed" : "REQUIRED"],
     ];
     $("qcFacts").innerHTML = facts.map(([label, value]) =>
       `<div class="qc-fact"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`
@@ -659,7 +670,7 @@ async function refreshPipelineVerification() {
     const data = await api("/api/pipeline/verification");
     if ($("verificationBadge")) $("verificationBadge").textContent = data.badge || "SYNTHETIC PIPELINE VERIFIED";
     if ($("verifPipelineStatus")) $("verifPipelineStatus").textContent = `VERIFIED (${data.stages_verified}/${data.stages_total} Stages)`;
-    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 22} STAGES`;
+    if ($("pipelineStagePill")) $("pipelineStagePill").textContent = `${data.stages_total || 23} STAGES`;
     if ($("verifRealDataStatus")) $("verifRealDataStatus").textContent = data.safety_gate?.real_scan_pipeline_status || "LOCKED (Pending Auth)";
     if ($("verifAtlasStatus")) $("verifAtlasStatus").textContent = `${data.parcellation?.atlas?.slice(0, 20) || "Craddock CC200"} (${data.parcellation?.rois || 200} ROIs)`;
     if ($("verifFeaturesStatus")) $("verifFeaturesStatus").textContent = `${(data.parcellation?.edges || 19900).toLocaleString()} Edges (All Finite)`;
@@ -738,6 +749,35 @@ async function refreshPipelineVerification() {
           ? sdc.warnings
           : ["Missing external tools return SKIPPED_TOOL_UNAVAILABLE with zero fabricated warps."];
         sdcWarn.innerHTML = items.map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+      }
+    }
+
+    const def = data.defacing;
+    if (def) {
+      if ($("verifDefaceBadge")) $("verifDefaceBadge").textContent = def.badge || data.defacing_badge || "MRI DEFACING & PRIVACY AUDIT — SYNTHETIC ONLY";
+      if ($("verifDefaceStatus")) $("verifDefaceStatus").textContent = def.status || "SKIPPED_TOOL_UNAVAILABLE";
+      if ($("verifDefaceAlgo")) $("verifDefaceAlgo").textContent = def.selected_algorithm || "none";
+      if ($("verifDefaceVersion")) $("verifDefaceVersion").textContent = def.algorithm_version || (def.pydeface_available ? "installed" : "unavailable");
+      if ($("verifDefaceHashes")) $("verifDefaceHashes").textContent = def.input_output_hashes || "—";
+      if ($("verifDefaceModality")) $("verifDefaceModality").textContent = def.anatomical_modality || "T1w";
+      if ($("verifDefaceMask")) $("verifDefaceMask").textContent = def.defacing_mask_availability || "Not available";
+      if ($("verifDefaceOutputVal")) $("verifDefaceOutputVal").textContent = def.output_validation_status || "—";
+      if ($("verifDefaceMetaStatus")) $("verifDefaceMetaStatus").textContent = def.metadata_sanitization_status || "—";
+      if ($("verifDefacePrivacyStatus")) $("verifDefacePrivacyStatus").textContent = def.privacy_audit_status || "SKIPPED_TOOL_UNAVAILABLE";
+      if ($("verifDefaceManualReview")) {
+        $("verifDefaceManualReview").textContent = def.manual_visual_review_required
+          ? "REQUIRED (Manual Visual Orthoslice Review)"
+          : "Approved";
+      }
+      const defWarn = $("verifDefaceWarnings");
+      if (defWarn) {
+        const allItems = [
+          ...(Array.isArray(def.warnings) ? def.warnings : []),
+          ...(Array.isArray(def.failure_reasons) ? def.failure_reasons : []),
+        ];
+        defWarn.innerHTML = (allItems.length ? allItems : ["No warnings recorded."])
+          .map((w) => `<li>${escapeHtml(w)}</li>`)
+          .join("");
       }
     }
   } catch (err) {

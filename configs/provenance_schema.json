@@ -29,6 +29,41 @@
       "type": "string",
       "enum": ["train", "test", "synthetic"]
     },
+    "pipeline_stages_total": {
+      "type": "integer",
+      "minimum": 22
+    },
+    "defacing": {
+      "type": "object",
+      "required": ["status", "defaced", "manual_visual_review_required", "input_file_unmodified_verified"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "APPLIED",
+            "SKIPPED_TOOL_UNAVAILABLE",
+            "SKIPPED_UNSUPPORTED_MODALITY",
+            "FAILED_INVALID_INPUT",
+            "FAILED_OUTPUT_VALIDATION",
+            "QC_PENDING_MANUAL_REVIEW",
+            "REJECTED_BRAIN_TISSUE_LOSS"
+          ]
+        },
+        "defaced": { "type": "boolean" },
+        "accepted_for_downstream_preprocessing": { "type": "boolean" },
+        "algorithm": { "type": ["string", "null"] },
+        "algorithm_version": { "type": ["string", "null"] },
+        "modality": { "type": ["string", "null"] },
+        "input_sha256": { "type": ["string", "null"] },
+        "output_sha256": { "type": ["string", "null"] },
+        "input_file_unmodified_verified": { "type": "boolean" },
+        "defacing_mask_available": { "type": "boolean" },
+        "manual_visual_review_required": { "type": "boolean" },
+        "manual_review_status": { "type": "string" },
+        "metadata_sanitization": { "type": "object" },
+        "privacy_export_gate": { "type": "object" }
+      }
+    },
     "software_versions": {
       "type": "object",
       "required": ["dipy", "nilearn", "nibabel", "numpy", "scipy", "scikit-learn"],

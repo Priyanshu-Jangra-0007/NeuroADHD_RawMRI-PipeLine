@@ -1131,7 +1131,7 @@ def run_37slice_240vol_e2e_integration(out_root: Path) -> Dict[str, Any]:
     )
     assert res1["status"] == "SUCCESS"
     prov = res1["provenance"]
-    assert prov["pipeline_stages_total"] == 22
+    assert prov["pipeline_stages_total"] == 23
     assert prov["motion_estimation"]["estimated_on_raw_uncorrected_bold"] is True
     assert prov["motion_estimation"]["estimated_before_slice_timing"] is True
     stc_prov = prov["slice_timing_correction"]

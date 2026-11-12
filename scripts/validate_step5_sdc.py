@@ -851,7 +851,7 @@ def run_step5_e2e_validations(out_root: Path) -> Tuple[Dict[str, Any], Dict[str,
     prov_pep = res_pep["provenance"]
     sdc_pep = prov_pep["susceptibility_distortion_correction"]
     assert res_pep["status"] == "SUCCESS"
-    assert prov_pep["pipeline_stages_total"] == 22
+    assert prov_pep["pipeline_stages_total"] == 23
     assert sdc_pep["status"] == SDC_STATUS_SKIPPED_TOOL_UNAVAILABLE
     assert sdc_pep["corrected"] is False
     assert sdc_pep["missing_tools"] == ["topup"]
@@ -920,8 +920,8 @@ def run_step5_e2e_validations(out_root: Path) -> Tuple[Dict[str, Any], Dict[str,
     sdc_d = prov_d["susceptibility_distortion_correction"]
     assert res_d1["status"] == "SUCCESS"
     assert res_d2["status"] == "SUCCESS"
-    assert prov_d["pipeline_stages_total"] == 22
-    assert len(prov_d["preprocessing_order"]) == 22
+    assert prov_d["pipeline_stages_total"] == 23
+    assert len(prov_d["preprocessing_order"]) == 23
     assert sdc_d["status"] == SDC_STATUS_APPLIED_DIRECT_FIELDMAP
     assert sdc_d["corrected"] is True
     assert sdc_d["jacobian_qc"]["folding_detected"] is False

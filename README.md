@@ -54,6 +54,12 @@ RAW RESTING-STATE fMRI SCAN (BIDS format: *_bold.nii.gz + *.json)
   - Honest FSL tool gating (SKIPPED_TOOL_UNAVAILABLE when topup/prelude/fugue absent)
   - Calibrated direct fieldmap (Hz / rad/s), Jacobian folding check (J > 0)
                            ↓
+       ANATOMICAL MRI DEFACING & METADATA DE-IDENTIFICATION (DEC-DEF-03, Stage 7/23)
+  - 3D T1w defacing via PyDeface (SKIPPED_TOOL_UNAVAILABLE if pydeface/FSL absent;
+    never fabricates facial removal or substitutes skull stripping; --strict-defacing fails closed)
+  - Immutability SHA-256 verification, geometry/brain retention QC (manual visual QC required)
+  - Denylist metadata sanitization (preserves scientific BIDS fields & participant_id; DICOM PHI separate)
+                           ↓
              STANDARDIZED fMRI PREPROCESSING
   - Motion Transform (+ Optional SDC) Application & Single-Step Composed Pullback (Motion + SDC + Coreg + SyN)
   - Non-linear MNI152 Standard Space Normalization (CC200 Target Grid)
@@ -174,11 +180,11 @@ Run the automated test suite with the HMAC integrity key:
 NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ```
 
-**Test Suite Metrics (Measured November 2026, Step 5):**
-- **Collected:** 465 tests
-- **Passed:** 458 passed
+**Test Suite Metrics (Measured November 2026, Step 6):**
+- **Collected:** 488 tests
+- **Passed:** 481 passed
 - **Skipped:** 7 skipped
-- **Statement Coverage:** 82% across `src/` (`pytest --cov=src`)
+- **Statement Coverage:** 82% across `src/` (`pytest --cov=src`, including `85%` on [`src/preprocessing/defacing.py`](src/preprocessing/defacing.py))
 
 **Running the model-dependent tests:**
 - **2 skipped model tests** (`test_container_require_model_inference_fails_closed_without_mount`, etc.) require setting `NEUROADHD_MODEL_DIR` pointing to the trusted frozen model directory (e.g. `NeuroADHD_ModelBenchmark/results/final_locked`).
@@ -198,7 +204,8 @@ NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ## 8. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
-- [STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md](docs/STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md): Architecture, BIDS discovery (`B0FieldSource`/`B0FieldIdentifier` > `IntendedFor`), PE/readout validation, odd-slice TOPUP config, honest fallback status matrix (`SKIPPED_TOOL_UNAVAILABLE` / `SKIPPED_UNSUPPORTED_METHOD`), Jacobian folding QC, single-step composed SDC TRE (`0.051 mm` max / `+11.48` sharpness gain), `64×64×37×240` 22-stage E2E results, and Step 3/4 regressions (`DEC-SDC-02`).
+- [STEP6_MRI_DEFACING_AND_ANONYMIZATION.md](docs/STEP6_MRI_DEFACING_AND_ANONYMIZATION.md): Stage 7/23 anatomical defacing (`pydeface` preferred, `SKIPPED_TOOL_UNAVAILABLE` when absent, never substitutes skull stripping), quantitative QC & mandatory manual visual review warning, denylist BIDS metadata sanitization (scientific fields & `participant_id` preserved, DICOM PHI separate), non-misleading privacy export gate (`PRIVACY_READY_FOR_REVIEW` / `SKIPPED_TOOL_UNAVAILABLE`, never `ANONYMIZED`), and explicit 5-way distinction (`DEC-DEF-03`).
+- [STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md](docs/STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md): Architecture, BIDS discovery (`B0FieldSource`/`B0FieldIdentifier` > `IntendedFor`), PE/readout validation, odd-slice TOPUP config, honest fallback status matrix (`SKIPPED_TOOL_UNAVAILABLE` / `SKIPPED_UNSUPPORTED_METHOD`), Jacobian folding QC, single-step composed SDC TRE (`0.051 mm` max / `+11.48` sharpness gain), `64×64×37×240` E2E results, and Step 3/4 regressions (`DEC-SDC-02`).
 - [STEP4_SLICE_TIMING_CORRECTION.md](docs/STEP4_SLICE_TIMING_CORRECTION.md): Architecture audit, 21-stage ordering (raw-BOLD motion estimation prior to STC + single-step composed resampling), header `slice_dim` axis resolution, 5-region boundary stability & window reporting, CC200 time-axis audit, composed transform landmark validation, and 37-slice × 240-vol E2E results (`DEC-STC-01`).
 - [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
 - [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md): Executive summary, scope, and non-clinical disclaimer.
@@ -218,6 +225,12 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 9. Changelog
+
+- **2026-11-12 (Step 6 Anatomical MRI Defacing & Metadata De-Identification `DEC-DEF-03`)**:
+  - Implemented [`src/preprocessing/defacing.py`](src/preprocessing/defacing.py) providing local defacing tool discovery (`pydeface` preferred; probes `mri_deface`, `@afni_refacer_run`, `mri_reface`, `quickshear`, `flirt` without substituting skull stripping or homemade filters), structural 3D MRI validation (`T1w` primary; optional `T2w`/`FLAIR`; rejects BOLD/DWI/fmap/4D), original-file SHA-256 immutability verification, quantitative geometry/brain-retention QC (`>=0.99` voxel retention, `>=0.95` Dice, authentic-only facemask handling, mandatory visual QC flag), denylist metadata sanitization across BIDS JSON/TSV/NIfTI headers without stripping scientific BIDS fields or logging raw PHI values, and non-misleading privacy export gating (`PRIVACY_READY_FOR_REVIEW` / `SKIPPED_TOOL_UNAVAILABLE`, never `ANONYMIZED`/`ANONYMOUS`).
+  - Integrated Stage 7 (`Anatomical MRI Defacing, Metadata De-Identification & Privacy Audit`) before Stage 8–13 anatomical processing in the **23-stage** [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) pipeline (`--strict-defacing`, `--require-export-ready`), added [`configs/provenance_schema.json`](configs/provenance_schema.json) `defacing` + `pipeline_stages_total` validation, and added additive `defacing_status` in `output_manifest.json` while keeping Stage 2–4 functional processing untouched.
+  - Updated [`scripts/serve_dashboard.py`](scripts/serve_dashboard.py), [`src/dashboard/service.py`](src/dashboard/service.py), [`frontend/index.html`](frontend/index.html), and [`frontend/app.js`](frontend/app.js) with 23-stage pipeline status and dedicated Step 6 defacing & privacy telemetry.
+  - Added synthetic `64×64×64` + E2E test suite [`tests/unit/test_defacing.py`](tests/unit/test_defacing.py), `DashboardDataService` additive `defacing_status` regression in [`tests/integration/test_dashboard_service.py`](tests/integration/test_dashboard_service.py), [`docs/STEP6_MRI_DEFACING_AND_ANONYMIZATION.md`](docs/STEP6_MRI_DEFACING_AND_ANONYMIZATION.md), and updated existing stage assertions to `23`; full regression suite verified at **481 passed, 7 skipped (`488` collected, `82%` `src/` coverage)** under synthetic-only execution.
 
 - **2026-11-11 (Step 5 Susceptibility Distortion Correction `DEC-SDC-02`)**:
   - Implemented [`src/preprocessing/susceptibility_distortion.py`](src/preprocessing/susceptibility_distortion.py) supporting strict BIDS fieldmap association (`B0FieldSource`/`B0FieldIdentifier` priority over `IntendedFor`), voxel-axis PE validation (`i, i-, j, j-, k, k-`), strict `TotalReadoutTime` validation (`EffectiveEchoSpacing * (ReconMatrixPE - 1)` when `TotalReadoutTime` absent; never `TR`), calibrated direct fieldmaps (`Hz`, `rad/s`), Jacobian invertibility QC ($J > 0$), odd-slice-safe TOPUP configuration (`odd_dimension_safe_subsamp1`, `subsamp=[1,1,1,1]`), and honest `SKIPPED_TOOL_UNAVAILABLE` / `SKIPPED_UNSUPPORTED_METHOD` fallbacks when FSL `topup`/`prelude`/`fugue` are absent.
