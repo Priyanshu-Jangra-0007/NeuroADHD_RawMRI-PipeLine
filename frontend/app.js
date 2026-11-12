@@ -684,6 +684,70 @@ async function refreshAuthorizationStatus() {
   }
 }
 
+async function refreshPilotReadiness() {
+  try {
+    const pilot = await api("/api/pilot/readiness");
+    if ($("pilotPersistentWarning")) {
+      $("pilotPersistentWarning").textContent = pilot.persistent_warning || "REAL-DATA PILOT BLOCKED — INSTITUTIONAL AUTHORIZATION NOT GRANTED";
+    }
+    if ($("pilotSlotsCount")) $("pilotSlotsCount").textContent = String(pilot.pilot_slots_count ?? 6);
+    if ($("pilotSynthStatus")) $("pilotSynthStatus").textContent = pilot.synthetic_execution_status || "READY_FOR_SYNTHETIC_DRY_RUN";
+    if ($("pilotAuthStatus")) {
+      $("pilotAuthStatus").textContent = `${pilot.authorization_status || "NOT_AUTHORIZED"} (${pilot.readiness_state || "PENDING_EVIDENCE"})`;
+    }
+    if ($("pilotQcSummary")) $("pilotQcSummary").textContent = pilot.qc_threshold_status || "QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL";
+
+    const dry = pilot.latest_dry_run;
+    if ($("pilotResourceSummary")) {
+      $("pilotResourceSummary").textContent = dry
+        ? `${dry.succeeded ?? 0}/${dry.total_subjects ?? 6} OK · max ${dry.max_peak_rss_gb ?? "—"} GB · ${dry.total_runtime_seconds ?? "—"} s`
+        : "No synthetic dry run recorded yet";
+    }
+
+    const avail = pilot.tool_availability || {};
+    const presentCount = Object.values(avail).filter(Boolean).length;
+    const totalTools = Object.keys(avail).length || 7;
+    if ($("pilotToolsSummary")) {
+      $("pilotToolsSummary").textContent = `${presentCount}/${totalTools} host tools present (dcm2niix=${avail.dcm2niix ? "yes" : "no"})`;
+    }
+
+    const warnEl = $("pilotToolWarningsList");
+    if (warnEl) {
+      const items = [...(Array.isArray(pilot.missing_tool_warnings) ? pilot.missing_tool_warnings : [])];
+      if (dry && Array.isArray(dry.failures) && dry.failures.length) {
+        dry.failures.forEach((f) => items.push(`Dry-run failure (${f.subject_id}): ${f.error}`));
+      }
+      if (!items.length) items.push("All external binaries detected on host.");
+      warnEl.innerHTML = items.map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+    }
+
+    const body = $("pilotSlotsBody");
+    if (body && Array.isArray(pilot.slots)) {
+      body.innerHTML = pilot.slots.map((slot) => {
+        const synthLabel = slot.synthetic_status || slot.pipeline_status || "PENDING";
+        const qcText = slot.n_rois != null
+          ? `${slot.n_rois} ROIs / ${(slot.n_connectivity_features ?? 0).toLocaleString()} edges`
+          : (slot.qc_status || "PENDING");
+        const resText = slot.error
+          ? `ERROR: ${slot.error}`
+          : (slot.runtime_seconds != null ? `${slot.runtime_seconds} s · ${slot.peak_rss_gb ?? "—"} GB` : "Pending dry run");
+        return `<tr>
+          <td><strong>${escapeHtml(slot.placeholder_id)}</strong></td>
+          <td><span class="status-tag status-failed">${escapeHtml(slot.authorization_status || "PENDING_NOT_AUTHORIZED")}</span></td>
+          <td>${escapeHtml(synthLabel)}</td>
+          <td>${escapeHtml(slot.stc_status || "—")}</td>
+          <td>${escapeHtml(slot.sdc_status || "—")}</td>
+          <td>${escapeHtml(slot.defacing_status || "—")}</td>
+          <td>${escapeHtml(qcText)}</td>
+          <td>${escapeHtml(resText)}</td>
+        </tr>`;
+      }).join("");
+    }
+  } catch (err) {
+    // Non-blocking
+  }
+}
+
 async function refreshPipelineVerification() {
   try {
     const data = await api("/api/pipeline/verification");
@@ -818,6 +882,7 @@ async function init() {
       $("runButton").disabled = true;
     }
     await refreshAuthorizationStatus();
+    await refreshPilotReadiness();
     await refreshPipelineVerification();
     await refreshRuns();
     await refreshStagedSessions();

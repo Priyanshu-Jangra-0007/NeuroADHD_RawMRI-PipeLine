@@ -6,10 +6,12 @@ and can launch only the repository's synthetic cohort runner.
 """
 from __future__ import annotations
 
+import csv
 import json
 import mimetypes
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -161,6 +163,167 @@ class DashboardApplication:
                 "governance_tracker_total": 12,
                 "outstanding_requirements": [f"Authorization readiness check failed closed: {type(exc).__name__}"],
             }
+
+    def pilot_readiness_status(self) -> Dict[str, Any]:
+        """Read-only Step 9 synthetic N=6 pilot readiness summary (no real data, no secrets)."""
+        readiness = self.authorization_readiness_status()
+        tracker_path = PROJECT_ROOT / "docs" / "pilot" / "N6_PILOT_TRACKER.csv"
+        tracker_rows: list[Dict[str, Any]] = []
+        if tracker_path.is_file() and not tracker_path.is_symlink():
+            try:
+                with tracker_path.open("r", encoding="utf-8", newline="") as stream:
+                    reader = csv.DictReader(stream)
+                    for row in reader:
+                        tracker_rows.append(
+                            {
+                                "pilot_slot": row.get("pilot_slot", ""),
+                                "placeholder_id": row.get("placeholder_id", ""),
+                                "session_id": row.get("session_id", "ses-1"),
+                                "authorization_status": "PENDING_NOT_AUTHORIZED",
+                                "permitted_operations": row.get("permitted_operations", "SYNTHETIC_ONLY (real_ops=NONE)"),
+                                "dataset_scope": row.get("dataset_scope", "SYNTHETIC_PHANTOM"),
+                                "defacing_status": row.get("defacing_status", "SKIPPED_TOOL_UNAVAILABLE"),
+                                "sdc_status": row.get("sdc_status", "PENDING"),
+                                "stc_status": row.get("stc_status", "PENDING"),
+                                "pipeline_status": row.get("pipeline_status", "PENDING_DRY_RUN"),
+                                "qc_status": row.get("qc_status", "PENDING_THRESHOLD_APPROVAL"),
+                                "cpac_comparison_status": row.get("cpac_comparison_status", "PENDING_CONCORDANCE_RUN"),
+                                "manual_review_status": row.get("manual_review_status", "REQUIRED_VISUAL_REVIEW"),
+                            }
+                        )
+            except Exception:
+                tracker_rows = []
+
+        if not tracker_rows:
+            tracker_rows = [
+                {
+                    "pilot_slot": str(idx),
+                    "placeholder_id": f"sub-pilot-{idx:02d}",
+                    "session_id": "ses-1",
+                    "authorization_status": "PENDING_NOT_AUTHORIZED",
+                    "permitted_operations": "SYNTHETIC_ONLY (real_ops=NONE)",
+                    "dataset_scope": f"SYNTHETIC_PHANTOM_SLOT_{idx:02d}",
+                    "defacing_status": "SKIPPED_TOOL_UNAVAILABLE",
+                    "sdc_status": "PENDING",
+                    "stc_status": "PENDING",
+                    "pipeline_status": "PENDING_DRY_RUN",
+                    "qc_status": "PENDING_THRESHOLD_APPROVAL",
+                    "cpac_comparison_status": "PENDING_CONCORDANCE_RUN",
+                    "manual_review_status": "REQUIRED_VISUAL_REVIEW",
+                }
+                for idx in range(1, 7)
+            ]
+
+        tool_availability = {
+            "dcm2niix": shutil.which("dcm2niix") is not None,
+            "pydeface": shutil.which("pydeface") is not None,
+            "fsl_flirt": shutil.which("flirt") is not None,
+            "fsl_topup": shutil.which("topup") is not None,
+            "fsl_prelude": shutil.which("prelude") is not None,
+            "fsl_fugue": shutil.which("fugue") is not None,
+            "afni_3dtshift": shutil.which("3dTshift") is not None,
+        }
+        missing_tools = [name for name, ok in tool_availability.items() if not ok]
+        missing_tool_warnings: list[str] = []
+        if not tool_availability["pydeface"]:
+            missing_tool_warnings.append("pydeface unavailable on host -> anatomical defacing returns SKIPPED_TOOL_UNAVAILABLE.")
+        if not (tool_availability["fsl_topup"] and tool_availability["fsl_prelude"] and tool_availability["fsl_fugue"]):
+            missing_tool_warnings.append("FSL topup/prelude/fugue unavailable on host -> PEPOLAR/phasediff SDC skips cleanly with SKIPPED_TOOL_UNAVAILABLE.")
+        if not tool_availability["afni_3dtshift"]:
+            missing_tool_warnings.append("AFNI 3dTshift unavailable on host -> STC uses SciPy cubic spline fallback; external cross-check unavailable.")
+
+        # Locate latest safe synthetic pilot cohort manifest inside allowed outputs directories
+        pilot_manifest: Dict[str, Any] | None = None
+        candidate_roots = [
+            OUTPUT_ROOT,
+            PROJECT_ROOT / "outputs" / "pilot_dry_run",
+        ]
+        manifest_candidates: list[Path] = []
+        for root in candidate_roots:
+            if root.is_dir() and not root.is_symlink():
+                direct_manifest = root / "cohort_manifest.json"
+                if direct_manifest.is_file() and not direct_manifest.is_symlink():
+                    manifest_candidates.append(direct_manifest)
+                for child in root.iterdir():
+                    if child.is_dir() and not child.is_symlink():
+                        child_manifest = child / "cohort_manifest.json"
+                        if child_manifest.is_file() and not child_manifest.is_symlink():
+                            manifest_candidates.append(child_manifest)
+
+        latest_created = ""
+        for candidate in manifest_candidates:
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                if (
+                    data.get("execution_policy") == "STRICTLY_SYNTHETIC_ONLY"
+                    and data.get("real_data_authorized") is False
+                    and data.get("run_type") == "SYNTHETIC_COHORT_ONLY"
+                    and (data.get("pilot_dry_run") or data.get("configuration", {}).get("cohort_profile") == "pilot_n6")
+                ):
+                    stamp = str(data.get("updated_utc") or data.get("created_utc") or "")
+                    if stamp >= latest_created:
+                        latest_created = stamp
+                        pilot_manifest = data
+            except Exception:
+                continue
+
+        latest_dry_run: Dict[str, Any] | None = None
+        subjects_out = list(tracker_rows)
+        if pilot_manifest is not None:
+            raw_subjects = pilot_manifest.get("subjects") or []
+            manifest_summary = pilot_manifest.get("summary") or {}
+            rss_vals = [float(s["peak_rss_gb"]) for s in raw_subjects if s.get("peak_rss_gb") is not None]
+            rt_vals = [float(s["runtime_seconds"]) for s in raw_subjects if s.get("runtime_seconds") is not None]
+            latest_dry_run = {
+                "cohort_run_id": pilot_manifest.get("cohort_run_id"),
+                "status": pilot_manifest.get("status"),
+                "created_utc": pilot_manifest.get("created_utc"),
+                "updated_utc": pilot_manifest.get("updated_utc"),
+                "pilot_label": pilot_manifest.get("pilot_label", "SYNTHETIC_ONLY_N6_PILOT_DRY_RUN"),
+                "succeeded": manifest_summary.get("succeeded", 0),
+                "failed": manifest_summary.get("failed", 0),
+                "pending": manifest_summary.get("pending", 0),
+                "total_subjects": manifest_summary.get("total_subjects", len(raw_subjects)),
+                "failures": manifest_summary.get("failures", []),
+                "max_peak_rss_gb": manifest_summary.get("max_peak_rss_gb") if manifest_summary.get("max_peak_rss_gb") is not None else (round(max(rss_vals), 4) if rss_vals else None),
+                "total_runtime_seconds": manifest_summary.get("total_runtime_seconds") if manifest_summary.get("total_runtime_seconds") is not None else (round(sum(rt_vals), 3) if rt_vals else None),
+            }
+            for idx, subj in enumerate(raw_subjects[:6]):
+                stage_sum = subj.get("stage_summary") or {}
+                if idx < len(subjects_out):
+                    subjects_out[idx].update(
+                        {
+                            "synthetic_subject_id": subj.get("subject_id"),
+                            "synthetic_status": subj.get("status"),
+                            "runtime_seconds": subj.get("runtime_seconds"),
+                            "peak_rss_gb": subj.get("peak_rss_gb"),
+                            "stages_completed": stage_sum.get("pipeline_stages_total", 23) if subj.get("status") == "SUCCESS" else 0,
+                            "stc_status": stage_sum.get("stc_status") or subjects_out[idx].get("stc_status"),
+                            "sdc_status": stage_sum.get("sdc_status") or subjects_out[idx].get("sdc_status"),
+                            "defacing_status": stage_sum.get("defacing_status") or subjects_out[idx].get("defacing_status"),
+                            "n_rois": stage_sum.get("n_rois"),
+                            "n_connectivity_features": stage_sum.get("n_connectivity_features"),
+                            "mean_fd_mm": stage_sum.get("mean_fd_mm"),
+                            "error": subj.get("error"),
+                        }
+                    )
+
+        return {
+            "pilot_scope_limit": 6,
+            "pilot_slots_count": len(subjects_out),
+            "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
+            "real_data_authorized": False,
+            "authorization_status": "NOT_AUTHORIZED",
+            "readiness_state": readiness.get("readiness_state", "PENDING_EVIDENCE"),
+            "persistent_warning": "REAL-DATA PILOT BLOCKED — INSTITUTIONAL AUTHORIZATION NOT GRANTED",
+            "synthetic_execution_status": latest_dry_run["status"] if latest_dry_run else "READY_FOR_SYNTHETIC_DRY_RUN",
+            "qc_threshold_status": "QC_THRESHOLDS_PENDING_SUPERVISOR_APPROVAL",
+            "tool_availability": tool_availability,
+            "missing_tools": missing_tools,
+            "missing_tool_warnings": missing_tool_warnings,
+            "latest_dry_run": latest_dry_run,
+            "slots": subjects_out,
+        }
 
     def pipeline_verification_status(self) -> Dict[str, Any]:
         validation_root = Path(os.environ.get("NEUROADHD_VALIDATION_ROOT") or (PROJECT_ROOT / "outputs" / "step3_validation"))
@@ -864,6 +1027,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return self._send_json(APP.authorization_status())
             if route == "/api/authorization/readiness":
                 return self._send_json(APP.authorization_readiness_status())
+            if route in ("/api/pilot/readiness", "/api/pilot/status"):
+                return self._send_json(APP.pilot_readiness_status())
             if route == "/api/pipeline/verification":
                 return self._send_json(APP.pipeline_verification_status())
             if route == "/api/intake/sessions":
