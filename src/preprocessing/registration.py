@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import gc
 import resource
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -21,6 +21,7 @@ from dipy.align.imwarp import DiffeomorphicMap, SymmetricDiffeomorphicRegistrati
 from dipy.align.metrics import CCMetric
 from dipy.align.transforms import AffineTransform3D, RigidTransform3D
 from nilearn.masking import compute_brain_mask
+from scipy.ndimage import map_coordinates
 
 
 def check_process_memory_gb() -> float:
@@ -265,9 +266,10 @@ def compose_transformations(
 
     Pullback Sampling Composition for DiffeomorphicMap:
     ---------------------------------------------------
-    ``DiffeomorphicMap.transform(epi_image)`` samples voxel intensities into the domain (MNI/CC200)
-    grid. The ``prealign`` matrix must map a physical point in domain space (x_MNI) into codomain
-    space (x_EPI):
+    With DIPY ``is_inverse = True``, ``DiffeomorphicMap.transform(epi_image)`` calls
+    ``_warp_backward(epi_image)``, sampling voxel intensities from the native EPI (domain)
+    image onto the MNI/CC200 (codomain) output grid. The ``prealign_inv`` matrix must map
+    a physical point in target MNI space (x_MNI) into native EPI space (x_EPI):
         x_EPI = P * x_MNI
     Substituting the chain:
         x_T1w = M_mni_to_t1w * x_MNI
@@ -292,13 +294,14 @@ def compose_transformations(
     syn_mapping : DiffeomorphicMap
         SyN deformation mapping computed between T1w (moving) and MNI (static).
     target_shape : Tuple[int, int, int], optional
-        Shape of the CC200/MNI output grid (e.g. (63, 75, 61)). Maps to DIPY ``domain_shape``.
+        Shape of the CC200/MNI output grid (e.g. (63, 75, 61)). Stored on DIPY ``codomain_shape``
+        so ``is_inverse=True`` ``.transform(epi)`` outputs onto the MNI/CC200 grid.
     target_affine : np.ndarray, optional
-        4x4 affine of CC200/MNI output grid. Maps to DIPY ``domain_grid2world``.
+        4x4 affine of CC200/MNI output grid. Stored on DIPY ``codomain_grid2world``.
     source_shape : Tuple[int, int, int], optional
-        Shape of native functional EPI input grid. Maps to DIPY ``codomain_shape``.
+        Shape of native functional EPI input grid. Stored on DIPY ``domain_shape``.
     source_affine : np.ndarray, optional
-        4x4 affine of native functional EPI input grid. Maps to DIPY ``codomain_grid2world``.
+        4x4 affine of native functional EPI input grid. Stored on DIPY ``domain_grid2world``.
     domain_shape, domain_affine, codomain_shape, codomain_affine : optional
         Legacy keyword aliases supported for backward compatibility.
 
@@ -389,6 +392,237 @@ def compose_transformations(
     return composed_map
 
 
+def compose_volume_transform(
+    composed_map: DiffeomorphicMap,
+    motion_transform: Union[AffineMap, np.ndarray],
+) -> DiffeomorphicMap:
+    """Compose a per-volume rigid motion transform with an EPI-to-MNI DiffeomorphicMap.
+
+    In DIPY's pullback direction:
+        - ``composed_map.prealign_inv`` maps x_MNI_warped -> x_ref (M_t1w_to_epi @ M_mni_to_t1w)
+        - ``motion_transform`` maps x_ref -> x_vol(t) (estimated from raw uncorrected BOLD)
+    Combining them gives:
+        vol_prealign_inv = M_ref_to_vol(t) @ composed_map.prealign_inv
+    so ``.transform(raw_or_stc_vol_t)`` resamples directly from native acquisition volume t
+    into standard MNI/CC200 coordinates in a single spatial interpolation step.
+    """
+    if not isinstance(composed_map, DiffeomorphicMap):
+        raise TypeError(f"Expected DiffeomorphicMap for composed_map, got {type(composed_map).__name__}")
+
+    motion_aff = np.asarray(
+        motion_transform.affine if hasattr(motion_transform, "affine") else motion_transform,
+        dtype=np.float64,
+    )
+    if motion_aff.shape != (4, 4) or not np.isfinite(motion_aff).all():
+        raise ValueError(f"Expected finite 4x4 motion transform matrix, got shape {motion_aff.shape}")
+    if abs(float(np.linalg.det(motion_aff[:3, :3]))) < 1e-10:
+        raise ValueError("Motion transform matrix is singular or degenerate (det ~ 0).")
+
+    base_prealign_inv = (
+        np.asarray(composed_map.prealign_inv, dtype=np.float64)
+        if getattr(composed_map, "prealign_inv", None) is not None
+        else np.eye(4, dtype=np.float64)
+    )
+    vol_prealign_inv = motion_aff @ base_prealign_inv
+    if abs(float(np.linalg.det(vol_prealign_inv[:3, :3]))) < 1e-10:
+        raise ValueError("Composed volume transform produced a singular matrix.")
+
+    vol_map = DiffeomorphicMap(
+        3,
+        disp_shape=composed_map.disp_shape,
+        disp_grid2world=composed_map.disp_grid2world,
+        domain_shape=composed_map.domain_shape,
+        domain_grid2world=composed_map.domain_grid2world,
+        codomain_shape=composed_map.codomain_shape,
+        codomain_grid2world=composed_map.codomain_grid2world,
+        prealign=np.linalg.inv(vol_prealign_inv),
+    )
+    vol_map.is_inverse = composed_map.is_inverse
+    vol_map.backward = composed_map.backward
+    vol_map.forward = composed_map.forward
+    return vol_map
+
+
+def _interpolation_order(interpolation: str) -> int:
+    key = str(interpolation).strip().lower()
+    if key == "linear":
+        return 1
+    if key == "nearest":
+        return 0
+    if key == "cubic":
+        return 3
+    raise ValueError(f"Unsupported interpolation mode '{interpolation}'; expected 'linear', 'nearest', or 'cubic'.")
+
+
+def compose_sdc_transform(
+    composed_map: DiffeomorphicMap,
+    sdc_displacement: np.ndarray,
+    epi_affine: Optional[np.ndarray] = None,
+    motion_transform: Optional[Union[AffineMap, np.ndarray]] = None,
+    target_shape: Optional[Tuple[int, int, int]] = None,
+    target_affine: Optional[np.ndarray] = None,
+) -> dict:
+    """Compose target-to-MNI SyN, T1w-to-EPI coregistration, EPI SDC pullback, and optional rigid motion.
+
+    Computes the single-step pullback sampling coordinates from the target MNI/CC200 grid
+    into the raw/STC native EPI volume without intermediate spatial resampling:
+
+    1. ``x_MNI = target_affine @ [i_MNI, 1]``
+    2. ``x_EPI_undist = prealign_inv @ (x_MNI + syn_backward(disp_affine^-1 @ x_MNI))``
+    3. ``v_undist = inv(epi_affine) @ x_EPI_undist``
+    4. ``v_dist_ref = v_undist + sdc_displacement(v_undist)``
+    5. ``v_vol = inv(epi_affine) @ M_ref_to_vol(t) @ epi_affine @ v_dist_ref`` (when ``motion_transform`` supplied)
+
+    Returns a dictionary containing static target coordinates ``v_dist_ref`` and active
+    per-volume sampling coordinates ``v_vol`` for ``apply_composed_sdc_volume``.
+    """
+    if not isinstance(composed_map, DiffeomorphicMap):
+        raise TypeError(f"Expected DiffeomorphicMap for composed_map, got {type(composed_map).__name__}")
+
+    disp = np.asarray(sdc_displacement, dtype=np.float64)
+    if disp.ndim != 4 or disp.shape[3] != 3 or not np.isfinite(disp).all():
+        raise ValueError(
+            f"Expected finite 4D sdc_displacement of shape (X, Y, Z, 3), got shape {disp.shape}"
+        )
+    epi_shape = tuple(int(x) for x in disp.shape[:3])
+    if composed_map.domain_shape is not None and tuple(int(x) for x in composed_map.domain_shape[:3]) != epi_shape:
+        raise ValueError(
+            f"SDC displacement shape {epi_shape} does not match composed_map EPI domain_shape "
+            f"{tuple(int(x) for x in composed_map.domain_shape[:3])}."
+        )
+
+    eff_epi_affine = np.asarray(
+        epi_affine if epi_affine is not None else composed_map.domain_grid2world,
+        dtype=np.float64,
+    )
+    if eff_epi_affine.shape != (4, 4) or not np.isfinite(eff_epi_affine).all():
+        raise ValueError("Expected finite 4x4 epi_affine for SDC composition.")
+    inv_epi_affine = np.linalg.inv(eff_epi_affine)
+
+    eff_target_shape = tuple(
+        int(x)
+        for x in (target_shape if target_shape is not None else composed_map.codomain_shape)[:3]
+    )
+    eff_target_affine = np.asarray(
+        target_affine if target_affine is not None else composed_map.codomain_grid2world,
+        dtype=np.float64,
+    )
+    if len(eff_target_shape) != 3 or any(d <= 0 for d in eff_target_shape):
+        raise ValueError(f"Invalid target_shape for SDC composition: {eff_target_shape}")
+    if eff_target_affine.shape != (4, 4) or not np.isfinite(eff_target_affine).all():
+        raise ValueError("Expected finite 4x4 target_affine for SDC composition.")
+
+    prealign_inv = (
+        np.asarray(composed_map.prealign_inv, dtype=np.float64)
+        if getattr(composed_map, "prealign_inv", None) is not None
+        else np.eye(4, dtype=np.float64)
+    )
+
+    # Target MNI voxel coordinates (3, N)
+    gi, gj, gk = np.indices(eff_target_shape, dtype=np.float64)
+    n_vox = gi.size
+    mni_vox_h = np.vstack([gi.ravel(), gj.ravel(), gk.ravel(), np.ones(n_vox, dtype=np.float64)])
+    x_mni_h = eff_target_affine @ mni_vox_h  # (4, N) physical target coordinates
+
+    # Evaluate DIPY backward deformation field (target physical offset)
+    backward_phys = np.zeros((3, n_vox), dtype=np.float64)
+    if getattr(composed_map, "backward", None) is not None:
+        b_field = np.asarray(composed_map.backward, dtype=np.float64)
+        disp_g2w = (
+            np.asarray(composed_map.disp_grid2world, dtype=np.float64)
+            if composed_map.disp_grid2world is not None
+            else eff_target_affine
+        )
+        if b_field.shape[:3] == eff_target_shape and np.allclose(disp_g2w, eff_target_affine, atol=1e-6):
+            for c in range(3):
+                backward_phys[c] = b_field[..., c].ravel()
+        else:
+            disp_coords = (np.linalg.inv(disp_g2w) @ x_mni_h)[:3]
+            for c in range(3):
+                backward_phys[c] = map_coordinates(
+                    b_field[..., c],
+                    disp_coords,
+                    order=1,
+                    mode="constant",
+                    cval=0.0,
+                    prefilter=False,
+                )
+
+    x_target_def_h = x_mni_h.copy()
+    x_target_def_h[:3] += backward_phys
+    v_undist = ((inv_epi_affine @ prealign_inv) @ x_target_def_h)[:3]
+
+    # Sample SDC pullback shift u_SDC(v_undist) in undistorted EPI voxel space
+    v_dist_ref = v_undist.copy()
+    for c in range(3):
+        v_dist_ref[c] += map_coordinates(
+            disp[..., c],
+            v_undist,
+            order=1,
+            mode="constant",
+            cval=0.0,
+            prefilter=False,
+        )
+
+    if motion_transform is not None:
+        m_aff = np.asarray(
+            motion_transform.affine if hasattr(motion_transform, "affine") else motion_transform,
+            dtype=np.float64,
+        )
+        if m_aff.shape != (4, 4) or not np.isfinite(m_aff).all():
+            raise ValueError(f"Expected finite 4x4 motion transform matrix, got {m_aff.shape}.")
+        m_vox = inv_epi_affine @ m_aff @ eff_epi_affine
+        v_vol = m_vox[:3, :3] @ v_dist_ref + m_vox[:3, 3:4]
+    else:
+        v_vol = v_dist_ref
+
+    oob_mask = (
+        (v_vol[0] < 0.0) | (v_vol[0] > epi_shape[0] - 1.0)
+        | (v_vol[1] < 0.0) | (v_vol[1] > epi_shape[1] - 1.0)
+        | (v_vol[2] < 0.0) | (v_vol[2] > epi_shape[2] - 1.0)
+    )
+
+    return {
+        "v_undist": v_undist,
+        "v_dist_ref": v_dist_ref,
+        "v_vol": v_vol,
+        "target_shape": eff_target_shape,
+        "target_affine": eff_target_affine,
+        "epi_shape": epi_shape,
+        "epi_affine": eff_epi_affine,
+        "inv_epi_affine": inv_epi_affine,
+        "oob_fraction": float(np.mean(oob_mask)) if oob_mask.size else 0.0,
+    }
+
+
+def apply_composed_sdc_volume(
+    vol_3d: Union[np.ndarray, nib.Nifti1Image],
+    composed_grid: dict,
+    interpolation: str = "linear",
+) -> np.ndarray:
+    """Sample a 3D EPI volume in a single pullback step using coordinates from ``compose_sdc_transform``."""
+    arr = np.asanyarray(vol_3d.dataobj if isinstance(vol_3d, nib.Nifti1Image) else vol_3d, dtype=np.float32)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected 3D EPI volume, got shape {arr.shape}")
+    expected_epi = tuple(composed_grid["epi_shape"])
+    if tuple(arr.shape) != expected_epi:
+        raise ValueError(f"EPI volume shape {arr.shape} does not match composed_grid epi_shape {expected_epi}.")
+    order = _interpolation_order(interpolation)
+    target_shape = tuple(composed_grid["target_shape"])
+    return (
+        map_coordinates(
+            arr,
+            composed_grid["v_vol"],
+            order=order,
+            mode="constant",
+            cval=0.0,
+            prefilter=(order > 1),
+        )
+        .reshape(target_shape)
+        .astype(np.float32)
+    )
+
+
 def resample_4d_bold(
     bold_4d: nib.Nifti1Image,
     composed_map: DiffeomorphicMap,
@@ -396,11 +630,16 @@ def resample_4d_bold(
     target_affine: np.ndarray,
     interpolation: str = "linear",
     max_memory_gb: float = 2.5,
+    motion_transforms: Optional[Sequence[Union[AffineMap, np.ndarray]]] = None,
+    sdc_displacement: Optional[np.ndarray] = None,
 ) -> nib.Nifti1Image:
     """Resample 4D functional series into the target CC200 grid using the composed mapping.
 
     Performs volume-by-volume resampling across time to preserve temporal fidelity,
     prevent intermediate interpolation blur, and guarantee execution below the 2.5 GB RAM ceiling.
+    When ``motion_transforms`` is supplied, composes each volume's rigid motion matrix with
+    ``composed_map`` (EPI-to-T1w + T1w-to-MNI affine + SyN) so STC-corrected unresampled BOLD
+    is spatially resampled in a single interpolation step.
 
     Parameters
     ----------
@@ -416,6 +655,14 @@ def resample_4d_bold(
         Interpolation type: 'linear' for continuous functional data.
     max_memory_gb : float
         Maximum allowed resident memory in GB (default: 2.5 GB).
+    motion_transforms : Sequence[AffineMap | np.ndarray], optional
+        Optional length-T sequence of per-volume rigid motion transforms estimated prior to
+        resampling; when provided, per-volume motion + coregistration + MNI normalization are
+        applied in a single spatial interpolation step.
+    sdc_displacement : np.ndarray, optional
+        Optional 4D voxel-displacement field of shape (X, Y, Z, 3) mapping undistorted EPI voxels
+        to distorted reference EPI voxels. When provided, SDC unwarping is composed with
+        motion + coregistration + MNI SyN in the same single spatial interpolation step.
 
     Returns
     -------
@@ -429,31 +676,80 @@ def resample_4d_bold(
     t_vol = bold_data.shape[3]
     if t_vol < 50:
         raise ValueError(f"Insufficient BOLD timepoints: {t_vol} (minimum 50 required)")
+    if motion_transforms is not None and len(motion_transforms) != t_vol:
+        raise ValueError(
+            f"motion_transforms length ({len(motion_transforms)}) must match BOLD timepoints ({t_vol})."
+        )
 
     # Preallocate output 4D array in float32
     resampled_4d = np.zeros((*target_shape, t_vol), dtype=np.float32)
 
-    for t in range(t_vol):
-        vol_3d = bold_data[..., t]
-        warped_vol = composed_map.transform(
-            vol_3d,
-            interpolation=interpolation,
-            out_shape=target_shape,
-            out_grid2world=target_affine,
+    if sdc_displacement is not None:
+        base_grid = compose_sdc_transform(
+            composed_map=composed_map,
+            sdc_displacement=sdc_displacement,
+            epi_affine=np.asarray(bold_4d.affine, dtype=np.float64),
+            motion_transform=None,
+            target_shape=target_shape,
+            target_affine=target_affine,
         )
-        resampled_4d[..., t] = warped_vol
+        inv_epi = base_grid["inv_epi_affine"]
+        epi_aff = base_grid["epi_affine"]
+        v_dist_ref = base_grid["v_dist_ref"]
 
-        # Periodically monitor memory headroom
-        if (t + 1) % 25 == 0 or t == t_vol - 1:
-            current_mem = check_process_memory_gb()
-            if current_mem > max_memory_gb:
-                gc.collect()
+        for t in range(t_vol):
+            vol_3d = bold_data[..., t]
+            if motion_transforms is not None:
+                rt = motion_transforms[t]
+                m_aff = np.asarray(rt.affine if hasattr(rt, "affine") else rt, dtype=np.float64)
+                m_vox = inv_epi @ m_aff @ epi_aff
+                v_vol = m_vox[:3, :3] @ v_dist_ref + m_vox[:3, 3:4]
+            else:
+                v_vol = v_dist_ref
+            vol_grid = {
+                "v_vol": v_vol,
+                "target_shape": base_grid["target_shape"],
+                "epi_shape": base_grid["epi_shape"],
+            }
+            resampled_4d[..., t] = apply_composed_sdc_volume(vol_3d, vol_grid, interpolation=interpolation)
+
+            if (t + 1) % 25 == 0 or t == t_vol - 1:
                 current_mem = check_process_memory_gb()
                 if current_mem > max_memory_gb:
-                    raise MemoryError(
-                        f"Memory limit exceeded during 4D resampling at volume {t}/{t_vol}: "
-                        f"{current_mem:.2f} GB > {max_memory_gb:.2f} GB"
-                    )
+                    gc.collect()
+                    current_mem = check_process_memory_gb()
+                    if current_mem > max_memory_gb:
+                        raise MemoryError(
+                            f"Memory limit exceeded during 4D resampling at volume {t}/{t_vol}: "
+                            f"{current_mem:.2f} GB > {max_memory_gb:.2f} GB"
+                        )
+    else:
+        for t in range(t_vol):
+            vol_3d = bold_data[..., t]
+            active_map = (
+                compose_volume_transform(composed_map, motion_transforms[t])
+                if motion_transforms is not None
+                else composed_map
+            )
+            warped_vol = active_map.transform(
+                vol_3d,
+                interpolation=interpolation,
+                out_shape=target_shape,
+                out_grid2world=target_affine,
+            )
+            resampled_4d[..., t] = warped_vol
+
+            # Periodically monitor memory headroom
+            if (t + 1) % 25 == 0 or t == t_vol - 1:
+                current_mem = check_process_memory_gb()
+                if current_mem > max_memory_gb:
+                    gc.collect()
+                    current_mem = check_process_memory_gb()
+                    if current_mem > max_memory_gb:
+                        raise MemoryError(
+                            f"Memory limit exceeded during 4D resampling at volume {t}/{t_vol}: "
+                            f"{current_mem:.2f} GB > {max_memory_gb:.2f} GB"
+                        )
 
     out_header = bold_4d.header.copy()
     out_header.set_data_shape(resampled_4d.shape)

@@ -40,9 +40,24 @@ RAW RESTING-STATE fMRI SCAN (BIDS format: *_bold.nii.gz + *.json)
                            ↓
              RAW DATA & METADATA VALIDATION
                            ↓
+      3D RIGID MOTION PARAMETER ESTIMATION (RAW BOLD)
+  - Estimates 6-DOF rigid transforms & Power FD directly on raw uncorrected BOLD
+                           ↓
+        METADATA-DRIVEN SLICE-TIMING CORRECTION
+  - BIDS RepetitionTime, SliceTiming, SliceEncodingDirection (i/j/k, +/-)
+    or NIfTI header dim_info slice_dim (skips safely if axis unknown)
+  - Odd-point-reflected SciPy C2 Cubic Spline (extrapolate=False) to TR/2 (StartTime provenance)
+                           ↓
+      B0 SUSCEPTIBILITY DISTORTION CORRECTION (DEC-SDC-02)
+  - Strict BIDS association (B0FieldSource/B0FieldIdentifier > IntendedFor)
+  - PE direction (i/i-/j/j-/k/k-), TotalReadoutTime validation, odd-slice TOPUP config
+  - Honest FSL tool gating (SKIPPED_TOOL_UNAVAILABLE when topup/prelude/fugue absent)
+  - Calibrated direct fieldmap (Hz / rad/s), Jacobian folding check (J > 0)
+                           ↓
              STANDARDIZED fMRI PREPROCESSING
-  - Motion Correction & Friston 24-parameter matrix
-  - Non-linear MNI152 Standard Space Normalization
+  - Motion Transform (+ Optional SDC) Application & Single-Step Composed Pullback (Motion + SDC + Coreg + SyN)
+  - Non-linear MNI152 Standard Space Normalization (CC200 Target Grid)
+  - Friston 24-parameter matrix
   - Linear & Quadratic Detrending
   - 5 aCompCor Confound Regressors (CSF/WM masks)
   - 0.01 - 0.10 Hz Temporal Bandpass Filtering
@@ -159,11 +174,11 @@ Run the automated test suite with the HMAC integrity key:
 NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ```
 
-**Test Suite Metrics (Measured November 2026):**
-- **Collected:** 343 tests
-- **Passed:** 336 passed
+**Test Suite Metrics (Measured November 2026, Step 5):**
+- **Collected:** 465 tests
+- **Passed:** 458 passed
 - **Skipped:** 7 skipped
-- **Statement Coverage:** 80% across `src/` (`pytest --cov=src`)
+- **Statement Coverage:** 82% across `src/` (`pytest --cov=src`)
 
 **Running the model-dependent tests:**
 - **2 skipped model tests** (`test_container_require_model_inference_fails_closed_without_mount`, etc.) require setting `NEUROADHD_MODEL_DIR` pointing to the trusted frozen model directory (e.g. `NeuroADHD_ModelBenchmark/results/final_locked`).
@@ -183,6 +198,8 @@ NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ## 8. Project Documentation Sitemap
 
 Detailed documentation is available in the `docs/` folder:
+- [STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md](docs/STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md): Architecture, BIDS discovery (`B0FieldSource`/`B0FieldIdentifier` > `IntendedFor`), PE/readout validation, odd-slice TOPUP config, honest fallback status matrix (`SKIPPED_TOOL_UNAVAILABLE` / `SKIPPED_UNSUPPORTED_METHOD`), Jacobian folding QC, single-step composed SDC TRE (`0.051 mm` max / `+11.48` sharpness gain), `64×64×37×240` 22-stage E2E results, and Step 3/4 regressions (`DEC-SDC-02`).
+- [STEP4_SLICE_TIMING_CORRECTION.md](docs/STEP4_SLICE_TIMING_CORRECTION.md): Architecture audit, 21-stage ordering (raw-BOLD motion estimation prior to STC + single-step composed resampling), header `slice_dim` axis resolution, 5-region boundary stability & window reporting, CC200 time-axis audit, composed transform landmark validation, and 37-slice × 240-vol E2E results (`DEC-STC-01`).
 - [UPLOAD_AND_INTAKE.md](docs/UPLOAD_AND_INTAKE.md): Supported scan uploads, BIDS session structure, report extraction, validation checks, and remaining authorization gates.
 - [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md): Executive summary, scope, and non-clinical disclaimer.
 - [EXISTING_PROJECT_ARCHITECTURE.md](docs/EXISTING_PROJECT_ARCHITECTURE.md): Audit of existing code, models, and endpoints.
@@ -201,6 +218,28 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 9. Changelog
+
+- **2026-11-11 (Step 5 Susceptibility Distortion Correction `DEC-SDC-02`)**:
+  - Implemented [`src/preprocessing/susceptibility_distortion.py`](src/preprocessing/susceptibility_distortion.py) supporting strict BIDS fieldmap association (`B0FieldSource`/`B0FieldIdentifier` priority over `IntendedFor`), voxel-axis PE validation (`i, i-, j, j-, k, k-`), strict `TotalReadoutTime` validation (`EffectiveEchoSpacing * (ReconMatrixPE - 1)` when `TotalReadoutTime` absent; never `TR`), calibrated direct fieldmaps (`Hz`, `rad/s`), Jacobian invertibility QC ($J > 0$), odd-slice-safe TOPUP configuration (`odd_dimension_safe_subsamp1`, `subsamp=[1,1,1,1]`), and honest `SKIPPED_TOOL_UNAVAILABLE` / `SKIPPED_UNSUPPORTED_METHOD` fallbacks when FSL `topup`/`prelude`/`fugue` are absent.
+  - Integrated Stage 4 SDC and Stage 13 single-step composed pullback resampling (`compose_sdc_transform`, `apply_composed_sdc_volume`, `resample_4d_bold(..., sdc_displacement=...)`, and `apply_motion_transforms(..., sdc_displacement=...)`) into the **22-stage** [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) pipeline, preserving bit-identical Stage 2 raw-BOLD motion estimation prior to Stage 3 STC and Stage 4 SDC.
+  - Updated [`scripts/serve_dashboard.py`](scripts/serve_dashboard.py), [`src/dashboard/service.py`](src/dashboard/service.py), [`frontend/index.html`](frontend/index.html), [`frontend/app.js`](frontend/app.js), and [`frontend/styles.css`](frontend/styles.css) for 22-stage status & per-subject SDC QC telemetry.
+  - Added [`tests/unit/test_susceptibility_distortion.py`](tests/unit/test_susceptibility_distortion.py) (`53/53 passed`), external synthetic validation benchmark [`scripts/validate_step5_sdc.py`](scripts/validate_step5_sdc.py) (`64×64×37×240` E2E: `r = +0.9821` / `-0.9808`, `max TRE = 0.0508 mm`, `+11.48` sharpness gain, Peak RSS `1.12 GB`), and [`docs/STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md`](docs/STEP5_SUSCEPTIBILITY_DISTORTION_CORRECTION.md); verified full suite (`465` collected: `458 passed`, `7 skipped`, `82%` `src/` coverage) plus Step 3 and Step 4.2 22-stage regressions.
+
+- **2026-11-11 (Step 4.2 Final Scientific Audit `DEC-STC-01`)**:
+  - Audited and resolved the `200 × 241` vs `(200, 240)` CC200 timepoint report: confirmed `roi_CC200.csv` intentionally prepends column 0 (`"node/volume"` = `1..200`), while [`extract_cc200_timeseries`](src/parcellation/extractor.py), [`compute_connectivity_vector`](src/features/connectivity.py), and [`DashboardDataService.get_timeseries`](src/dashboard/service.py) consume exact 240 aligned timepoints cleanly. Disambiguated `roi_timeseries_shape` vs `roi_csv_shape` in `gate5_roi_coverage` and added opt-in configured volume censoring (`resolve_censor_volumes`, `censor_volumes`) applied post Stage 17 continuous-TR temporal cleaning.
+  - Extended temporal boundary-risk provenance with `BoundaryRiskWindowSamplesPerSide = 5`, `BoundaryRiskWindowVolumes` (`[0..4, T-5..T-1]`), 5-region `BoundaryRegions` (`first_volume`, `first_five_volumes`, `interior_volumes`, `last_five_volumes`, `final_volume`), `BoundaryPaddingStrategy = "odd_point_reflection_4tr"`, `BoundaryExtrapolationDisabled = true`, `AutomaticBoundaryVolumeRemovalApplied = false`, and positive/negative shift regression coverage preserving all `T` volumes and `+reference_time` `StartTime`.
+  - Independently validated composed spatial transforms ([`compose_transformations`](src/preprocessing/registration.py), [`compose_volume_transform`](src/preprocessing/registration.py), [`resample_4d_bold`](src/preprocessing/registration.py)) across 5 asymmetric 3D landmarks (`mean 0.103 mm`, `max 0.198 mm` / `0.079 vox` forward, swapped-order errors `2.67–2.89 mm`, singular-matrix fail-closed guards); updated [`docs/STEP4_SLICE_TIMING_CORRECTION.md`](docs/STEP4_SLICE_TIMING_CORRECTION.md) and verified `412` tests (`405 passed`, `7 skipped`, `82%` `src/` coverage) plus `37×240` E2E (`r = +0.9791` / `-0.9800`).
+
+- **2026-11-11 (Step 4.1 Slice-Timing Workflow, Header Axis & Boundary Corrections `DEC-STC-01`)**:
+  - Decoupled motion estimation from resampling (`estimate_motion_parameters`, `apply_motion_transforms`, `compose_volume_transform`) and updated [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) and the dashboard/UI to **21 stages**: Stage 2 estimates motion strictly on raw uncorrected BOLD prior to Stage 3 STC, and Stage 12 composes motion + coregistration + MNI affine + SyN in a single spatial pullback.
+  - Replaced universal `'k'` defaulting with NIfTI header `dim_info` `slice_dim` (`0/1/2` -> `i/j/k`, conflict fail-closed) and `SKIPPED_UNKNOWN_SLICE_AXIS` when both `SliceEncodingDirection` and `slice_dim` are absent.
+  - Replaced unpadded `extrapolate=True` boundary extrapolation with 4-TR odd point-reflection (`extrapolate=False`) plus 5-region (`first`, `first5`, `interior`, `last5`, `final`) validation and `BoundaryEdgeVolumesAtRisk=[0, T-1]` provenance.
+  - Added realistic `64x64x37x240` source-acquisition to canonical `(63, 75, 61)` MNI/CC200 E2E validation alongside canonical Step 3 validation; verified full suite at 405 collected tests (398 passed, 7 skipped; 82% statement coverage across `src/`).
+
+- **2026-11-11 (Step 4 Metadata-Driven Slice-Timing Correction `DEC-STC-01`)**:
+  - Implemented [`src/preprocessing/slice_timing.py`](src/preprocessing/slice_timing.py) supporting BIDS `RepetitionTime`, `SliceTiming`, and `SliceEncodingDirection` (`i, i-, j, j-, k, k-`), multiband sequences, simultaneous skip, non-periodic SciPy C² cubic spline interpolation, `+TR/2` temporal-origin provenance, double-STC prevention, and immutable BIDS derivative output.
+  - Initially integrated Stage 2 slice-timing correction prior to motion realignment in [`scripts/run_poc_v2.py`](scripts/run_poc_v2.py) (subsequently refined to Stage 2 raw motion estimation -> Stage 3 STC in the 21-stage Step 4.1 order).
+  - Added external synthetic ground-truth benchmark [`scripts/validate_step4_slice_timing.py`](scripts/validate_step4_slice_timing.py), dashboard UI/API telemetry, unit/negative test suite [`tests/unit/test_slice_timing.py`](tests/unit/test_slice_timing.py), and [`docs/STEP4_SLICE_TIMING_CORRECTION.md`](docs/STEP4_SLICE_TIMING_CORRECTION.md).
 
 - **2026-11-10 (Pipeline Clean-up & Documentation Audit)**:
   - Added automated stale `RUNNING` cohort detection and atomic recovery to `TERMINATED` state in `scripts/serve_dashboard.py`.

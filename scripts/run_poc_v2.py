@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """NeuroADHD RawMRI PoC V2 Single-Subject Preprocessing Pipeline Runner.
 
-Executes the complete 19-stage preprocessing pipeline on synthetic BIDS datasets.
+Executes the complete 22-stage preprocessing pipeline on synthetic BIDS datasets.
 Real participant processing is disabled by default to uphold data safety restrictions.
 
 Pipeline Stages:
-1.  BIDS Input & Sidecar Metadata Validation (TR, TaskName)
-2.  3D Rigid Motion Realignment (DIPY) -> Motion Parameters & Power FD
-3.  Functional Reference Generation (Temporal Mean & Functional Brain Mask)
-4.  Anatomical Brain Extraction (Median Otsu with Hole Filling)
-5.  Log-Polynomial Bias-Field Correction
-6.  Tissue Segmentation (GMM into CSF, GM, WM Probabilities)
-7.  Morphological Tissue Mask Erosion & Quality Verification (Mandatory T1w Reference)
-8.  EPI-to-T1w 3D Rigid Coregistration
-9.  T1w-to-MNI SyN Nonlinear Normalization
-10. Composed Single-Step Pullback Resampling into CC200 Grid (Preserving is_inverse=True)
-11. Tissue Mask Standard Grid Resampling (Nearest-Neighbor)
-12. aCompCor Physiological Noise Extraction (5 Components)
-13. Friston-24 Motion Regressor Expansion
-14. Confound Matrix Assembly & Collinearity Condition Check
-15. Simultaneous Nuisance Regression & Butterworth Bandpass (0.01 - 0.10 Hz)
-16. CC200 ROI Time Series Extraction (200 Parcels, resampling_target=None)
-17. Pairwise Fisher-z Connectivity Vector Calculation (19,900 Edges)
-18. Quality Control Visual Overlay Generation (4 Orthogonal Multi-Planar Overlays)
-19. Schema-Compliant Provenance JSON Generation
+1.  BIDS Input & Sidecar Metadata Validation (TR, TaskName, Raw BOLD Load)
+2.  3D Rigid Motion Parameter Estimation on Raw Uncorrected BOLD (DIPY) -> Transforms & Power FD
+3.  Metadata-Driven Slice-Timing Correction (DEC-STC-01; Original Slice Geometry, Pre-Resampling)
+4.  B0 Susceptibility Distortion Correction (DEC-SDC-02; Fieldmap Discovery, Validation & Estimation)
+5.  Motion Transform (+ Optional SDC) Application to STC BOLD -> Native Reference Series
+6.  Functional Reference Generation (Temporal Mean EPI & Functional Brain Mask)
+7.  Anatomical Brain Extraction (Median Otsu with Hole Filling)
+8.  Log-Polynomial Bias-Field Correction
+9.  Tissue Segmentation (GMM into CSF, GM, WM Probabilities)
+10. Morphological Tissue Mask Erosion & Quality Verification (Mandatory T1w Reference)
+11. EPI-to-T1w 3D Rigid Coregistration
+12. T1w-to-MNI SyN Nonlinear Normalization
+13. Composed Single-Step Pullback Resampling of STC BOLD (Motion + SDC + Coreg + SyN into CC200 Grid)
+14. Tissue Mask Standard Grid Resampling (Nearest-Neighbor)
+15. aCompCor Physiological Noise Extraction (5 Components)
+16. Friston-24 Motion Regressor Expansion
+17. Confound Matrix Assembly & Collinearity Condition Check
+18. Simultaneous Nuisance Regression & Butterworth Bandpass (0.01 - 0.10 Hz)
+19. CC200 ROI Time Series Extraction (200 Parcels, resampling_target=None)
+20. Pairwise Fisher-z Connectivity Vector Calculation (19,900 Edges)
+21. Quality Control Visual Overlay Generation (4 Orthogonal Multi-Planar Overlays)
+22. Schema-Compliant Provenance JSON Generation
 """
 from __future__ import annotations
 
@@ -40,12 +43,13 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 import nibabel as nib
 import numpy as np
 import pandas as pd
 from dipy.align.imaffine import AffineMap
+from scipy.ndimage import map_coordinates
 
 # Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -60,9 +64,14 @@ from src.parcellation.extractor import (
     CANONICAL_CC200_AFFINE,
     CANONICAL_CC200_SHAPE,
     extract_cc200_timeseries,
+    resolve_censor_volumes,
     verify_canonical_cc200_atlas,
 )
-from src.preprocessing.motion import build_friston_24_regressors, realign_4d_bold
+from src.preprocessing.motion import (
+    apply_motion_transforms,
+    build_friston_24_regressors,
+    estimate_motion_parameters,
+)
 from src.preprocessing.nuisance import (
     build_confound_matrix,
     clean_functional_bold,
@@ -89,6 +98,17 @@ from src.preprocessing.segmentation import (
     extract_anatomical_brain,
     segment_t1w_tissue,
     validate_tissue_masks,
+)
+from src.preprocessing.slice_timing import (
+    SLICE_ENCODING_DIRECTION_MAP,
+    correct_slice_timing_with_report,
+    write_slice_timing_derivative,
+)
+from src.preprocessing.susceptibility_distortion import (
+    evaluate_sdc_correction_qc,
+    field_hz_to_displacement,
+    generate_synthetic_distorted_epi,
+    run_susceptibility_distortion_correction,
 )
 from src.validation.authorization_gate import (
     AuthorizationBypassAttemptError,
@@ -140,12 +160,14 @@ def build_canonical_manifest_payload(
     Protects:
     - manifest_magic
     - subject_id
-    - all five input entries (bold_nii, bold_json, t1w_nii, mni_template, cc200_atlas)
+    - all five primary input entries (bold_nii, bold_json, t1w_nii, mni_template, cc200_atlas)
+      plus any registered optional auxiliary/fieldmap entries (e.g. fmap_*)
     - each entry's filename, resolved canonical path, and sha256 digest
     """
     required_entries = ["bold_nii", "bold_json", "t1w_nii", "mni_template", "cc200_atlas"]
+    extra_keys = sorted(k for k in files_entry.keys() if k not in required_entries)
     canonical_files: Dict[str, Dict[str, str]] = {}
-    for k in sorted(required_entries):
+    for k in sorted(required_entries) + extra_keys:
         entry = files_entry.get(k, {})
         raw_res = entry.get("resolved_path", "")
         res_path_str = str(Path(raw_res).resolve()) if raw_res else ""
@@ -208,6 +230,7 @@ def check_safety_guards(
     atlas_path: Optional[Union[str, Path]] = None,
     allow_real_scans: bool = False,
     manifest_path: Optional[Union[str, Path]] = None,
+    fmap_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Enforce strict safety restrictions preventing raw clinical participant processing.
 
@@ -439,6 +462,54 @@ def check_safety_guards(
             )
         verified_hashes[input_key] = actual_sha256
 
+    # Verify optional registered auxiliary/fieldmap manifest entries and check fmap directory hygiene
+    extra_manifest_keys = sorted(k for k in files_entry.keys() if k not in required_entries)
+    verified_fmap_resolved = set()
+    for fk in extra_manifest_keys:
+        entry = files_entry[fk]
+        raw_res = entry.get("resolved_path")
+        if not raw_res:
+            raise RuntimeError(f"SAFETY VIOLATION: Synthetic manifest entry '{fk}' missing 'resolved_path'.")
+        cand_p = Path(raw_res)
+        if cand_p.is_symlink():
+            raise RuntimeError(f"SAFETY VIOLATION: Symlink substitution detected at manifest fieldmap '{cand_p}'.")
+        p_str = str(cand_p).lower()
+        for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200", "adhd200"]:
+            if kw in p_str:
+                raise RuntimeError(f"SAFETY VIOLATION: Attempted to process real raw fieldmap data at '{cand_p}'.")
+        if not cand_p.is_file():
+            raise RuntimeError(f"SAFETY VIOLATION: Registered synthetic fieldmap '{cand_p}' not found on disk.")
+        cand_resolved = cand_p.resolve()
+        if cand_resolved.name != entry.get("filename"):
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Fieldmap '{fk}' filename '{cand_resolved.name}' does not match manifest filename '{entry.get('filename')}'."
+            )
+        actual_f_sha = compute_sha256(cand_resolved)
+        if actual_f_sha != entry.get("sha256"):
+            raise RuntimeError(
+                f"SAFETY VIOLATION: Input '{fk}' ({cand_resolved.name}) SHA-256 mismatch against synthetic manifest."
+            )
+        verified_hashes[fk] = actual_f_sha
+        verified_fmap_resolved.add(cand_resolved)
+
+    cand_fmap_dir = Path(fmap_dir) if fmap_dir is not None else ((bold_p.parent.parent / "fmap") if bold_p.parent.name == "func" else (bold_p.parent / "fmap"))
+    if cand_fmap_dir.is_symlink():
+        raise RuntimeError(f"SAFETY VIOLATION: Symlink substitution detected at fmap directory '{cand_fmap_dir}'.")
+    if cand_fmap_dir.is_dir():
+        for item in sorted(cand_fmap_dir.iterdir(), key=lambda p: p.name):
+            if item.is_symlink():
+                raise RuntimeError(f"SAFETY VIOLATION: Symlink substitution detected at '{item}'.")
+            item_lower = str(item).lower()
+            for kw in ["down/outputs/adhd200", "sub-2344857", "peking", "kki", "nyu", "abide", "adhd-200", "adhd200"]:
+                if kw in item_lower:
+                    raise RuntimeError(f"SAFETY VIOLATION: Blocked clinical path pattern detected in '{item}'.")
+            if fmap_dir is None and (extra_manifest_keys or found_manifest is not None):
+                low_name = item.name.lower()
+                if (low_name.endswith(".nii.gz") or low_name.endswith(".nii") or low_name.endswith(".json")) and item.resolve() not in verified_fmap_resolved:
+                    raise RuntimeError(
+                        f"SAFETY VIOLATION: Unauthenticated fieldmap file '{item.name}' in fmap directory is not registered in synthetic_manifest.json."
+                    )
+
     return {
         "status": "VERIFIED_SYNTHETIC",
         "manifest_path": str(found_manifest),
@@ -454,7 +525,16 @@ def generate_synthetic_phantom_session(
     t_vol: int = 60,
     seed: int = 42,
     canonical_atlas_path: Optional[Union[str, Path]] = None,
-) -> Dict[str, Path]:
+    *,
+    tr: float = 2.0,
+    include_slice_timing: bool = True,
+    slice_timing: Optional[Sequence[float]] = None,
+    slice_encoding_direction: str = "k",
+    phase_encoding_direction: Optional[str] = None,
+    total_readout_time: Optional[float] = None,
+    fieldmap_mode: Optional[str] = None,
+    b0_field_hz: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
     """Construct a clean, valid synthetic BIDS session with anatomical and functional data."""
     np.random.seed(seed)
     session_dir = work_dir / subject_id / session_id
@@ -481,22 +561,27 @@ def generate_synthetic_phantom_session(
         bold_data[..., t] = vol
 
     bold_nii_path = func_dir / f"{subject_id}_{session_id}_task-rest_bold.nii.gz"
-    nib.save(nib.Nifti1Image(bold_data, epi_affine), str(bold_nii_path))
+    slice_axis_dim, _ = SLICE_ENCODING_DIRECTION_MAP.get(slice_encoding_direction, (2, False))
+    bold_nii_img = nib.Nifti1Image(bold_data, epi_affine)
+    bold_nii_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
+    bold_nii_img.header.set_xyzt_units("mm", "sec")
+    bold_nii_img.header.set_dim_info(slice=slice_axis_dim)
+    nib.save(bold_nii_img, str(bold_nii_path))
 
     # BOLD Sidecar JSON
     sidecar_path = func_dir / f"{subject_id}_{session_id}_task-rest_bold.json"
-    sidecar_dict = {
-        "RepetitionTime": 2.0,
+    sidecar_dict: Dict[str, Any] = {
+        "RepetitionTime": float(tr),
         "TaskName": "rest",
         "FlipAngle": 75.0,
         "Manufacturer": "Synthetic",
     }
-    with open(sidecar_path, "w", encoding="utf-8") as f:
-        json.dump(sidecar_dict, f, indent=2)
 
     # 2. Anatomical T1w head volume with internal ventricles and deep WM core
+    # 1.6 mm isotropic spacing gives a 27.2 mm physical brain radius (17 * 1.6),
+    # matching the 27.0 mm phantom EPI/MNI brain (9 * 3.0) without unphysical border stretch.
     t1_shape = (40, 40, 40)
-    t1_affine = np.diag([2.0, 2.0, 2.0, 1.0])
+    t1_affine = np.diag([1.6, 1.6, 1.6, 1.0])
     tx, ty, tz = np.ogrid[: t1_shape[0], : t1_shape[1], : t1_shape[2]]
     tc = (20, 20, 20)
     tr_sq = (tx - tc[0]) ** 2 + (ty - tc[1]) ** 2 + (tz - tc[2]) ** 2
@@ -545,7 +630,11 @@ def generate_synthetic_phantom_session(
                 base_signal = (100.0 + np.sin(0.08 * t_arr + i * 0.05) * 10.0)[None, :]
                 noise = np.random.normal(0, 1.0, (n_vox, t_vol)).astype(np.float32)
                 bold_data[mask_i, :] = base_signal + noise
-        nib.save(nib.Nifti1Image(bold_data, target_affine), str(bold_nii_path))
+        canon_bold_img = nib.Nifti1Image(bold_data, target_affine)
+        canon_bold_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
+        canon_bold_img.header.set_xyzt_units("mm", "sec")
+        canon_bold_img.header.set_dim_info(slice=slice_axis_dim)
+        nib.save(canon_bold_img, str(bold_nii_path))
 
         # Regenerate T1w data matching canonical atlas space
         mx, my, mz = np.ogrid[: target_shape[0], : target_shape[1], : target_shape[2]]
@@ -595,7 +684,125 @@ def generate_synthetic_phantom_session(
         atlas_path = template_dir / "cc200_synthetic_atlas.nii.gz"
         nib.save(nib.Nifti1Image(atlas_data, target_affine), str(atlas_path))
 
-    # All 5 files registered in synthetic manifest with resolved paths and hashes
+    # Populate valid SliceTiming and SliceEncodingDirection matching final BOLD geometry
+    if include_slice_timing:
+        slice_axis, _ = SLICE_ENCODING_DIRECTION_MAP.get(slice_encoding_direction, (2, False))
+        n_slices_axis = int(bold_data.shape[slice_axis])
+        if slice_timing is not None:
+            timings = [round(float(x), 8) for x in slice_timing]
+        else:
+            order = list(range(0, n_slices_axis, 2)) + list(range(1, n_slices_axis, 2))
+            timings = [0.0] * n_slices_axis
+            for acq_step, sl_idx in enumerate(order):
+                timings[sl_idx] = round(float(acq_step * float(tr) / n_slices_axis), 8)
+        sidecar_dict["SliceTiming"] = timings
+        sidecar_dict["SliceEncodingDirection"] = slice_encoding_direction
+
+    with open(sidecar_path, "w", encoding="utf-8") as f:
+        json.dump(sidecar_dict, f, indent=2)
+
+    # Optional B0 fieldmap generation (forward-distorts synthetic BOLD strictly from physics)
+    generated_fmap_entries: Dict[str, Dict[str, Any]] = {}
+    created_fmap_dir: Optional[Path] = None
+    if fieldmap_mode is not None:
+        pe_code = phase_encoding_direction or "j"
+        trt_val = float(total_readout_time) if total_readout_time is not None else 0.05
+        active_epi_img = nib.load(str(bold_nii_path))
+        bold_undist = np.asanyarray(active_epi_img.dataobj, dtype=np.float32)
+        active_epi_affine = np.asarray(active_epi_img.affine, dtype=np.float64)
+        s_shape = bold_undist.shape[:3]
+
+        if b0_field_hz is not None:
+            b0_hz = np.asarray(b0_field_hz, dtype=np.float32)
+        else:
+            gx, gy, gz = np.indices(s_shape, dtype=np.float32)
+            # Smooth synthetic orbitofrontal-like off-resonance lobe in anterior-inferior quadrant (~28 Hz peak)
+            cx = s_shape[0] * 0.5
+            cy = s_shape[1] * 0.65
+            cz = s_shape[2] * 0.45
+            sx = max(2.5, s_shape[0] * 0.16)
+            sy = max(2.5, s_shape[1] * 0.16)
+            sz = max(2.0, s_shape[2] * 0.18)
+            b0_hz = (
+                28.0
+                * np.exp(
+                    -(((gx - cx) / sx) ** 2 + ((gy - cy) / sy) ** 2 + ((gz - cz) / sz) ** 2)
+                )
+            ).astype(np.float32)
+
+        bold_dist, _ = generate_synthetic_distorted_epi(
+            bold_undist,
+            b0_hz,
+            pe_direction=pe_code,
+            total_readout_time_s=trt_val,
+            affine=active_epi_affine,
+        )
+        dist_img = nib.Nifti1Image(bold_dist, active_epi_affine)
+        dist_img.header.set_zooms((3.0, 3.0, 3.0, float(tr)))
+        dist_img.header.set_xyzt_units("mm", "sec")
+        dist_img.header.set_dim_info(slice=slice_axis_dim)
+        nib.save(dist_img, str(bold_nii_path))
+
+        sidecar_dict["PhaseEncodingDirection"] = pe_code
+        sidecar_dict["TotalReadoutTime"] = float(trt_val)
+        with open(sidecar_path, "w", encoding="utf-8") as f:
+            json.dump(sidecar_dict, f, indent=2)
+
+        created_fmap_dir = session_dir / "fmap"
+        created_fmap_dir.mkdir(parents=True, exist_ok=True)
+        intended_rel = f"{session_id}/func/{bold_nii_path.name}"
+
+        if fieldmap_mode == "pepolar":
+            rev_pe = pe_code[:-1] if pe_code.endswith("-") else f"{pe_code}-"
+            ref_3d = np.mean(bold_undist, axis=3)
+            se_fwd, _ = generate_synthetic_distorted_epi(
+                ref_3d, b0_hz, pe_direction=pe_code, total_readout_time_s=trt_val, affine=active_epi_affine
+            )
+            se_rev, _ = generate_synthetic_distorted_epi(
+                ref_3d, b0_hz, pe_direction=rev_pe, total_readout_time_s=trt_val, affine=active_epi_affine
+            )
+            for tag, pe_item, vol_item in (("fwd", pe_code, se_fwd), ("rev", rev_pe, se_rev)):
+                fn_nii = created_fmap_dir / f"{subject_id}_{session_id}_dir-{tag}_epi.nii.gz"
+                fn_json = created_fmap_dir / f"{subject_id}_{session_id}_dir-{tag}_epi.json"
+                nib.save(nib.Nifti1Image(vol_item.astype(np.float32), active_epi_affine), str(fn_nii))
+                fn_json.write_text(
+                    json.dumps(
+                        {
+                            "PhaseEncodingDirection": pe_item,
+                            "TotalReadoutTime": float(trt_val),
+                            "IntendedFor": [intended_rel],
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+        elif fieldmap_mode in ("direct_hz", "direct_rad_s"):
+            fn_nii = created_fmap_dir / f"{subject_id}_{session_id}_fieldmap.nii.gz"
+            fn_json = created_fmap_dir / f"{subject_id}_{session_id}_fieldmap.json"
+            fmap_vals = b0_hz if fieldmap_mode == "direct_hz" else (b0_hz * np.float32(2.0 * np.pi))
+            nib.save(nib.Nifti1Image(fmap_vals.astype(np.float32), active_epi_affine), str(fn_nii))
+            fn_json.write_text(
+                json.dumps(
+                    {
+                        "Units": "Hz" if fieldmap_mode == "direct_hz" else "rad/s",
+                        "IntendedFor": [intended_rel],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        else:
+            raise ValueError(f"Unsupported fieldmap_mode '{fieldmap_mode}' in synthetic session generator.")
+
+        for idx, item in enumerate(sorted(created_fmap_dir.iterdir(), key=lambda p: p.name)):
+            generated_fmap_entries[f"fmap_{idx:02d}"] = {
+                "filename": item.name,
+                "rel_path": str(item.relative_to(session_dir)),
+                "resolved_path": str(item.resolve()),
+                "sha256": compute_sha256(item),
+            }
+
+    # All 5 files (+ optional generated fieldmap files) registered in synthetic manifest
     files_dict = {
         "bold_nii": {
             "filename": bold_nii_path.name,
@@ -628,6 +835,7 @@ def generate_synthetic_phantom_session(
             "sha256": compute_sha256(atlas_path),
         },
     }
+    files_dict.update(generated_fmap_entries)
 
     integrity_token = compute_manifest_hmac(
         manifest_magic="NEUROADHD_SYNTHETIC_DATASET_V2",
@@ -651,7 +859,7 @@ def generate_synthetic_phantom_session(
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2)
 
-    return {
+    result_paths: Dict[str, Any] = {
         "bold_nii": bold_nii_path,
         "bold_json": sidecar_path,
         "t1w_nii": t1_nii_path,
@@ -659,6 +867,9 @@ def generate_synthetic_phantom_session(
         "cc200_atlas": atlas_path,
         "synthetic_manifest": manifest_path,
     }
+    if created_fmap_dir is not None:
+        result_paths["fmap_dir"] = created_fmap_dir
+    return result_paths
 
 
 def run_poc_v2_pipeline(
@@ -677,8 +888,18 @@ def run_poc_v2_pipeline(
     enforce_container_memory: bool = False,
     model_dir: Optional[Union[str, Path]] = None,
     require_model_inference: bool = False,
+    slice_timing_reference_time: Optional[float] = None,
+    slice_timing_interpolation: Optional[str] = None,
+    allow_missing_slice_timing: bool = True,
+    censor_volumes: Optional[Sequence[int]] = None,
+    sdc_method: str = "auto",
+    strict_sdc: bool = False,
+    allow_incomplete_sdc_metadata: bool = True,
+    topup_executable: Optional[Union[str, Path]] = None,
+    topup_runner: Optional[Callable[[list], Any]] = None,
+    fmap_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
-    """Execute the complete 19-stage NeuroADHD PoC V2 preprocessing pipeline."""
+    """Execute the complete 22-stage NeuroADHD PoC V2 preprocessing pipeline."""
     bold_path = Path(bold_path)
     bold_json_path = Path(bold_json_path)
     t1w_path = Path(t1w_path)
@@ -711,6 +932,7 @@ def run_poc_v2_pipeline(
         atlas_path=atlas_path,
         allow_real_scans=allow_real_scans,
         manifest_path=manifest_path,
+        fmap_dir=fmap_dir,
     )
 
     # Downstream ML Model verification (fail-closed early check)
@@ -753,7 +975,7 @@ def run_poc_v2_pipeline(
         # Stage 1: BIDS Input & Sidecar Metadata Validation
         # -------------------------------------------------------------
         current_stage = "Stage 1: BIDS Input Validation"
-        print(f"\n[Stage 1/19] Validating BIDS metadata from {bold_json_path.name}...")
+        print(f"\n[Stage 1/22] Validating BIDS metadata from {bold_json_path.name}...")
         validator = BIDSInputValidator()
         bids_meta = validator.validate_sidecar_json(bold_json_path)
         tr = bids_meta["repetition_time"]
@@ -788,57 +1010,251 @@ def run_poc_v2_pipeline(
         t_vol = bold_img.shape[3] if bold_img.ndim == 4 else 0
         if t_vol < 50:
             raise ValueError(f"Insufficient BOLD timepoints: {t_vol} (minimum 50 required)")
+        censored_sorted, kept_volume_indices = resolve_censor_volumes(
+            censor_volumes, t_vol, min_retained=50
+        )
 
         epi_shape = bold_img.shape[:3]
 
         # -------------------------------------------------------------
-        # Stage 2: 3D Rigid Motion Realignment (DIPY) -> Motion + FD
+        # Stage 2: 3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)
         # -------------------------------------------------------------
-        current_stage = "Stage 2: Motion Realignment"
-        print(f"\n[Stage 2/19] Realigning 4D BOLD series ({t_vol} volumes)...")
-        realigned_bold, motion_params, fd_vector = realign_4d_bold(bold_img)
+        current_stage = "Stage 2: Motion Parameter Estimation"
+        print(
+            f"\n[Stage 2/22] Estimating 3D rigid motion parameters on raw uncorrected BOLD ({t_vol} volumes)..."
+        )
+        bold_input_sha256 = compute_sha256(bold_path)
+        bold_json_input_sha256 = compute_sha256(bold_json_path)
+        rigid_motion_transforms, motion_params, fd_vector = estimate_motion_parameters(bold_img)
         mean_fd = float(np.mean(fd_vector))
         max_fd = float(np.max(fd_vector))
         scrubbed = int(np.count_nonzero(fd_vector > 0.5))
-        print(f"  -> Mean FD: {mean_fd:.4f} mm | Max FD: {max_fd:.4f} mm | Scrubbed (>0.5mm): {scrubbed} volumes")
+        print(
+            f"  -> Estimated from raw BOLD (pre-STC/SDC): Mean FD: {mean_fd:.4f} mm | "
+            f"Max FD: {max_fd:.4f} mm | Scrubbed (>0.5mm): {scrubbed} volumes"
+        )
 
         # -------------------------------------------------------------
-        # Stage 3: Functional Reference Generation
+        # Stage 3: Metadata-Driven Slice-Timing Correction (DEC-STC-01)
         # -------------------------------------------------------------
-        current_stage = "Stage 3: Functional Reference"
-        print("\n[Stage 3/19] Generating 3D functional reference image...")
+        current_stage = "Stage 3: Slice-Timing Correction"
+        print(
+            "\n[Stage 3/22] Executing metadata-driven slice-timing correction on original slice geometry..."
+        )
+        with open(bold_json_path, "r", encoding="utf-8") as bj_f:
+            raw_bold_sidecar = json.load(bj_f)
+
+        deriv_dir = sub_out_dir / "derivatives"
+        has_slice_timing = raw_bold_sidecar.get("SliceTiming") is not None
+        if has_slice_timing or not allow_missing_slice_timing:
+            stc_bold_img, stc_report = write_slice_timing_derivative(
+                bold_path=bold_path,
+                bold_json_path=bold_json_path,
+                derivative_dir=deriv_dir,
+                reference_time=slice_timing_reference_time,
+                interpolation_method=slice_timing_interpolation,
+                allow_missing_timing=False,
+                expected_tr=tr,
+            )
+            derivative_nii_rel = f"derivatives/{stc_report['output_derivative_nii']}"
+            derivative_json_rel = f"derivatives/{stc_report['output_derivative_json']}"
+            if stc_report["status"] == "APPLIED":
+                print(
+                    f"  -> STC APPLIED: axis={stc_report['slice_axis']} "
+                    f"dir={stc_report['slice_encoding_direction']} | "
+                    f"ref={stc_report['reference_time']:.3f}s (+half-TR temporal origin shift) | "
+                    f"method={stc_report['interpolation_method']} | "
+                    f"slices={stc_report['num_corrected_slices']}/{stc_report['num_slices']}"
+                )
+            else:
+                print(
+                    f"  -> STC {stc_report['status']}: {stc_report.get('reason') or 'No relative shift needed'}"
+                )
+        else:
+            _, stc_report = correct_slice_timing_with_report(
+                bold_image=bold_img,
+                bold_metadata=raw_bold_sidecar,
+                reference_time=slice_timing_reference_time,
+                interpolation_method=slice_timing_interpolation,
+                allow_missing_timing=True,
+                expected_tr=tr,
+            )
+            stc_bold_img = bold_img
+            deriv_dir.mkdir(parents=True, exist_ok=True)
+            report_fname = f"{subject_id}_{session_id}_task-rest_desc-stc_report.json"
+            report_path_stc = deriv_dir / report_fname
+            stc_skip_record = {
+                "input_bold_filename": bold_path.name,
+                "input_json_filename": bold_json_path.name,
+                "input_bold_sha256": bold_input_sha256,
+                "input_json_sha256": bold_json_input_sha256,
+                "policy": "skip_when_missing_never_invent_timings",
+                **stc_report,
+            }
+            with open(report_path_stc, "w", encoding="utf-8") as sf_out:
+                json.dump(stc_skip_record, sf_out, indent=2)
+            stc_report = stc_skip_record
+            derivative_nii_rel = None
+            derivative_json_rel = f"derivatives/{report_fname}"
+            print(
+                "  -> WARNING: Missing 'SliceTiming' in BIDS sidecar; "
+                "refusing to invent timings from TR. STC SKIPPED and original BOLD preserved."
+            )
+
+        stc_provenance_summary: Dict[str, Any] = {
+            "status": stc_report["status"],
+            "corrected": bool(stc_report.get("corrected", False)),
+            "tr_seconds": float(stc_report["tr"]),
+            "reference_time_seconds": stc_report.get("reference_time"),
+            "temporal_origin_shift_seconds": float(stc_report.get("temporal_origin_shift_seconds", 0.0)),
+            "slice_axis": int(stc_report["slice_axis"]) if stc_report.get("slice_axis") is not None else None,
+            "header_slice_dim": stc_report.get("header_slice_dim"),
+            "slice_axis_source": stc_report.get("slice_axis_source"),
+            "slice_encoding_direction": stc_report["slice_encoding_direction"],
+            "slice_encoding_direction_assumed": bool(stc_report.get("slice_encoding_direction_assumed", False)),
+            "slice_encoding_direction_reversed": (
+                bool(stc_report["slice_encoding_direction_reversed"])
+                if stc_report.get("slice_encoding_direction_reversed") is not None
+                else None
+            ),
+            "slice_order_interpretation": stc_report.get("slice_order_interpretation"),
+            "num_slices": int(stc_report["num_slices"]) if stc_report.get("num_slices") is not None else None,
+            "num_corrected_slices": int(stc_report.get("num_corrected_slices", 0)),
+            "interpolation_method": stc_report.get("interpolation_method"),
+            "boundary_handling": stc_report.get("boundary_handling"),
+            "boundary_padding_strategy": stc_report.get("boundary_padding_strategy"),
+            "boundary_pad_samples": stc_report.get("boundary_pad_samples"),
+            "boundary_extrapolation_disabled": stc_report.get("boundary_extrapolation_disabled"),
+            "boundary_edge_volumes_at_risk": stc_report.get("boundary_edge_volumes_at_risk"),
+            "boundary_risk_window_samples_per_side": stc_report.get("boundary_risk_window_samples_per_side"),
+            "boundary_risk_window_volumes": stc_report.get("boundary_risk_window_volumes"),
+            "boundary_regions": stc_report.get("boundary_regions"),
+            "automatic_boundary_volume_removal_applied": False,
+            "software": stc_report.get("software"),
+            "software_version": stc_report.get("software_version"),
+            "afni_3dtshift_available": bool(stc_report.get("afni_3dtshift_available", False)),
+            "input_bold_sha256": bold_input_sha256,
+            "input_json_sha256": bold_json_input_sha256,
+            "output_bold_sha256": stc_report.get("output_bold_sha256"),
+            "output_json_sha256": stc_report.get("output_json_sha256"),
+            "derivative_nii": derivative_nii_rel,
+            "derivative_json": derivative_json_rel,
+            "warnings": list(stc_report.get("warnings", [])),
+            "reason": stc_report.get("reason"),
+            "input_file_unmodified_verified": True,
+        }
+
+        # -------------------------------------------------------------
+        # Stage 4: B0 Susceptibility Distortion Correction (DEC-SDC-02)
+        # -------------------------------------------------------------
+        current_stage = "Stage 4: Susceptibility Distortion Correction"
+        print(
+            "\n[Stage 4/22] Auditing & estimating B0 susceptibility distortion correction (DEC-SDC-02)..."
+        )
+        sdc_res = run_susceptibility_distortion_correction(
+            bold_path=bold_path,
+            bold_json_path=bold_json_path,
+            bold_image=stc_bold_img,
+            fmap_dir=fmap_dir,
+            derivative_dir=deriv_dir,
+            subject_id=subject_id,
+            session_id=session_id,
+            requested_method=sdc_method,
+            strict_sdc=strict_sdc,
+            allow_incomplete_metadata=allow_incomplete_sdc_metadata,
+            topup_executable=topup_executable,
+            topup_runner=topup_runner,
+            work_dir=scratch_dir / "sdc_work",
+        )
+
+        # Verify byte-level immutability of input BOLD and JSON sidecar across Stages 2-4
+        if (
+            compute_sha256(bold_path) != bold_input_sha256
+            or compute_sha256(bold_json_path) != bold_json_input_sha256
+        ):
+            raise RuntimeError(
+                "Input integrity violation: raw BOLD or JSON sidecar was altered during Stage 2-4."
+            )
+
+        sdc_displacement_vox = (
+            sdc_res.displacement_vox
+            if (sdc_res.corrected and sdc_res.displacement_vox is not None)
+            else None
+        )
+        sdc_provenance_summary = sdc_res.to_provenance_dict()
+        if sdc_res.corrected and sdc_res.displacement_stats and sdc_res.jacobian_qc:
+            print(
+                f"  -> SDC {sdc_res.status}: method={sdc_res.method} | PE={sdc_res.bold_pe_direction} | "
+                f"max_disp={sdc_res.displacement_stats['max_abs_mm']:.3f} mm | "
+                f"min_J={sdc_res.jacobian_qc['min_jacobian']:.4f}"
+            )
+        else:
+            print(
+                f"  -> SDC {sdc_res.status}: {sdc_res.reason or 'No BIDS fieldmap applied'}"
+            )
+
+        # -------------------------------------------------------------
+        # Stage 5: Apply Estimated Motion (+ Optional SDC) Transforms to STC BOLD
+        # -------------------------------------------------------------
+        current_stage = "Stage 5: Motion Transform Application"
+        print(
+            f"\n[Stage 5/22] Applying pre-estimated rigid motion transforms"
+            f"{' + SDC unwarping' if sdc_displacement_vox is not None else ''} to STC BOLD ({t_vol} volumes)..."
+        )
+        if sdc_displacement_vox is not None:
+            realigned_bold = apply_motion_transforms(
+                stc_bold_img,
+                rigid_motion_transforms,
+                interpolation="linear",
+                sdc_displacement=sdc_displacement_vox,
+            )
+        else:
+            realigned_bold = apply_motion_transforms(
+                stc_bold_img,
+                rigid_motion_transforms,
+                interpolation="linear",
+            )
+        print("  -> Motion-aligned native BOLD constructed for functional reference.")
+
+        # -------------------------------------------------------------
+        # Stage 6: Functional Reference Generation
+        # -------------------------------------------------------------
+        current_stage = "Stage 6: Functional Reference"
+        print("\n[Stage 6/22] Generating 3D functional reference image...")
         mean_epi, epi_brain_mask = generate_functional_reference(realigned_bold)
         print(f"  -> Reference EPI shape: {mean_epi.shape}")
+        del realigned_bold
+        gc.collect()
 
         # -------------------------------------------------------------
-        # Stage 4: Anatomical Brain Extraction
+        # Stage 7: Anatomical Brain Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 4: Anatomical Brain Extraction"
-        print("\n[Stage 4/19] Extracting T1w anatomical brain with hole-filling...")
+        current_stage = "Stage 7: Anatomical Brain Extraction"
+        print("\n[Stage 7/22] Extracting T1w anatomical brain with hole-filling...")
         t1_brain, t1_brain_mask = extract_anatomical_brain(t1w_img, median_radius=2, numpass=2)
         print(f"  -> Extracted brain voxels: {int(np.count_nonzero(t1_brain_mask.dataobj))}")
 
         # -------------------------------------------------------------
-        # Stage 5: Log-Polynomial Bias-Field Correction
+        # Stage 8: Log-Polynomial Bias-Field Correction
         # -------------------------------------------------------------
-        current_stage = "Stage 5: Bias-Field Correction"
-        print("\n[Stage 5/19] Correcting anatomical bias field (order=2)...")
+        current_stage = "Stage 8: Bias-Field Correction"
+        print("\n[Stage 8/22] Correcting anatomical bias field (order=2)...")
         t1_corrected, bias_field = correct_bias_field(t1_brain, t1_brain_mask, order=2)
         print(f"  -> Bias field mean: {float(np.mean(bias_field.dataobj)):.3f}")
 
         # -------------------------------------------------------------
-        # Stage 6: Tissue Segmentation (CSF, GM, WM Probabilities)
+        # Stage 9: Tissue Segmentation (CSF, GM, WM Probabilities)
         # -------------------------------------------------------------
-        current_stage = "Stage 6: Tissue Segmentation"
-        print("\n[Stage 6/19] Segmenting T1w tissue into CSF, GM, WM...")
+        current_stage = "Stage 9: Tissue Segmentation"
+        print("\n[Stage 9/22] Segmenting T1w tissue into CSF, GM, WM...")
         prob_maps = segment_t1w_tissue(t1_corrected, t1_brain_mask, n_classes=3, method="gmm")
         print("  -> Probability maps: CSF, GM, WM computed successfully.")
 
         # -------------------------------------------------------------
-        # Stage 7: Morphological Mask Erosion & Geometry Verification
+        # Stage 10: Morphological Mask Erosion & Geometry Verification
         # -------------------------------------------------------------
-        current_stage = "Stage 7: Tissue Mask Erosion"
-        print("\n[Stage 7/19] Applying 0.96 thresholding & 1-voxel 3D erosion...")
+        current_stage = "Stage 10: Tissue Mask Erosion"
+        print("\n[Stage 10/22] Applying 0.96 thresholding & 1-voxel 3D erosion...")
         tissue_masks = create_eroded_tissue_masks(
             prob_maps,
             reference_t1w_img=t1_corrected,
@@ -850,28 +1266,68 @@ def run_poc_v2_pipeline(
         print(f"  -> Validated: {val_res['wm_voxel_count']} WM voxels, {val_res['csf_voxel_count']} CSF voxels, 0 overlap.")
 
         # -------------------------------------------------------------
-        # Stage 8: EPI-to-T1w Rigid Coregistration
+        # Stage 11: EPI-to-T1w Rigid Coregistration
         # -------------------------------------------------------------
-        current_stage = "Stage 8: Coregistration"
-        print("\n[Stage 8/19] Coregistering functional reference to anatomical brain (DIPY Rigid)...")
+        current_stage = "Stage 11: Coregistration"
+        print("\n[Stage 11/22] Coregistering functional reference to anatomical brain (DIPY Rigid)...")
         m_epi_to_t1w, _ = register_epi_to_t1w(mean_epi, t1_brain, level_iters=[10])
         print("  -> Coregistration rigid pullback matrix derived.")
 
+        if sdc_res.corrected and sdc_displacement_vox is not None and sdc_res.unwarped_mean_3d is not None:
+            epi_aff_64 = np.asarray(bold_img.affine, dtype=np.float64)
+            t1_arr = np.asanyarray(t1_brain.dataobj, dtype=np.float32)
+            xform_epi_to_t1_vox = (
+                np.linalg.inv(np.asarray(t1_brain.affine, dtype=np.float64))
+                @ np.linalg.inv(np.asarray(m_epi_to_t1w, dtype=np.float64))
+                @ epi_aff_64
+            )
+            gi_e, gj_e, gk_e = np.indices(epi_shape, dtype=np.float64)
+            h_e = np.vstack([gi_e.ravel(), gj_e.ravel(), gk_e.ravel(), np.ones(gi_e.size, dtype=np.float64)])
+            c_t1 = (xform_epi_to_t1_vox @ h_e)[:3]
+            t1_in_epi = map_coordinates(
+                t1_arr, c_t1, order=1, mode="constant", cval=0.0, prefilter=False
+            ).reshape(epi_shape).astype(np.float32)
+            dist_mean_3d = np.mean(np.asanyarray(stc_bold_img.dataobj, dtype=np.float32), axis=3)
+            sdc_res.correction_qc = evaluate_sdc_correction_qc(
+                dist_mean_3d,
+                sdc_res.unwarped_mean_3d,
+                t1_in_epi,
+            )
+            sdc_provenance_summary["correction_qc"] = sdc_res.correction_qc
+            qc_rel = sdc_res.derivative_files.get("report_json")
+            if qc_rel:
+                (sub_out_dir / qc_rel).write_text(
+                    json.dumps(sdc_provenance_summary, indent=2), encoding="utf-8"
+                )
+            if sdc_res.field_hz is not None and sdc_res.derivative_files.get("qc_png"):
+                from src.preprocessing.susceptibility_distortion import generate_sdc_qc_figure
+
+                generate_sdc_qc_figure(
+                    dist_mean_3d,
+                    sdc_res.unwarped_mean_3d,
+                    sdc_res.field_hz,
+                    sub_out_dir / sdc_res.derivative_files["qc_png"],
+                    reference_3d=t1_in_epi,
+                )
+
         # -------------------------------------------------------------
-        # Stage 9: T1w-to-MNI SyN Nonlinear Normalization
+        # Stage 12: T1w-to-MNI SyN Nonlinear Normalization
         # -------------------------------------------------------------
-        current_stage = "Stage 9: Nonlinear Normalization"
-        print("\n[Stage 9/19] Computing T1w-to-MNI SyN nonlinear diffeomorphic registration...")
+        current_stage = "Stage 12: Nonlinear Normalization"
+        print("\n[Stage 12/22] Computing T1w-to-MNI SyN nonlinear diffeomorphic registration...")
         m_t1w_to_mni, syn_map = register_t1w_to_mni(
             t1_brain, mni_img, affine_level_iters=[10], syn_level_iters=[5]
         )
         print("  -> Diffeomorphic SyN mapping computed.")
 
         # -------------------------------------------------------------
-        # Stage 10: Composed Pullback Resampling into CC200 Grid
+        # Stage 13: Composed Pullback Resampling into CC200 Grid
         # -------------------------------------------------------------
-        current_stage = "Stage 10: Composed 4D Resampling"
-        print("\n[Stage 10/19] Composing transformations and resampling 4D BOLD into CC200 grid...")
+        current_stage = "Stage 13: Composed 4D Resampling"
+        print(
+            f"\n[Stage 13/22] Composing motion{' + SDC' if sdc_displacement_vox is not None else ''} + "
+            "coregistration + normalization and resampling STC BOLD into CC200 grid (single spatial interpolation)..."
+        )
         target_shape = atlas_img.shape[:3]
         target_affine = atlas_img.affine
         epi_shape = bold_img.shape[:3]
@@ -887,21 +1343,34 @@ def run_poc_v2_pipeline(
             source_affine=epi_affine,
         )
 
-        resampled_bold = resample_4d_bold(
-            realigned_bold,
-            composed_map,
-            target_shape=target_shape,
-            target_affine=target_affine,
-            interpolation="linear",
-            max_memory_gb=max_memory_gb,
-        )
+        if sdc_displacement_vox is not None:
+            resampled_bold = resample_4d_bold(
+                stc_bold_img,
+                composed_map,
+                target_shape=target_shape,
+                target_affine=target_affine,
+                interpolation="linear",
+                max_memory_gb=max_memory_gb,
+                motion_transforms=rigid_motion_transforms,
+                sdc_displacement=sdc_displacement_vox,
+            )
+        else:
+            resampled_bold = resample_4d_bold(
+                stc_bold_img,
+                composed_map,
+                target_shape=target_shape,
+                target_affine=target_affine,
+                interpolation="linear",
+                max_memory_gb=max_memory_gb,
+                motion_transforms=rigid_motion_transforms,
+            )
         print(f"  -> Resampled BOLD shape: {resampled_bold.shape} [MATCHES CC200 TARGET]")
 
         # -------------------------------------------------------------
-        # Stage 11: Tissue Mask Standard Grid Resampling
+        # Stage 14: Tissue Mask Standard Grid Resampling
         # -------------------------------------------------------------
-        current_stage = "Stage 11: Tissue Mask Resampling"
-        print("\n[Stage 11/19] Resampling eroded WM/CSF masks into CC200 grid via SyN...")
+        current_stage = "Stage 14: Tissue Mask Resampling"
+        print("\n[Stage 14/22] Resampling eroded WM/CSF masks into CC200 grid via SyN...")
         wm_eroded_mni = resample_mask_to_target(
             tissue_masks["mask_wm_eroded"], syn_map, target_shape, target_affine
         )
@@ -912,28 +1381,28 @@ def run_poc_v2_pipeline(
               f"CSF={int(np.count_nonzero(csf_eroded_mni.dataobj))}")
 
         # -------------------------------------------------------------
-        # Stage 12: aCompCor Physiological Noise Extraction
+        # Stage 15: aCompCor Physiological Noise Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 12: aCompCor Extraction"
-        print("\n[Stage 12/19] Extracting 5 physiological aCompCor components...")
+        current_stage = "Stage 15: aCompCor Extraction"
+        print("\n[Stage 15/22] Extracting 5 physiological aCompCor components...")
         compcor_5 = extract_acompcor_components(
             resampled_bold, wm_eroded_mni, csf_eroded_mni, n_components=5
         )
         print(f"  -> aCompCor extracted: shape {compcor_5.shape}")
 
         # -------------------------------------------------------------
-        # Stage 13: Friston-24 Motion Regressor Expansion
+        # Stage 16: Friston-24 Motion Regressor Expansion
         # -------------------------------------------------------------
-        current_stage = "Stage 13: Friston-24 Expansion"
-        print("\n[Stage 13/19] Expanding 6 motion parameters to Friston-24...")
+        current_stage = "Stage 16: Friston-24 Expansion"
+        print("\n[Stage 16/22] Expanding 6 motion parameters to Friston-24...")
         friston_24 = build_friston_24_regressors(motion_params)
         print(f"  -> Friston-24 shape: {friston_24.shape}")
 
         # -------------------------------------------------------------
-        # Stage 14: Confound Matrix Assembly & Collinearity Check
+        # Stage 17: Confound Matrix Assembly & Collinearity Check
         # -------------------------------------------------------------
-        current_stage = "Stage 14: Confound Matrix Assembly"
-        print("\n[Stage 14/19] Assembling 31-column nuisance confound matrix...")
+        current_stage = "Stage 17: Confound Matrix Assembly"
+        print("\n[Stage 17/22] Assembling 31-column nuisance confound matrix...")
         confounds_df = build_confound_matrix(friston_24, compcor_5)
         # Compute condition number & check rank
         conf_vals = confounds_df.to_numpy()
@@ -942,36 +1411,44 @@ def run_poc_v2_pipeline(
         print(f"  -> Confound Matrix: {confounds_df.shape[1]} columns | Rank: {matrix_rank}/31 | Cond: {cond_num:.2f}")
 
         # -------------------------------------------------------------
-        # Stage 15: Simultaneous Nuisance Regression & Bandpass
+        # Stage 18: Simultaneous Nuisance Regression & Bandpass
         # -------------------------------------------------------------
-        current_stage = "Stage 15: Nuisance Regression"
-        print("\n[Stage 15/19] Executing simultaneous regression & Butterworth bandpass [0.01-0.10 Hz]...")
+        current_stage = "Stage 18: Nuisance Regression"
+        print("\n[Stage 18/22] Executing simultaneous regression & Butterworth bandpass [0.01-0.10 Hz]...")
         cleaned_bold = clean_functional_bold(
             resampled_bold, confounds_df, tr=tr, low_cutoff_hz=0.01, high_cutoff_hz=0.10
         )
         print(f"  -> Cleaned BOLD shape: {cleaned_bold.shape} (GSR=OFF, TissueMean=OFF)")
 
         # -------------------------------------------------------------
-        # Stage 16: CC200 ROI Time Series Extraction
+        # Stage 19: CC200 ROI Time Series Extraction
         # -------------------------------------------------------------
-        current_stage = "Stage 16: CC200 Parcellation"
-        print("\n[Stage 16/19] Extracting CC200 ROI time series across 200 parcels...")
-        roi_df, signals = extract_cc200_timeseries(cleaned_bold, atlas_img)
-        print(f"  -> Timeseries DataFrame: {roi_df.shape} (200 ROIs x {t_vol} timepoints + 1 label column)")
+        current_stage = "Stage 19: CC200 Parcellation"
+        print("\n[Stage 19/22] Extracting CC200 ROI time series across 200 parcels...")
+        roi_df, signals = extract_cc200_timeseries(
+            cleaned_bold,
+            atlas_img,
+            censor_volumes=censored_sorted if censor_volumes is not None else None,
+        )
+        t_retained = int(signals.shape[0])
+        print(
+            f"  -> Timeseries DataFrame: {roi_df.shape} (CSV: 200 ROIs x ['node/volume' + {t_retained} timepoints]; "
+            f"time-axis shape: (200, {t_retained}))"
+        )
 
         # -------------------------------------------------------------
-        # Stage 17: Pairwise Fisher-z Connectivity Vector Calculation
+        # Stage 20: Pairwise Fisher-z Connectivity Vector Calculation
         # -------------------------------------------------------------
-        current_stage = "Stage 17: Connectivity Features"
-        print("\n[Stage 17/19] Computing 19,900 Fisher-z connectivity features...")
+        current_stage = "Stage 20: Connectivity Features"
+        print("\n[Stage 20/22] Computing 19,900 Fisher-z connectivity features...")
         z_vector, edge_names = compute_connectivity_vector(signals)
         print(f"  -> Fisher-z edges: {len(z_vector)} | Finite: {np.all(np.isfinite(z_vector))} | Range: [{np.min(z_vector):.3f}, {np.max(z_vector):.3f}]")
 
         # -------------------------------------------------------------
-        # Stage 18: Quality Control Visual Overlay Generation
+        # Stage 21: Quality Control Visual Overlay Generation
         # -------------------------------------------------------------
-        current_stage = "Stage 18: QC Visual Overlays"
-        print("\n[Stage 18/19] Generating 4 orthogonal quality control overlays...")
+        current_stage = "Stage 21: QC Visual Overlays"
+        print("\n[Stage 21/22] Generating 4 orthogonal quality control overlays...")
 
         # 1. Coregistration QC Overlay
         t1_shape = t1_brain.shape[:3]
@@ -1075,10 +1552,10 @@ def run_poc_v2_pipeline(
             )
 
         # -------------------------------------------------------------
-        # Stage 19: Schema-Compliant Provenance JSON Generation
+        # Stage 22: Schema-Compliant Provenance JSON Generation
         # -------------------------------------------------------------
-        current_stage = "Stage 19: Provenance Reporting"
-        print("\n[Stage 19/19] Generating provenance metadata and validating schema...")
+        current_stage = "Stage 22: Provenance Reporting"
+        print("\n[Stage 22/22] Generating provenance metadata and validating schema...")
         runtime_sec = float(time.time() - start_time)
         peak_rss = check_process_memory_gb()
 
@@ -1152,6 +1629,13 @@ def run_poc_v2_pipeline(
                 "status": "PASSED" if gate5_passed else "FAILED",
                 "n_rois": int(n_rois),
                 "zero_variance_rois": int(constant_rois),
+                "n_timepoints_input": int(t_vol),
+                "n_timepoints_retained": int(signals.shape[0]),
+                "roi_timeseries_shape": [int(n_rois), int(signals.shape[0])],
+                "roi_csv_shape": [int(roi_df.shape[0]), int(roi_df.shape[1])],
+                "roi_label_column": "node/volume",
+                "volume_censoring_applied": bool(len(censored_sorted) > 0),
+                "censored_volumes": [int(v) for v in censored_sorted],
             },
             "gate6_feature_schema_conformance": {
                 "status": "PASSED" if gate6_passed else "FAILED",
@@ -1185,6 +1669,41 @@ def run_poc_v2_pipeline(
             "subject_id": subject_id,
             "site": "SYNTHETIC_BENCHMARK",
             "cohort_split": "synthetic",
+            "pipeline_stages_total": 22,
+            "preprocessing_order": [
+                "1. BIDS Input & Sidecar Metadata Validation",
+                "2. 3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)",
+                "3. Metadata-Driven Slice-Timing Correction (DEC-STC-01; Original Slice Geometry)",
+                "4. B0 Susceptibility Distortion Correction (DEC-SDC-02; Fieldmap Discovery & Estimation)",
+                "5. Motion Transform (+ Optional SDC) Application (Native Reference Generation)",
+                "6. Functional Reference Generation",
+                "7. Anatomical Brain Extraction",
+                "8. Log-Polynomial Bias-Field Correction",
+                "9. Tissue Segmentation (CSF, GM, WM)",
+                "10. Morphological Tissue Mask Erosion & Quality Verification",
+                "11. EPI-to-T1w 3D Rigid Coregistration",
+                "12. T1w-to-MNI SyN Nonlinear Normalization",
+                "13. Composed Single-Step Pullback Resampling (Motion + SDC + Coreg + MNI + SyN on STC BOLD)",
+                "14. Tissue Mask Standard Grid Resampling",
+                "15. aCompCor Physiological Noise Extraction (5 Components)",
+                "16. Friston-24 Motion Regressor Expansion",
+                "17. Confound Matrix Assembly & Collinearity Check",
+                "18. Simultaneous Nuisance Regression & Bandpass [0.01-0.10 Hz]",
+                "19. CC200 ROI Time Series Extraction (200 Parcels)",
+                "20. Pairwise Fisher-z Connectivity Vector (19,900 Edges)",
+                "21. Quality Control Visual Overlays (4 Views)",
+                "22. Schema-Compliant Provenance JSON Generation",
+            ],
+            "motion_estimation": {
+                "estimated_on_raw_uncorrected_bold": True,
+                "estimated_before_slice_timing": True,
+                "applied_after_slice_timing": True,
+                "single_step_composed_resampling_with_stc_bold": True,
+                "single_step_composed_resampling_with_sdc": bool(sdc_displacement_vox is not None),
+                "mean_fd_mm": round(mean_fd, 6),
+                "max_fd_mm": round(max_fd, 6),
+                "volumes_fd_gt_0p5mm": scrubbed,
+            },
             "software_versions": {
                 "dipy": str(dipy.__version__),
                 "nilearn": str(nilearn.__version__),
@@ -1207,6 +1726,8 @@ def run_poc_v2_pipeline(
                     "memory_peak_mib": cgroup_stats.get("memory_peak_mib"),
                 },
             },
+            "slice_timing_correction": stc_provenance_summary,
+            "susceptibility_distortion_correction": sdc_provenance_summary,
             "validation_gates": validation_gates,
             "output_artifacts": output_artifacts_dict,
             "output_checksums": output_checksums,
@@ -1318,6 +1839,9 @@ def run_poc_v2_pipeline(
                 "qc_parcellation_png": sub_out_dir / "qc_parcellation_cc200.png",
                 "provenance_json": sub_out_dir / "provenance.json",
             },
+            "derivatives_dir": sub_out_dir / "derivatives",
+            "slice_timing": stc_provenance_summary,
+            "susceptibility_distortion": sdc_provenance_summary,
             "provenance": provenance_dict,
         }
 
@@ -1435,6 +1959,36 @@ def main():
         default=False,
         help="Require downstream model inference to execute; fail closed if model artifacts are missing or unverified.",
     )
+    parser.add_argument(
+        "--stc-reference-time",
+        type=float,
+        default=None,
+        help="Optional slice-timing target reference time in seconds within [0, TR). Defaults to TR/2.",
+    )
+    parser.add_argument(
+        "--stc-interpolation",
+        choices=["cubic_spline", "quintic_bspline", "fourier", "linear"],
+        default="cubic_spline",
+        help="Slice-timing temporal interpolation method (default: cubic_spline).",
+    )
+    parser.add_argument(
+        "--strict-slice-timing",
+        action="store_true",
+        default=False,
+        help="Fail closed if SliceTiming metadata is missing instead of skipping STC cleanly.",
+    )
+    parser.add_argument(
+        "--sdc-method",
+        choices=["auto", "pepolar_topup", "direct_fieldmap", "phasediff", "fieldmap_less_syn", "none"],
+        default="auto",
+        help="B0 susceptibility distortion correction method selection (default: auto).",
+    )
+    parser.add_argument(
+        "--strict-sdc",
+        action="store_true",
+        default=False,
+        help="Fail closed if B0 susceptibility distortion correction cannot be applied cleanly.",
+    )
 
     args = parser.parse_args()
 
@@ -1481,6 +2035,11 @@ def main():
             enforce_container_memory=args.enforce_container_memory,
             model_dir=args.model_dir,
             require_model_inference=args.require_model_inference,
+            slice_timing_reference_time=args.stc_reference_time,
+            slice_timing_interpolation=args.stc_interpolation,
+            allow_missing_slice_timing=not args.strict_slice_timing,
+            sdc_method=args.sdc_method,
+            strict_sdc=args.strict_sdc,
         )
         print(f"\nExecution successful. Outputs verified at: {res['output_dir']}")
     else:

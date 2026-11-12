@@ -48,7 +48,7 @@
         <div>
           <div class="eyebrow">MRI PROCESSING ENVIRONMENT <span class="eyebrow-line"></span></div>
           <h1>Research workbench<span>.</span></h1>
-          <p>Run the existing 19-stage pipeline, inspect processing outputs, and explore CC200 functional connectivity.</p>
+          <p>Run the existing 22-stage pipeline, inspect processing outputs, and explore CC200 functional connectivity.</p>
         </div>
         <div class="heading-badge"><span class="shield">⬡</span><span><strong>SAFE EXECUTION</strong><small>STRICTLY SYNTHETIC ONLY</small></span></div>
       </section>
@@ -123,17 +123,17 @@
       <section class="panel verification-panel" id="verification">
         <div class="panel-head">
           <div>
-            <div class="panel-kicker">STEP 3 PREPROCESSING ENGINE VALIDATION</div>
-            <h2>19-Stage Neuroimaging Pipeline Verification</h2>
+            <div class="panel-kicker">STEP 3, STEP 4 &amp; STEP 5 PREPROCESSING ENGINE VALIDATION</div>
+            <h2>22-Stage Neuroimaging Pipeline Verification</h2>
           </div>
           <span class="auth-approved-badge" id="verificationBadge">SYNTHETIC PIPELINE VERIFIED</span>
         </div>
-        <p class="panel-desc">Independent audit and mathematical verification of the 19-stage neuroimaging preprocessing pipeline using synthetic MRI fixtures with injected motion and correlation ground truth.</p>
+        <p class="panel-desc">Independent audit and mathematical verification of the 22-stage neuroimaging preprocessing pipeline (motion estimation on raw BOLD prior to slice-timing correction DEC-STC-01 and susceptibility distortion correction DEC-SDC-02) using synthetic MRI fixtures only.</p>
 
         <div class="auth-status-grid">
           <div class="auth-status-item">
             <span class="auth-item-label">Synthetic Pipeline</span>
-            <strong class="auth-item-val" style="color: #34d399;" id="verifPipelineStatus">VERIFIED (19/19 Stages)</strong>
+            <strong class="auth-item-val" style="color: #34d399;" id="verifPipelineStatus">VERIFIED (22/22 Stages)</strong>
           </div>
           <div class="auth-status-item">
             <span class="auth-item-label">Real MRI Processing</span>
@@ -146,6 +146,116 @@
           <div class="auth-status-item">
             <span class="auth-item-label">Fisher-z Features</span>
             <strong class="auth-item-val" id="verifFeaturesStatus">19,900 Edges (All Finite)</strong>
+          </div>
+        </div>
+
+        <div class="verif-stages-section" style="margin-top: 1.5rem; padding: 14px; border: 1px solid #1e4d44; border-radius: 8px; background: #091817;" id="step4StcPanel">
+          <div class="panel-head" style="margin-bottom: 0.75rem;">
+            <div>
+              <div class="panel-kicker">STEP 4 SLICE-TIMING CORRECTION (DEC-STC-01)</div>
+              <h3 style="font-size: 0.98rem; font-weight: 700; color: #e2e8f0; margin: 4px 0 0;">Metadata-Driven Temporal Slice Alignment</h3>
+            </div>
+            <span class="auth-approved-badge" id="verifStcBadge">SLICE-TIMING CORRECTION VERIFIED — SYNTHETIC ONLY</span>
+          </div>
+          <div class="auth-status-grid" style="margin-top: 10px;">
+            <div class="auth-status-item">
+              <span class="auth-item-label">STC Status</span>
+              <strong class="auth-item-val" style="color: #34d399;" id="verifStcStatus">APPLIED</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">RepetitionTime (TR)</span>
+              <strong class="auth-item-val" id="verifStcTr">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Slice Count</span>
+              <strong class="auth-item-val" id="verifStcSliceCount">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Acquisition Direction</span>
+              <strong class="auth-item-val" id="verifStcDirection">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Reference Time (+Shift)</span>
+              <strong class="auth-item-val" id="verifStcRefTime">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Interpolation Method</span>
+              <strong class="auth-item-val" id="verifStcInterp">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Corrected Slices</span>
+              <strong class="auth-item-val" id="verifStcCorrectedSlices">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Validation Metrics</span>
+              <strong class="auth-item-val" id="verifStcMetrics">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Real-Data Auth Status</span>
+              <strong class="auth-item-val locked" id="verifStcAuthStatus">NOT_AUTHORIZED (sub-01 PENDING)</strong>
+            </div>
+          </div>
+          <div class="auth-blockers-box" style="margin-top: 10px; border-color: #274d46; background: #0c1f1d;">
+            <div class="auth-blockers-head" style="color: #7ee8c7;">
+              <span class="shield-mini">ⓘ</span>
+              <strong>Missing Metadata Policy &amp; Warnings</strong>
+            </div>
+            <ul class="auth-blockers-list" style="color: #b7d2cc;" id="verifStcWarnings">
+              <li>Loading slice-timing metadata policy…</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="verif-stages-section" style="margin-top: 1.5rem; padding: 14px; border: 1px solid #264869; border-radius: 8px; background: #0a1728;" id="step5SdcPanel">
+          <div class="panel-head" style="margin-bottom: 0.75rem;">
+            <div>
+              <div class="panel-kicker">STEP 5 SUSCEPTIBILITY DISTORTION CORRECTION (DEC-SDC-02)</div>
+              <h3 style="font-size: 0.98rem; font-weight: 700; color: #e2e8f0; margin: 4px 0 0;">B0 Field Estimation &amp; Composed Unwarping</h3>
+            </div>
+            <span class="auth-approved-badge" id="verifSdcBadge">SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY</span>
+          </div>
+          <div class="auth-status-grid" style="margin-top: 10px;">
+            <div class="auth-status-item">
+              <span class="auth-item-label">SDC Status</span>
+              <strong class="auth-item-val" id="verifSdcStatus">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">BIDS Association</span>
+              <strong class="auth-item-val" id="verifSdcAssoc">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">PE Directions / Readout</span>
+              <strong class="auth-item-val" id="verifSdcPe">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">External Tools</span>
+              <strong class="auth-item-val" id="verifSdcTools">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Jacobian Folding QC</span>
+              <strong class="auth-item-val" id="verifSdcJacobian">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Validation Metrics</span>
+              <strong class="auth-item-val" id="verifSdcMetrics">—</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">PEPOLAR Without topup</span>
+              <strong class="auth-item-val" id="verifSdcPepolarStatus">SKIPPED_TOOL_UNAVAILABLE</strong>
+            </div>
+            <div class="auth-status-item">
+              <span class="auth-item-label">Real-Data Auth Status</span>
+              <strong class="auth-item-val locked" id="verifSdcAuthStatus">NOT_AUTHORIZED (sub-01 PENDING)</strong>
+            </div>
+          </div>
+          <div class="auth-blockers-box" style="margin-top: 10px; border-color: #2c4a6b; background: #0c1d30;">
+            <div class="auth-blockers-head" style="color: #9dc5ff;">
+              <span class="shield-mini">ⓘ</span>
+              <strong>SDC Honesty Policy &amp; Tool Warnings</strong>
+            </div>
+            <ul class="auth-blockers-list" style="color: #bfd3ec;" id="verifSdcWarnings">
+              <li>Loading susceptibility distortion correction status…</li>
+            </ul>
           </div>
         </div>
 
@@ -185,7 +295,7 @@
         </div>
 
         <div class="verif-stages-section" style="margin-top: 1.5rem;">
-          <h3 style="font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 0.75rem;">19-Stage Pipeline Architecture &amp; Verification Checklist</h3>
+          <h3 style="font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 0.75rem;">22-Stage Pipeline Architecture &amp; Verification Checklist</h3>
           <div class="verif-stages-table-container">
             <table class="verif-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;" id="verifStagesTable">
               <thead>
@@ -198,24 +308,27 @@
               </thead>
               <tbody id="verifStagesBody">
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">1</td><td style="padding: 6px 8px;">BIDS Input &amp; Sidecar Validation</td><td style="padding: 6px 8px;">TR=2.0s, Task=rest, 4D BOLD + 3D T1w</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">2</td><td style="padding: 6px 8px;">3D Rigid Motion Realignment (DIPY)</td><td style="padding: 6px 8px;">6-DOF Rigid-Body + Power FD (50mm radius)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">3</td><td style="padding: 6px 8px;">Functional Reference Generation</td><td style="padding: 6px 8px;">Temporal Mean EPI &amp; Functional Mask</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">4</td><td style="padding: 6px 8px;">Anatomical Brain Extraction</td><td style="padding: 6px 8px;">Median Otsu with Morphological Hole Filling</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">5</td><td style="padding: 6px 8px;">Log-Polynomial Bias-Field Correction</td><td style="padding: 6px 8px;">Order=2 3D Polynomial Intensity Regularization</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">6</td><td style="padding: 6px 8px;">Tissue Segmentation</td><td style="padding: 6px 8px;">GMM into CSF, GM, WM Probabilities</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">7</td><td style="padding: 6px 8px;">Morphological Mask Erosion</td><td style="padding: 6px 8px;">0.96 Thresholding + 1-Voxel 3D Erosion</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">8</td><td style="padding: 6px 8px;">EPI-to-T1w Rigid Coregistration</td><td style="padding: 6px 8px;">Mutual Information 6-DOF Rigid Pullback</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">9</td><td style="padding: 6px 8px;">T1w-to-MNI SyN Nonlinear Normalization</td><td style="padding: 6px 8px;">12-DOF Affine + SyN Diffeomorphic (CCMetric)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">10</td><td style="padding: 6px 8px;">Composed Pullback Resampling</td><td style="padding: 6px 8px;">Single-Step Resampling into (63, 75, 61) CC200 Grid</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">11</td><td style="padding: 6px 8px;">Tissue Mask Standard Grid Resampling</td><td style="padding: 6px 8px;">Nearest-Neighbor Warp of Eroded WM/CSF</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">12</td><td style="padding: 6px 8px;">aCompCor Noise Extraction</td><td style="padding: 6px 8px;">5 Physiological Components from Eroded WM/CSF</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">13</td><td style="padding: 6px 8px;">Friston-24 Motion Expansion</td><td style="padding: 6px 8px;">R, R², R_prev, R_prev² (24 Regressors)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">14</td><td style="padding: 6px 8px;">Confound Matrix Assembly</td><td style="padding: 6px 8px;">31 Columns, Full Rank, SVD Condition Guard</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">15</td><td style="padding: 6px 8px;">Simultaneous Regression &amp; Bandpass</td><td style="padding: 6px 8px;">GLM Nuisance Removal + Butterworth [0.01-0.10 Hz]</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">16</td><td style="padding: 6px 8px;">CC200 ROI Time Series Extraction</td><td style="padding: 6px 8px;">200 Canonical Craddock Parcels, NiftiLabelsMasker</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">17</td><td style="padding: 6px 8px;">Pairwise Fisher-z Feature Calculation</td><td style="padding: 6px 8px;">19,900 Edges, Epsilon-Clamped Arctanh, All Finite</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">18</td><td style="padding: 6px 8px;">QC Multi-Planar Overlays</td><td style="padding: 6px 8px;">4 Orthogonal Visual Overlays (Coreg, Norm, Tissue, Parc)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">19</td><td style="padding: 6px 8px;">Schema-Compliant Provenance</td><td style="padding: 6px 8px;">Validated against configs/provenance_schema.json</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">2</td><td style="padding: 6px 8px;">3D Rigid Motion Parameter Estimation (DIPY)</td><td style="padding: 6px 8px;">6-DOF Rigid-Body + Power FD on Raw Uncorrected BOLD (Pre-STC/SDC)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">3</td><td style="padding: 6px 8px;">Metadata-Driven Slice-Timing Correction (DEC-STC-01)</td><td style="padding: 6px 8px;">BIDS SliceTiming + Header SliceDim on Original Geometry (+TR/2 shift)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">4</td><td style="padding: 6px 8px;">B0 Susceptibility Distortion Correction (DEC-SDC-02)</td><td style="padding: 6px 8px;">BIDS Fieldmap Discovery, PE/Readout Audit, Jacobian QC (Honest Skip if Tool Absent)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">5</td><td style="padding: 6px 8px;">Motion Transform (+ Optional SDC) Application</td><td style="padding: 6px 8px;">Apply Pre-Estimated Rigid Transforms (+ SDC Pullback) to STC BOLD</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">6</td><td style="padding: 6px 8px;">Functional Reference Generation</td><td style="padding: 6px 8px;">Temporal Mean EPI &amp; Functional Mask</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">7</td><td style="padding: 6px 8px;">Anatomical Brain Extraction</td><td style="padding: 6px 8px;">Median Otsu with Morphological Hole Filling</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">8</td><td style="padding: 6px 8px;">Log-Polynomial Bias-Field Correction</td><td style="padding: 6px 8px;">Order=2 3D Polynomial Intensity Regularization</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">9</td><td style="padding: 6px 8px;">Tissue Segmentation</td><td style="padding: 6px 8px;">GMM into CSF, GM, WM Probabilities</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">10</td><td style="padding: 6px 8px;">Morphological Mask Erosion</td><td style="padding: 6px 8px;">0.96 Thresholding + 1-Voxel 3D Erosion</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">11</td><td style="padding: 6px 8px;">EPI-to-T1w Rigid Coregistration</td><td style="padding: 6px 8px;">Mutual Information 6-DOF Rigid Pullback</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">12</td><td style="padding: 6px 8px;">T1w-to-MNI SyN Nonlinear Normalization</td><td style="padding: 6px 8px;">12-DOF Affine + SyN Diffeomorphic (CCMetric)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">13</td><td style="padding: 6px 8px;">Composed Pullback Resampling (STC BOLD)</td><td style="padding: 6px 8px;">Single-Step Motion+SDC+Coreg+SyN Resampling into (63, 75, 61) CC200 Grid</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">14</td><td style="padding: 6px 8px;">Tissue Mask Standard Grid Resampling</td><td style="padding: 6px 8px;">Nearest-Neighbor Warp of Eroded WM/CSF</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">15</td><td style="padding: 6px 8px;">aCompCor Noise Extraction</td><td style="padding: 6px 8px;">5 Physiological Components from Eroded WM/CSF</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">16</td><td style="padding: 6px 8px;">Friston-24 Motion Expansion</td><td style="padding: 6px 8px;">R, R², R_prev, R_prev² (24 Regressors)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">17</td><td style="padding: 6px 8px;">Confound Matrix Assembly</td><td style="padding: 6px 8px;">31 Columns, Full Rank, SVD Condition Guard</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">18</td><td style="padding: 6px 8px;">Simultaneous Regression &amp; Bandpass</td><td style="padding: 6px 8px;">GLM Nuisance Removal + Butterworth [0.01-0.10 Hz]</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">19</td><td style="padding: 6px 8px;">CC200 ROI Time Series Extraction</td><td style="padding: 6px 8px;">200 Canonical Craddock Parcels, NiftiLabelsMasker</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">20</td><td style="padding: 6px 8px;">Pairwise Fisher-z Feature Calculation</td><td style="padding: 6px 8px;">19,900 Edges, Epsilon-Clamped Arctanh, All Finite</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">21</td><td style="padding: 6px 8px;">QC Multi-Planar Overlays</td><td style="padding: 6px 8px;">4 Orthogonal Visual Overlays (Coreg, Norm, Tissue, Parc)</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);"><td style="padding: 6px 8px;">22</td><td style="padding: 6px 8px;">Schema-Compliant Provenance</td><td style="padding: 6px 8px;">Validated against configs/provenance_schema.json</td><td style="padding: 6px 8px;"><span class="badge-tag green">PASSED</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -366,13 +479,13 @@
         </article>
 
         <article class="panel pipeline-panel">
-          <div class="panel-head"><div><div class="panel-kicker">PROCESSING WORKFLOW</div><h2>Pipeline stages</h2></div><span class="pill pill-blue">19 STAGES</span></div>
+          <div class="panel-head"><div><div class="panel-kicker">PROCESSING WORKFLOW</div><h2>Pipeline stages</h2></div><span class="pill pill-blue" id="pipelineStagePill">22 STAGES</span></div>
           <div class="pipeline-list">
-            <div class="pipe-step"><span class="pipe-index">01—06</span><span class="pipe-name">MRI preprocessing</span><span class="pipe-detail">BIDS · Motion · Segmentation · Registration · Cleaning</span></div>
-            <div class="pipe-step"><span class="pipe-index">07</span><span class="pipe-name">CC200 parcellation</span><span class="pipe-detail">200 anatomical regions</span></div>
-            <div class="pipe-step"><span class="pipe-index">08</span><span class="pipe-name">ROI time-series</span><span class="pipe-detail">Regional BOLD signals</span></div>
-            <div class="pipe-step"><span class="pipe-index">09—10</span><span class="pipe-name">Functional connectivity</span><span class="pipe-detail">Pearson correlation · Fisher-z</span></div>
-            <div class="pipe-step"><span class="pipe-index">11—12</span><span class="pipe-name">ML inference & QC</span><span class="pipe-detail">Frozen model · Provenance · Reports</span></div>
+            <div class="pipe-step"><span class="pipe-index">01—05</span><span class="pipe-name">BIDS, Motion, STC &amp; SDC</span><span class="pipe-detail">Raw motion fit · DEC-STC-01 · DEC-SDC-02 · Transform application</span></div>
+            <div class="pipe-step"><span class="pipe-index">06—18</span><span class="pipe-name">MRI spatial &amp; temporal cleaning</span><span class="pipe-detail">Single-step composed SDC + SyN MNI · aCompCor · Friston-24 · Bandpass</span></div>
+            <div class="pipe-step"><span class="pipe-index">19</span><span class="pipe-name">CC200 parcellation</span><span class="pipe-detail">200 canonical Craddock regions</span></div>
+            <div class="pipe-step"><span class="pipe-index">20</span><span class="pipe-name">Functional connectivity</span><span class="pipe-detail">19,900 Fisher-z ROI pairs</span></div>
+            <div class="pipe-step"><span class="pipe-index">21—22</span><span class="pipe-name">QC overlays, provenance &amp; ML</span><span class="pipe-detail">4 overlays · SHA-256 schema · Frozen model</span></div>
           </div>
           <div class="pipeline-foot"><span class="foot-led"></span> Existing preprocessing implementation is reused</div>
         </article>
