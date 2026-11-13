@@ -394,9 +394,11 @@ def test_pepolar_unequal_readout_times_valid_and_degenerate_rejected(tmp_path: P
     with pytest.raises(InvalidSDCInputError, match="unidentifiable"):
         build_topup_acquisition_parameters(["j", "j"], [0.05, 0.05])
 
-    # Unequal readout times with same polarity ARE distinguishable mathematically
-    lines_diff_trt = build_topup_acquisition_parameters(["j", "j"], [0.04, 0.08])
-    assert len(lines_diff_trt) == 2
+    # Same-polarity unequal readout times must still be rejected; opposite-polarity unequal readout times accepted
+    with pytest.raises(InvalidSDCInputError, match="opposite phase-encoding"):
+        build_topup_acquisition_parameters(["j", "j"], [0.04, 0.08])
+    lines_opp_diff_trt = build_topup_acquisition_parameters(["i", "i-"], [0.04, 0.08])
+    assert lines_opp_diff_trt == ["1 0 0 0.04000000", "-1 0 0 0.08000000"]
 
     # Test validate_sdc_metadata rejects shape mismatch, orthogonal PE axis, and <50% FOV overlap
     ses_dir = tmp_path / "sub-synthetic504" / "ses-1"

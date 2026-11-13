@@ -1757,6 +1757,18 @@ def run_poc_v2_pipeline(
             "status": "SUCCESS",
             "subject_id": subject_id,
             "timestamp_utc": provenance_dict["timestamp_utc"],
+            "correction_status": {
+                "slice_timing_correction": {
+                    "status": str(stc_provenance_summary["status"]),
+                    "corrected": bool(stc_provenance_summary["corrected"]),
+                    "reason": stc_provenance_summary.get("reason"),
+                },
+                "susceptibility_distortion_correction": {
+                    "status": str(sdc_provenance_summary["status"]),
+                    "corrected": bool(sdc_provenance_summary["corrected"]),
+                    "reason": sdc_provenance_summary.get("reason"),
+                },
+            },
             "artifacts": {
                 key: {
                     "filename": fname,

@@ -49,6 +49,38 @@ SDC_STATUS_SKIPPED_INSUFFICIENT_METADATA = "SKIPPED_INSUFFICIENT_METADATA"
 SDC_STATUS_SKIPPED_UNSUPPORTED_METHOD = "SKIPPED_UNSUPPORTED_METHOD"
 SDC_STATUS_SKIPPED_TOOL_UNAVAILABLE = "SKIPPED_TOOL_UNAVAILABLE"
 SDC_STATUS_FAILED_INVALID_INPUT = "FAILED_INVALID_INPUT"
+SDC_STATUS_REJECTED_QC_DEGRADED = "REJECTED_QC_DEGRADED"
+
+QC_METRIC_INTERPRETATION: Dict[str, Any] = {
+    "summary": (
+        "Quantitative SDC QC metrics compare distorted vs. unwarped mean EPI alignment against a reference "
+        "image and check local diffeomorphic voxel-volume preservation along the phase-encoding axis."
+    ),
+    "measures": {
+        "ncc": (
+            "Normalized Cross-Correlation (Pearson r) computed inside the union of EPI and reference "
+            "foreground masks; measures linear intensity similarity."
+        ),
+        "nmi": (
+            "Normalized Mutual Information across binned intensities; measures statistical intensity "
+            "dependence across same- or cross-contrast (e.g., EPI vs. T1w) images."
+        ),
+        "mask_dice": (
+            "Dice overlap coefficient between intensity-thresholded (>20% peak) EPI and reference masks; "
+            "measures gross brain silhouette overlap."
+        ),
+        "min_jacobian": (
+            "Minimum 1D directional Jacobian determinant J = 1 + du_a/dv_a along phase-encoding axis a; "
+            "measures worst-case local voxel compression and ensures local invertibility (J > 0)."
+        ),
+    },
+    "does_not_prove": [
+        "A good NCC, NMI, or mask_dice does not prove the distortion model is correct or uniquely accurate.",
+        "Improved intensity similarity or Dice overlap does not prove recovery of through-plane susceptibility signal dropout.",
+        "A positive min_jacobian (> 0) only verifies absence of local voxel folding and does not prove ground-truth B0 fieldmap accuracy.",
+        "QC metrics alone do not establish clinical diagnostic validity or real-data concordance.",
+    ],
+}
 
 APPLIED_SDC_STATUSES = frozenset({
     SDC_STATUS_APPLIED_PEPOLAR_TOPUP,
@@ -1012,22 +1044,20 @@ def validate_sdc_metadata(
             if len(validated_entries) == 1:
                 # Single reverse-PE SE-EPI paired with BOLD reference volume (b0/first vol)
                 only_e = validated_entries[0]
-                if (
-                    only_e["pe"]["polarity"] == bold_pe["polarity"]
-                    and abs(only_e["total_readout_time_s"] - bold_trt) <= 1e-6
-                ):
+                if only_e["pe"]["polarity"] == bold_pe["polarity"]:
                     raise InvalidSDCInputError(
-                        "Single PEPOLAR *_epi fieldmap has identical PE polarity and identical TotalReadoutTime "
-                        f"as BOLD ({only_e['pe']['code']}, {only_e['total_readout_time_s']}s); cannot solve B0 field."
+                        "Single PEPOLAR *_epi fieldmap has the same PhaseEncodingDirection polarity as BOLD "
+                        f"({only_e['pe']['code']} vs {bold_pe['code']}); TOPUP requires opposite phase-encoding "
+                        "directions even when TotalReadoutTime differs."
                     )
             else:
-                e0, e1 = validated_entries[0], validated_entries[1]
-                opposite_pol = e0["pe"]["polarity"] == -e1["pe"]["polarity"]
-                distinct_rt = abs(e0["total_readout_time_s"] - e1["total_readout_time_s"]) > 1e-6
-                if not (opposite_pol or distinct_rt):
+                polarities = {int(e["pe"]["polarity"]) for e in validated_entries}
+                if polarities != {-1, 1}:
                     raise InvalidSDCInputError(
-                        "PEPOLAR *_epi pair has identical PhaseEncodingDirection polarity and identical TotalReadoutTime "
-                        f"({e0['pe']['code']}, {e0['total_readout_time_s']}s); differential B0 estimation is singular."
+                        "PEPOLAR *_epi scans require at least one pair of opposite phase-encoding directions "
+                        f"(e.g. '{bold_pe['code']}' with its opposite); same-direction entries "
+                        f"({[e['pe']['code'] for e in validated_entries]}) are rejected even when "
+                        "TotalReadoutTime differs."
                     )
         except InvalidSDCInputError as exc:
             result["status_hint"] = SDC_STATUS_FAILED_INVALID_INPUT
@@ -1231,15 +1261,16 @@ def build_topup_acquisition_parameters(
         lines.append(f"{vx} {vy} {vz} {trt:.8f}")
         parsed_list.append((pe_info, trt))
 
-    # Reject completely degenerate acquisition parameter sets (same axis + polarity + identical readout)
-    axes = {p["axis"] for p, _ in parsed_list}
-    if len(axes) == 1:
-        distinct_signatures = {(p["polarity"], round(trt, 7)) for p, trt in parsed_list}
-        if len(distinct_signatures) < 2:
-            raise InvalidSDCInputError(
-                "All TOPUP acquisition parameter entries have identical polarity and TotalReadoutTime; "
-                "off-resonance B0 field is unidentifiable."
-            )
+    # Require at least one pair of opposite phase-encoding directions along the same PE axis
+    polarities_by_axis: Dict[int, set] = {}
+    for p, _ in parsed_list:
+        polarities_by_axis.setdefault(int(p["axis"]), set()).add(int(p["polarity"]))
+    if not any({-1, 1}.issubset(pols) for pols in polarities_by_axis.values()):
+        raise InvalidSDCInputError(
+            "TOPUP acquisition parameters require at least one pair of opposite phase-encoding directions "
+            "(e.g. 'j' with 'j-' or 'i' with 'i-'); same-direction entries leave the off-resonance B0 field "
+            "unidentifiable even when TotalReadoutTime differs."
+        )
     return lines
 
 
@@ -1669,6 +1700,7 @@ def evaluate_sdc_correction_qc(
         "ncc_improved": bool(ncc_after > ncc_before),
         "nmi_improved": bool(nmi_after > nmi_before),
         "dice_improved": bool(dice_after >= dice_before),
+        "metric_interpretation": QC_METRIC_INTERPRETATION,
     }
 
 
@@ -1761,6 +1793,35 @@ def _resample_fmap_to_bold_grid(
     ).reshape(bold_shape).astype(np.float32)
 
 
+def _apply_post_correction_qc_gate(
+    result: SDCValidationResult,
+    *,
+    strict_sdc: bool = False,
+) -> None:
+    """Reject and withhold any SDC warp whose post-correction NCC degrades relative to distorted input."""
+    qc = result.correction_qc
+    if qc is None:
+        return
+    ncc_before = float(qc["ncc_before"])
+    ncc_after = float(qc["ncc_after"])
+    if ncc_after < ncc_before:
+        reason_msg = (
+            f"SDC post-correction QC gate rejected warp ({SDC_STATUS_REJECTED_QC_DEGRADED}): "
+            f"ncc_after ({ncc_after:.6f}) < ncc_before ({ncc_before:.6f}). "
+            "Fieldmap-to-BOLD alignment degraded similarity against reference; pre-correction BOLD geometry preserved."
+        )
+        result.status = SDC_STATUS_REJECTED_QC_DEGRADED
+        result.corrected = False
+        result.field_hz = None
+        result.displacement_vox = None
+        result.displacement_mm = None
+        result.unwarped_mean_3d = None
+        result.warnings.append(reason_msg)
+        result.reason = reason_msg
+        if strict_sdc:
+            raise SDCError(reason_msg)
+
+
 def estimate_susceptibility_field(
     bold_image: nib.Nifti1Image,
     bold_metadata: Dict[str, Any],
@@ -1773,6 +1834,7 @@ def estimate_susceptibility_field(
     topup_runner: Optional[Callable[[List[str]], subprocess.CompletedProcess]] = None,
     reference_img: Optional[nib.Nifti1Image] = None,
     max_displacement_mm: float = 35.0,
+    strict_sdc: bool = False,
 ) -> SDCValidationResult:
     """Execute validated SDC estimation (or emit explicit skipped/failed status without fabrication)."""
     software = detect_sdc_software(topup_executable=topup_executable)
@@ -1941,6 +2003,7 @@ def estimate_susceptibility_field(
                 result.correction_qc = evaluate_sdc_correction_qc(
                     bold_mean, unwarped_mean, ref_arr, ref_aff, bold_affine
                 )
+                _apply_post_correction_qc_gate(result, strict_sdc=strict_sdc)
             return result
         finally:
             if tmp_ctx is not None:
@@ -1988,6 +2051,7 @@ def estimate_susceptibility_field(
                 reference_img.affine,
                 bold_affine,
             )
+            _apply_post_correction_qc_gate(result, strict_sdc=strict_sdc)
         return result
 
     # All non-applied statuses return honestly with corrected=False and zero fabricated fields
@@ -2102,6 +2166,7 @@ def run_susceptibility_distortion_correction(
         topup_runner=topup_runner,
         reference_img=reference_img,
         max_displacement_mm=max_displacement_mm,
+        strict_sdc=strict_sdc,
     )
 
     if derivative_dir is not None:

@@ -56,7 +56,7 @@ Inserting Stage 4 (`B0 Susceptibility Distortion Correction`) preserves Step 4.1
     $$T_{\text{ro}} = \text{EffectiveEchoSpacing} \times (\text{ReconMatrixPE} - 1)$$
     requiring finite $\text{EffectiveEchoSpacing} \in (0, 0.1)\text{ s}$ and integer $\text{ReconMatrixPE} \ge 2$. Never substitutes `TR` or arbitrary defaults.
 - **Fieldmap Modalities:**
-  - `pepolar_epi` (`*_epi.nii.gz`): Validates identical voxel dimensions and affine alignment against BOLD (`atol = 1e-3`), same PE axis (`fmap_axis == bold_pe_axis`), and identifiability (either opposite polarity or distinct $T_{\text{ro}}$; rejects identical polarity + identical readout time fail-closed).
+  - `pepolar_epi` (`*_epi.nii.gz`): Validates identical voxel dimensions and affine alignment against BOLD (`atol = 1e-3`), same PE axis (`fmap_axis == bold_pe_axis`), and at least one pair of **opposite phase-encoding directions** (`j` with `j-`, `i` with `i-`, `k` with `k-`). Same-direction pairs are rejected with `InvalidSDCInputError` even when `TotalReadoutTime` differs.
   - `direct_fieldmap` (`*_fieldmap.nii.gz`): Requires `Units` $\in \{\text{"Hz"}, \text{"rad/s"}\}$ (converts $\text{rad/s} \to \text{Hz}$ via $\Delta B_0 / (2\pi)$) and $\ge 50\%$ BOLD FOV overlap before linear resampling to the BOLD grid.
   - `phasediff` / `phase1` + `phase2`: Validates $0 < \text{EchoTime}_1 < \text{EchoTime}_2$ and `Units`; requires external `prelude` + `fugue` for phase unwrapping (never reinterprets wrapped phase radians as Hz).
 
@@ -97,6 +97,7 @@ When external binaries are missing, NeuroADHD **never** fabricates fieldmaps or 
 | Explicit `sdc_method="fieldmap_less_syn"` | `SKIPPED_UNSUPPORTED_METHOD` | `false` | Refuses generic unvalidated SyN-b0 fallback |
 | Missing mandatory PE/TRT/Units/EchoTimes (`allow_incomplete_metadata=true`) | `SKIPPED_INSUFFICIENT_METADATA` | `false` | Preserves original geometry with exact missing metadata reason (`MissingSDCMetadataError` in strict mode) |
 | Conflicting ambiguity, non-invertible Jacobian ($J \le 0$), FOV $< 50\%$, or safety violation | Raises (`AmbiguousFieldmapAssociationError`, `SDCFoldingError`, `InvalidSDCInputError`) | — | Fail-closed rejection before any spatial corruption |
+| Post-correction QC alignment degraded (`ncc_after < ncc_before` against reference) | `REJECTED_QC_DEGRADED` | `false` | Preserves pre-correction BOLD geometry and records reason in provenance (`SDCError` when `--strict-sdc` is enabled) |
 
 ---
 
@@ -149,6 +150,8 @@ Validated `compose_sdc_transform()`, `apply_composed_sdc_volume()`, and `resampl
 ## 6. Known Limitations
 
 1. **External FSL Binaries Unavailable on Host/Container:** `topup`, `applytopup`, `prelude`, `fugue`, `fslmaths`, `antsRegistration`, and AFNI `3dQwarp` are not installed on the current host; PEPOLAR (`*_epi`) and phase-difference (`*_phasediff`) fieldmap estimation honestly report `SKIPPED_TOOL_UNAVAILABLE` until FSL is installed (validated with an explicit mock runner in tests).
-2. **Stage 4–5 vs. Stage 13 Interpolation Count:** When SDC is active, Stage 5 applies `sdc_displacement` together with Stage 2 rigid transforms *solely* to compute the unwarped Stage 6 functional reference for Stage 11 rigid EPI-to-T1w coregistration; the actual science timeseries consumed by Stages 14–20 comes exclusively from unresampled `stc_bold_img` via Stage 13's **single-step** composed pullback (`compose_sdc_transform`).
-3. **Real-Data Concordance Locked:** Because `real_data_authorized = false` (`overall_authorization_state = NOT_AUTHORIZED`), real `sub-01` execution and historical C-PAC concordance remain disabled (`NOT_ASSESSED`).
+2. **Header-Only Fieldmap Alignment:** Fieldmap-to-BOLD alignment relies on header affines; magnitude-based registration is not implemented. To prevent spatial misregistration from corrupting BOLD data when a reference volume is evaluated, the post-correction QC gate rejects any warp where `ncc_after < ncc_before` (`status = "REJECTED_QC_DEGRADED"`, `corrected = false`; raises `SDCError` under `--strict-sdc`).
+3. **Stage 4–5 vs. Stage 13 Interpolation Count:** When SDC is active, Stage 5 applies `sdc_displacement` together with Stage 2 rigid transforms *solely* to compute the unwarped Stage 6 functional reference for Stage 11 rigid EPI-to-T1w coregistration; the actual science timeseries consumed by Stages 14–20 comes exclusively from unresampled `stc_bold_img` via Stage 13's **single-step** composed pullback (`compose_sdc_transform`).
+4. **QC Metric Interpretation Boundaries (`QC_METRIC_INTERPRETATION`):** Quantitative metrics (`ncc`, `nmi`, `mask_dice`, `min_jacobian`) measure intensity/mask similarity and local Jacobian invertibility ($J > 0$); a good NCC does not prove the distortion model is correct, does not prove through-plane dropout recovery, and does not establish clinical validity.
+5. **Real-Data Concordance Locked:** Because `real_data_authorized = false` (`overall_authorization_state = NOT_AUTHORIZED`), real `sub-01` execution and historical C-PAC concordance remain disabled (`NOT_ASSESSED`).
 

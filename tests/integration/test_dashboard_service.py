@@ -174,6 +174,33 @@ class TestDashboardDataService(unittest.TestCase):
         self.assertIn(b"feature_name,fisher_z", content)
         self.assertTrue(content_type.startswith("text/csv"))
 
+    def test_output_manifest_with_correction_status_passes_hash_verification(self):
+        manifest_path = self.run_dir / "output_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["correction_status"] = {
+            "slice_timing_correction": {"status": "APPLIED", "corrected": True, "reason": None},
+            "susceptibility_distortion_correction": {
+                "status": "REJECTED_QC_DEGRADED",
+                "corrected": False,
+                "reason": "ncc_after < ncc_before",
+            },
+        }
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        cohort_manifest_path = self.cohort_dir / "cohort_manifest.json"
+        cohort_manifest = json.loads(cohort_manifest_path.read_text(encoding="utf-8"))
+        cohort_manifest["subjects"][0]["output_manifest_sha256"] = self._sha(manifest_path)
+        cohort_manifest_path.write_text(json.dumps(cohort_manifest), encoding="utf-8")
+
+        detail = self.service.get_subject_detail(self.cohort_id, self.subject_id)
+        self.assertEqual(detail["subject_id"], self.subject_id)
+        content, _ = self.service.get_artifact(self.cohort_id, self.subject_id, "roi_CC200.csv")
+        self.assertIn(b"node/volume", content)
+        ts = self.service.get_timeseries(self.cohort_id, self.subject_id, 1)
+        self.assertEqual(ts["n_timepoints"], 3)
+        conn = self.service.get_connectivity(self.cohort_id, self.subject_id)
+        self.assertEqual(conn["n_edges"], 19900)
+
     def test_tampered_artifact_is_rejected(self):
         path = self.run_dir / "roi_CC200.csv"
         path.write_text("tampered", encoding="utf-8")
