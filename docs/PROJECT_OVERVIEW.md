@@ -26,8 +26,9 @@ RAW 4D RESTING-STATE fMRI (BIDS: *_bold.nii.gz + *.json + *_T1w.nii.gz [+ fmap/]
             - Strict: --strict-slice-timing fails closed on missing timing/axis (REQUIRED for real-data mode)
                ↓
  [Stage 4]  B0 Susceptibility Distortion Correction (DEC-SDC-02; Fieldmap Discovery & Estimation)
-            - Default: SKIPPED_NO_ASSOCIATED_FIELDMAP / SKIPPED_INSUFFICIENT_METADATA / SKIPPED_TOOL_UNAVAILABLE
-            - Strict: --strict-sdc fails closed when SDC cannot be applied (REQUIRED for real-data mode)
+            - Default: SKIPPED_NO_ASSOCIATED_FIELDMAP / SKIPPED_INSUFFICIENT_METADATA / SKIPPED_TOOL_UNAVAILABLE / REJECTED_QC_DEGRADED
+            - Strict: --strict-sdc fails closed when SDC cannot be applied or degrades QC (REQUIRED for real-data mode)
+            - Opposite-PE: TOPUP pairs strictly require opposite phase-encoding directions (same-direction pairs rejected)
             - Limitation: Only direct Hz (or rad/s) fieldmaps are applied; FSL topup/prelude/fugue were never run
                ↓
  [Stage 5-6] Motion Transform (+ Optional SDC) Application & 3D Functional Reference Generation
@@ -42,13 +43,14 @@ RAW 4D RESTING-STATE fMRI (BIDS: *_bold.nii.gz + *.json + *_T1w.nii.gz [+ fmap/]
                ↓
  [Stage 19-20] CC200 Atlas Parcellation (roi_CC200.csv: 200 ROIs) & 19,900 Fisher-z Connectivity Features
                ↓
- [Stage 21-22] Orthogonal QC Overlays & Schema-Compliant Provenance JSON Generation (provenance.json, output_manifest.json)
+ [Stage 21-22] Orthogonal QC Overlays & Schema-Compliant Provenance JSON Generation (provenance.json, output_manifest.json with correction_status)
                ↓
  EXISTING FROZEN INFERENCE (Median Imputer -> Variance Filter -> Scaler -> SelectKBest 100 -> 50-Tree Random Forest)
 ```
 
 ### Key Stage Behavior & Scientific Limitations
-- **Default vs. Strict Correction Modes (`DEC-STC-01`, `DEC-SDC-02`):** By default, missing `SliceTiming` or unknown slice axis causes Stage 3 STC to log a warning and enter a `SKIPPED_*` status with a provenance flag while preserving raw timings; similarly, missing associated fieldmaps, `PhaseEncodingDirection`, `TotalReadoutTime`, or external FSL binaries causes Stage 4 SDC to log a `SKIPPED_*` status with a provenance flag rather than inventing timings or synthetic fieldmaps. Passing `--strict-slice-timing` and `--strict-sdc` forces fail-closed errors instead of skipping; **real-data mode must use strict mode**.
+- **Default vs. Strict Correction Modes (`DEC-STC-01`, `DEC-SDC-02`):** By default, missing `SliceTiming` or unknown slice axis causes Stage 3 STC to log a warning and enter a `SKIPPED_*` status with a provenance flag while preserving raw timings; similarly, missing associated fieldmaps, `PhaseEncodingDirection`, `TotalReadoutTime`, external FSL binaries, or degraded post-correction alignment (`ncc_after < ncc_before`) causes Stage 4 SDC to log a `SKIPPED_*` or `REJECTED_QC_DEGRADED` status with a provenance flag rather than inventing timings or applying degrading warps. Passing `--strict-slice-timing` and `--strict-sdc` forces fail-closed errors instead of skipping; **real-data mode must use strict mode**.
+- **SDC Scientific Constraints & Interpretations:** TOPUP/PEPOLAR pairs require opposite phase-encoding directions (`j`/`j-`, `i`/`i-`). SDC quality evaluation uses `QC_METRIC_INTERPRETATION` documenting what metrics (`ncc`, `nmi`, `mask_dice`, `min_jacobian`) measure and what they do NOT prove (they do not prove ground-truth distortion accuracy, through-plane dropout recovery, or clinical validity). `output_manifest.json` provides an additive `correction_status` block tracking STC and SDC execution.
 - **SDC External Tool Limitation:** Only calibrated direct `Hz` (and `rad/s` converted to `Hz`) fieldmaps are applied analytically in Python/SciPy. FSL `topup`, `prelude`, and `fugue` were never run (`SKIPPED_TOOL_UNAVAILABLE` if absent), so PEPOLAR and phase-difference execution paths remain unverified against live FSL binaries.
 
 ---
