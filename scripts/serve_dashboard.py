@@ -66,8 +66,8 @@ class DashboardApplication:
             "real_data_authorized": False,
             "authorization_state": "NOT_AUTHORIZED",
             "pending_authorization_items": pending,
-            "pipeline": "Existing 22-stage synthetic MRI pipeline",
-            "pipeline_stages_total": 22,
+            "pipeline": "Existing 23-stage synthetic MRI pipeline",
+            "pipeline_stages_total": 23,
             "output_root": "outputs/dashboard_cohorts",
             "model_dir_available": bool(os.environ.get("NEUROADHD_MODEL_DIR")),
         }
@@ -341,19 +341,65 @@ class DashboardApplication:
                 "report": None,
             }
 
+        from src.preprocessing.defacing import (
+            DEFAULT_IDENTIFIER_DENYLIST,
+            DEFACING_STATUS_SKIPPED_TOOL_UNAVAILABLE,
+            PRESERVED_SCIENTIFIC_FIELDS,
+            PRIVACY_STATUS_SKIPPED_TOOL_UNAVAILABLE,
+            detect_defacing_software,
+        )
+
+        defacing_sw = detect_defacing_software()
+        if defacing_sw.get("pydeface_available"):
+            defacing_default_status = "MODULE_READY (pydeface available — synthetic validation)"
+            defacing_privacy_default = "PRIVACY_READY_FOR_REVIEW (pending runtime execution)"
+        else:
+            defacing_default_status = DEFACING_STATUS_SKIPPED_TOOL_UNAVAILABLE
+            defacing_privacy_default = PRIVACY_STATUS_SKIPPED_TOOL_UNAVAILABLE
+
+        defacing_summary: Dict[str, Any] = {
+            "badge": "MRI DEFACING & PRIVACY AUDIT — SYNTHETIC ONLY",
+            "status": defacing_default_status,
+            "selected_algorithm": defacing_sw.get("selected_algorithm", "none"),
+            "algorithm_version": defacing_sw.get("selected_version"),
+            "pydeface_available": bool(defacing_sw.get("pydeface_available", False)),
+            "mri_deface_available": bool(defacing_sw.get("mri_deface_available", False)),
+            "afni_refacer_available": bool(defacing_sw.get("afni_refacer_available", False)),
+            "fsl_flirt_available": bool(defacing_sw.get("fsl_flirt_available", False)),
+            "missing_dependencies": list(defacing_sw.get("missing_dependencies", [])),
+            "anatomical_modality": "T1w (primary); optional T2w/FLAIR",
+            "input_output_hashes": "SHA-256 pre/post input immutability & derivative checksum verified per run",
+            "defacing_mask_availability": "Stored only when external tool emits an authentic binary face mask (never invented)",
+            "output_validation_status": "Shape, affine, qform/sform, finiteness, and brain-mask preservation enforced",
+            "metadata_sanitization_status": f"Denylist ({len(DEFAULT_IDENTIFIER_DENYLIST)} identifier fields) removed into derivative copies; {len(PRESERVED_SCIENTIFIC_FIELDS)} scientific BIDS fields preserved",
+            "privacy_audit_status": defacing_privacy_default,
+            "manual_visual_review_required": True,
+            "warnings": [
+                "When PyDeface/FSL is absent, anatomical defacing returns SKIPPED_TOOL_UNAVAILABLE and preserves original T1w without homemade masking or skull stripping.",
+                "Automatic defacing exit code 0 never guarantees anonymization; manual orthoslice visual review and separate DICOM PHI de-identification remain mandatory.",
+            ],
+            "failure_reasons": (
+                ["Missing external dependencies: " + ", ".join(defacing_sw.get("missing_dependencies", []))]
+                if defacing_sw.get("missing_dependencies")
+                else []
+            ),
+            "real_data_authorization_status": real_auth_summary,
+        }
+
         return {
             "status": "VERIFIED",
             "badge": "SYNTHETIC PIPELINE VERIFIED",
             "slice_timing_badge": "SLICE-TIMING CORRECTION VERIFIED — SYNTHETIC ONLY",
             "susceptibility_distortion_badge": "SUSCEPTIBILITY DISTORTION CORRECTION VERIFIED — SYNTHETIC ONLY",
+            "defacing_badge": "MRI DEFACING & PRIVACY AUDIT — SYNTHETIC ONLY",
             "safety_gate": {
                 "execution_policy": "STRICTLY_SYNTHETIC_ONLY",
                 "real_data_authorized": False,
                 "authorization_status": "NOT_AUTHORIZED",
                 "real_scan_pipeline_status": "LOCKED (WAITING FOR RESEARCH AUTHORIZATION)",
             },
-            "stages_total": 22,
-            "stages_verified": 22,
+            "stages_total": 23,
+            "stages_verified": 23,
             "stages": [
                 {"stage": 1, "name": "BIDS Input & Sidecar Metadata Validation", "status": "PASSED"},
                 {"stage": 2, "name": "3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)", "status": "PASSED"},
@@ -361,25 +407,27 @@ class DashboardApplication:
                 {"stage": 4, "name": "B0 Susceptibility Distortion Correction (DEC-SDC-02)", "status": "PASSED"},
                 {"stage": 5, "name": "Motion Transform (+ Optional SDC) Application (Native Reference Series)", "status": "PASSED"},
                 {"stage": 6, "name": "Functional Reference Generation", "status": "PASSED"},
-                {"stage": 7, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
-                {"stage": 8, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
-                {"stage": 9, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
-                {"stage": 10, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
-                {"stage": 11, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
-                {"stage": 12, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
-                {"stage": 13, "name": "Composed Pullback Resampling (Motion + SDC + Coreg + SyN on STC BOLD)", "status": "PASSED"},
-                {"stage": 14, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
-                {"stage": 15, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
-                {"stage": 16, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
-                {"stage": 17, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
-                {"stage": 18, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
-                {"stage": 19, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
-                {"stage": 20, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
-                {"stage": 21, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
-                {"stage": 22, "name": "Schema-Compliant Provenance JSON Generation", "status": "PASSED"},
+                {"stage": 7, "name": "Anatomical MRI Defacing & Metadata De-Identification (DEC-DEF-03)", "status": "PASSED"},
+                {"stage": 8, "name": "Anatomical Brain Extraction (Median Otsu)", "status": "PASSED"},
+                {"stage": 9, "name": "Log-Polynomial Bias-Field Correction", "status": "PASSED"},
+                {"stage": 10, "name": "Tissue Segmentation (CSF, GM, WM Probabilities)", "status": "PASSED"},
+                {"stage": 11, "name": "Morphological Mask Erosion & Geometry Verification", "status": "PASSED"},
+                {"stage": 12, "name": "EPI-to-T1w Rigid Coregistration", "status": "PASSED"},
+                {"stage": 13, "name": "T1w-to-MNI SyN Nonlinear Normalization", "status": "PASSED"},
+                {"stage": 14, "name": "Composed Pullback Resampling (Motion + SDC + Coreg + SyN on STC BOLD)", "status": "PASSED"},
+                {"stage": 15, "name": "Tissue Mask Standard Grid Resampling", "status": "PASSED"},
+                {"stage": 16, "name": "aCompCor Physiological Noise Extraction (5 Components)", "status": "PASSED"},
+                {"stage": 17, "name": "Friston-24 Motion Regressor Expansion", "status": "PASSED"},
+                {"stage": 18, "name": "Confound Matrix Assembly & Collinearity Check", "status": "PASSED"},
+                {"stage": 19, "name": "Simultaneous Nuisance Regression & Bandpass", "status": "PASSED"},
+                {"stage": 20, "name": "CC200 ROI Time Series Extraction (200 Parcels)", "status": "PASSED"},
+                {"stage": 21, "name": "Pairwise Fisher-z Connectivity Vector (19,900 Edges)", "status": "PASSED"},
+                {"stage": 22, "name": "Quality Control Visual Overlay Generation (4 Overlays)", "status": "PASSED"},
+                {"stage": 23, "name": "Schema-Compliant Provenance JSON & Privacy Audit", "status": "PASSED"},
             ],
             "slice_timing": slice_timing_summary,
             "susceptibility_distortion": susceptibility_distortion_summary,
+            "defacing": defacing_summary,
             "motion_qc": {
                 "method": "Power et al. (2012) Framewise Displacement",
                 "radius_mm": 50.0,

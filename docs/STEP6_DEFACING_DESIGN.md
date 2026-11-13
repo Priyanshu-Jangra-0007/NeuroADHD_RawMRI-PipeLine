@@ -197,3 +197,4 @@ Defacing an already-defaced T1w scan is strictly **idempotent**:
 - Voxels anterior to the plane are already zero, so applying defacing a second time results in bitwise-identical output:
   $$\text{Deface}(\text{Deface}(V, M), M) \equiv \text{Deface}(V, M)$$
 - Metadata records the defacing provenance tag (`desc-defaced`) and prevents redundant re-computation.
+
