@@ -728,7 +728,7 @@
   <div class="toc-item"><a href="#step-3">STEP 3: Understanding the Interface (Screen Walkthrough)</a><span class="toc-dots"></span><span class="toc-sec">Section 3</span></div>
   <div class="toc-item"><a href="#step-4">STEP 4: File Upload – Where and How?</a><span class="toc-dots"></span><span class="toc-sec">Section 4</span></div>
   <div class="toc-item"><a href="#step-5">STEP 5: What Happens Immediately After Upload? (Internal Sequence)</a><span class="toc-dots"></span><span class="toc-sec">Section 5</span></div>
-  <div class="toc-item"><a href="#step-6">STEP 6: Complete 22-Stage Processing Pipeline</a><span class="toc-dots"></span><span class="toc-sec">Section 6</span></div>
+  <div class="toc-item"><a href="#step-6">STEP 6: Complete 23-Stage Processing Pipeline</a><span class="toc-dots"></span><span class="toc-sec">Section 6</span></div>
   <div class="toc-item"><a href="#step-7">STEP 7: Understanding Generated Outputs (Deliverable Catalog)</a><span class="toc-dots"></span><span class="toc-sec">Section 7</span></div>
   <div class="toc-item"><a href="#step-8">STEP 8: Frontend and Backend Communication (API Reference)</a><span class="toc-dots"></span><span class="toc-sec">Section 8</span></div>
   <div class="toc-item"><a href="#step-9">STEP 9: Database &amp; File Storage Architecture</a><span class="toc-dots"></span><span class="toc-sec">Section 9</span></div>
@@ -757,7 +757,7 @@ In historical research, machine-learning models were trained on pre-extracted ta
   <li><strong>Physiological Noise:</strong> Heartbeats, breathing, and scanner magnetic field drifts create false signals that can drown out genuine neural activity.</li>
 </ul>
 <p>
-<strong>The Solution:</strong> NeuroADHD provides an automated, standardized, reproducible 22-stage pipeline that handles raw scan intake, raw-BOLD motion estimation, metadata-driven slice-timing correction (<code>DEC-STC-01</code>), B0 susceptibility distortion correction (<code>DEC-SDC-02</code>), skull stripping, tissue segmentation, single-step composed spatial normalization, and nuisance regression, outputting standardized <code>roi_CC200.csv</code> tables and 19,900 Fisher-$z$ connectivity features without requiring manual neuroimaging software intervention.
+<strong>The Solution:</strong> NeuroADHD provides an automated, standardized, reproducible 23-stage pipeline that handles raw scan intake, raw-BOLD motion estimation, metadata-driven slice-timing correction (<code>DEC-STC-01</code>), B0 susceptibility distortion correction (<code>DEC-SDC-02</code>), anatomical MRI defacing and de-identification (<code>DEC-DEF-03</code>), skull stripping, tissue segmentation, single-step composed spatial normalization, and nuisance regression, outputting standardized <code>roi_CC200.csv</code> tables and 19,900 Fisher-$z$ connectivity features without requiring manual neuroimaging software intervention.
 </p>
 
 <h3>1.3 Who Will Use It?</h3>
@@ -1109,10 +1109,10 @@ This section demystifies the exact 13-step technical chain reaction that occurs 
 
 <!-- STEP 6: COMPLETE PROCESSING PIPELINE -->
 <section class="step page-start" id="step-6">
-<h2>STEP 6: Complete 22-Stage Processing Pipeline</h2>
+<h2>STEP 6: Complete 23-Stage Processing Pipeline</h2>
 
 <p>
-When a processing run is triggered (either automatically on synthetic data or manually via <code>scripts/run_poc_v2.py</code>), the computational engine executes exactly <strong>22 chronological stages</strong>. Crucially, rigid motion parameters are estimated on <strong>raw uncorrected BOLD</strong> (Stage 2) prior to slice-timing correction (Stage 3) and susceptibility distortion estimation (Stage 4), and all spatial transforms (rigid motion, optional B0 SDC displacement, EPI-to-T1w coregistration, T1w-to-MNI affine, and SyN warp) are composed in Stage 13 into a <strong>single spatial interpolation</strong> directly from the unresampled Stage 3 slice-time-corrected BOLD series.
+When a processing run is triggered (either automatically on synthetic data or manually via <code>scripts/run_poc_v2.py</code>), the computational engine executes exactly <strong>23 chronological stages</strong>. Crucially, rigid motion parameters are estimated on <strong>raw uncorrected BOLD</strong> (Stage 2) prior to slice-timing correction (Stage 3) and susceptibility distortion estimation (Stage 4), anatomical defacing and privacy audit (Stage 7) remove facial surface topology and personal identifiers, and all spatial transforms (rigid motion, optional B0 SDC displacement, EPI-to-T1w coregistration, T1w-to-MNI affine, and SyN warp) are composed in Stage 14 into a <strong>single spatial interpolation</strong> directly from the unresampled Stage 3 slice-time-corrected BOLD series.
 </p>
 
 <h3>Stage 1: BIDS Input &amp; Sidecar Metadata Validation</h3>
@@ -1129,7 +1129,7 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Processing:</strong> Uses <code>src/preprocessing/motion.py:estimate_motion_parameters()</code> (DIPY 6-DOF rigid alignment aligning volumes $t=1 \dots T-1$ to reference Volume 0). Computes Framewise Displacement ($FD$) using Power et al. (2012) with $r = 50\text{ mm}$ radius:
   $$FD_t = |\Delta d_{x,t}| + |\Delta d_{y,t}| + |\Delta d_{z,t}| + 50 \cdot (|\Delta \alpha_t| + |\Delta \beta_t| + |\Delta \gamma_t|)$$
   Motion estimation is decoupled from spatial resampling so it is never biased by temporal slice-timing interpolation.</li>
-  <li><strong>Output:</strong> <code>rigid_motion_transforms</code> (in memory for Stages 5 &amp; 13), <code>motion_parameters.tsv</code> (6 cols), and <code>framewise_displacement.tsv</code> (1 col).</li>
+  <li><strong>Output:</strong> <code>rigid_motion_transforms</code> (in memory for Stages 5 &amp; 14), <code>motion_parameters.tsv</code> (6 cols), and <code>framewise_displacement.tsv</code> (1 col).</li>
   <li><strong>Next Stage &rarr;:</strong> Original raw BOLD continues unmodified to Stage 3.</li>
 </ul>
 
@@ -1148,7 +1148,7 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Processing:</strong> Executed via <code>src/preprocessing/susceptibility_distortion.py:run_susceptibility_distortion_correction()</code>. Discovers associated fieldmaps using BIDS priority (<code>B0FieldSource</code>/<code>B0FieldIdentifier</code> over <code>IntendedFor</code>; rejects conflicting ambiguity), validates BIDS voxel-axis <code>PhaseEncodingDirection</code> (<code>i, i-, j, j-, k, k-</code>; requires at least one pair of <strong>opposite phase-encoding directions</strong> for TOPUP/PEPOLAR pairs, rejecting same-direction pairs even with distinct readout times) and <code>TotalReadoutTime</code> (or <code>EffectiveEchoSpacing * (ReconMatrixPE - 1)</code>), converts calibrated direct <code>Hz</code> / <code>rad/s</code> fieldmaps into PE pullback displacement <code>displacement_vox</code>, checks diffeomorphic invertibility ($J(v) = 1 + \partial u_a / \partial v_a &gt; 0$), and enforces a <strong>post-correction QC rejection gate</strong> (if <code>ncc_after &lt; ncc_before</code> against reference, the warp is rejected with status <code>REJECTED_QC_DEGRADED</code> and pre-correction BOLD is preserved).</li>
   <li><strong>Default Skip vs. Strict Mode &amp; Tool Limitation:</strong> By default, missing associated fieldmaps, missing <code>PhaseEncodingDirection</code>, missing <code>TotalReadoutTime</code>, missing external FSL tools, or QC-degraded alignment logs a <code>SKIPPED_*</code> or <code>REJECTED_QC_DEGRADED</code> flag (<code>corrected = false</code>) without inventing synthetic warps. With <code>--strict-sdc</code>, any skip or QC degradation fails closed (raises <code>SDCError</code>). <strong>Limitation:</strong> only calibrated direct <code>Hz</code> / <code>rad/s</code> fieldmaps are applied; FSL <code>topup</code>, <code>prelude</code>, and <code>fugue</code> were never run.</li>
   <li><strong>Output:</strong> Optional <code>displacement_vox</code> pullback field and <code>derivatives/*_desc-sdc_report.json</code> (plus fieldmap/displacement/QC derivatives when applied, annotated with standardized <code>QC_METRIC_INTERPRETATION</code>).</li>
-  <li><strong>Next Stage &rarr;:</strong> Passes Stage 2 motion transforms, Stage 3 STC BOLD, and optional Stage 4 SDC displacement to Stage 5 and Stage 13.</li>
+  <li><strong>Next Stage &rarr;:</strong> Passes Stage 2 motion transforms, Stage 3 STC BOLD, and optional Stage 4 SDC displacement to Stage 5 and Stage 14.</li>
 </ul>
 
 <h3>Stage 5: Motion Transform (+ Optional SDC) Application</h3>
@@ -1164,26 +1164,35 @@ When a processing run is triggered (either automatically on synthetic data or ma
   <li><strong>Input:</strong> Stage 5 motion-aligned (+ optionally unwarped) 4D native BOLD series.</li>
   <li><strong>Processing:</strong> Computes the voxel-wise temporal mean and brain mask via <code>generate_functional_reference()</code> to produce a high-contrast 3D EPI reference image.</li>
   <li><strong>Output:</strong> 3D EPI reference volume and EPI brain mask.</li>
-  <li><strong>Next Stage &rarr;:</strong> Used as moving target for cross-modal coregistration in Stage 11.</li>
+  <li><strong>Next Stage &rarr;:</strong> Used as moving target for cross-modal coregistration in Stage 12.</li>
 </ul>
 
-<h3>Stage 7: Anatomical Brain Extraction</h3>
+<h3>Stage 7: Anatomical MRI Defacing, Metadata De-Identification &amp; Privacy Audit (DEC-DEF-03)</h3>
 <ul>
-  <li><strong>Input:</strong> Raw 3D T1-weighted anatomical scan.</li>
+  <li><strong>Input:</strong> 3D T1-weighted anatomical scan, estimated brain mask, and BIDS sidecars.</li>
+  <li><strong>Processing:</strong> Executed via <code>src/preprocessing/defacing.py:run_defacing()</code>. Implements the pure-Python Quickshear algorithm (<code>compute_quickshear_face_mask</code>, <code>apply_quickshear_defacing</code>) deriving an anterior-ventral tangent cutting plane from the 2D convex hull of the midsagittal brain mask in millimeter coordinates. Strips facial features while mathematically guaranteeing zero brain tissue overlap ($\mathbf{n} \cdot \mathbf{x} < \text{thresh}$ for all brain voxels, <code>brain_max_diff == 0.0</code>). Defacing is strictly idempotent (<code>idempotent = True</code>, <code>max_abs_diff == 0.0</code>). Dynamically routes defaced output to <code>active_t1w_img</code> for all downstream structural stages and QC rendering. Sanitizes NIfTI header fields and BIDS metadata against clinical blocklists. Fails closed with <code>defacing_quarantine_report.json</code> upon brain loss or validation failure.</li>
+  <li><strong>Default Skip vs. Strict Mode:</strong> By default, if external tools are requested but absent, emits <code>SKIPPED_TOOL_UNAVAILABLE</code> with a provenance flag without fabricating synthetic masks; passing <code>--strict-defacing</code> or <code>--require-export-ready</code> fails closed.</li>
+  <li><strong>Output:</strong> <code>derivatives/defaced/sub-&lt;id&gt;/anat/*_desc-defaced_T1w.nii.gz</code>, <code>*_desc-defaced_facemask.nii.gz</code>, and <code>*_desc-defaced_report.json</code>.</li>
+  <li><strong>Next Stage &rarr;:</strong> Defaced T1w anatomy passed to Stage 8.</li>
+</ul>
+
+<h3>Stage 8: Anatomical Brain Extraction</h3>
+<ul>
+  <li><strong>Input:</strong> Defaced 3D T1-weighted anatomical scan (from Stage 7).</li>
   <li><strong>Processing:</strong> Executes DIPY <code>median_otsu</code> segmentation to strip skull and extra-cranial tissues, followed by 3D binary morphological hole-filling.</li>
   <li><strong>Output:</strong> Clean brain-only parenchyma mask and skull-stripped T1w volume.</li>
-  <li><strong>Next Stage &rarr;:</strong> Stripped anatomy passed to Stage 8.</li>
+  <li><strong>Next Stage &rarr;:</strong> Stripped anatomy passed to Stage 9.</li>
 </ul>
 
-<h3>Stage 8: Log-Polynomial Bias-Field Correction</h3>
+<h3>Stage 9: Log-Polynomial Bias-Field Correction</h3>
 <ul>
   <li><strong>Input:</strong> Skull-stripped T1w volume and brain mask.</li>
   <li><strong>Processing:</strong> Fits a 2nd-order 3D Legendre polynomial surface $B(x, y, z)$ to estimate low-frequency $B_1$ magnetic field inhomogeneity drift and divides intensities by the estimated field.</li>
   <li><strong>Output:</strong> Intensity-normalized anatomical image with uniform tissue contrast.</li>
-  <li><strong>Next Stage &rarr;:</strong> Uniform anatomy passed to Stage 9.</li>
+  <li><strong>Next Stage &rarr;:</strong> Uniform anatomy passed to Stage 10.</li>
 </ul>
 
-<h3>Stage 9: Tissue Segmentation (CSF, GM, WM Probabilities)</h3>
+<h3>Stage 10: Tissue Segmentation (CSF, GM, WM Probabilities)</h3>
 <ul>
   <li><strong>Input:</strong> Bias-corrected T1w anatomical volume.</li>
   <li><strong>Processing:</strong> Fits a 3-component Gaussian Mixture Model (GMM) to estimate posterior probability maps for:
@@ -1192,125 +1201,125 @@ When a processing run is triggered (either automatically on synthetic data or ma
     <span class="badge badge-green">Deep White Matter (WM)</span>.
   </li>
   <li><strong>Output:</strong> 3 probability arrays where $\sum_{k} p(C_k | v) = 1.0$.</li>
-  <li><strong>Next Stage &rarr;:</strong> Probability maps passed to Stage 10.</li>
+  <li><strong>Next Stage &rarr;:</strong> Probability maps passed to Stage 11.</li>
 </ul>
 
-<h3>Stage 10: Morphological Tissue Mask Erosion &amp; Geometry Verification</h3>
+<h3>Stage 11: Morphological Tissue Mask Erosion &amp; Geometry Verification</h3>
 <ul>
   <li><strong>Input:</strong> CSF and White Matter posterior probability maps.</li>
   <li><strong>Processing:</strong> Enforces strict confidence threshold $p \ge 0.96$ followed by 1-voxel inward 3D binary morphological erosion using a 6-connectivity structuring element and overlap verification.</li>
   <li><strong>Output:</strong> Ultra-clean, non-overlapping WM and CSF masks (0 voxel overlap) preventing cortical grey-matter signal contamination in nuisance regressors.</li>
-  <li><strong>Next Stage &rarr;:</strong> Eroded masks passed to Stage 14.</li>
+  <li><strong>Next Stage &rarr;:</strong> Eroded masks passed to Stage 15.</li>
 </ul>
 
-<h3>Stage 11: EPI-to-T1w Rigid Coregistration</h3>
+<h3>Stage 12: EPI-to-T1w Rigid Coregistration</h3>
 <ul>
-  <li><strong>Input:</strong> 3D functional reference EPI (from Stage 6) and T1w brain (from Stage 7).</li>
+  <li><strong>Input:</strong> 3D functional reference EPI (from Stage 6) and defaced T1w brain (from Stage 8).</li>
   <li><strong>Processing:</strong> Optimizes a 6-DOF rigid transformation matrix using mutual information to align functional EPI space with subject T1w anatomy. When Stage 4 SDC was applied, also evaluates distorted vs. unwarped EPI against coregistered T1w (<code>correction_qc</code>: <code>ncc</code>, <code>nmi</code>, <code>mask_dice</code>) and updates <code>derivatives/*_desc-sdc_qc.png</code> and <code>*_desc-sdc_report.json</code>.</li>
   <li><strong>Output:</strong> Coregistration affine matrix $R_{\text{EPI}\to\text{T1w}}$.</li>
-  <li><strong>Next Stage &rarr;:</strong> Combined into Stage 13 single-step pullback.</li>
+  <li><strong>Next Stage &rarr;:</strong> Combined into Stage 14 single-step pullback.</li>
 </ul>
 
-<h3>Stage 12: T1w-to-MNI SyN Nonlinear Normalization</h3>
+<h3>Stage 13: T1w-to-MNI SyN Nonlinear Normalization</h3>
 <ul>
-  <li><strong>Input:</strong> Subject T1w anatomical brain and standard MNI152 stereotaxic template.</li>
+  <li><strong>Input:</strong> Subject defaced T1w anatomical brain and standard MNI152 stereotaxic template.</li>
   <li><strong>Processing:</strong> Calculates a 12-DOF affine pre-alignment followed by DIPY Symmetric Normalization (SyN) diffeomorphic nonlinear warping onto MNI152 coordinates.</li>
   <li><strong>Output:</strong> Affine pre-alignment $A_{\text{T1w}\to\text{MNI}}$ and nonlinear deformation field $\Phi_{\text{T1w}\to\text{MNI}}$.</li>
-  <li><strong>Next Stage &rarr;:</strong> Combined into Stage 13 single-step pullback.</li>
+  <li><strong>Next Stage &rarr;:</strong> Combined into Stage 14 single-step pullback.</li>
 </ul>
 
-<h3>Stage 13: Composed Single-Step Pullback Resampling into CC200 Grid</h3>
+<h3>Stage 14: Composed Single-Step Pullback Resampling into CC200 Grid</h3>
 <ul>
-  <li><strong>Input:</strong> Unresampled Stage 3 STC 4D BOLD, Stage 2 <code>rigid_motion_transforms</code>, optional Stage 4 <code>sdc_displacement</code>, Stage 11 $R_{\text{EPI}\to\text{T1w}}$, Stage 12 SyN map, and CC200 atlas geometry.</li>
+  <li><strong>Input:</strong> Unresampled Stage 3 STC 4D BOLD, Stage 2 <code>rigid_motion_transforms</code>, optional Stage 4 <code>sdc_displacement</code>, Stage 12 $R_{\text{EPI}\to\text{T1w}}$, Stage 13 SyN map, and CC200 atlas geometry.</li>
   <li><strong>Processing:</strong> Composes all spatial transforms via <code>compose_transformations()</code> (and <code>compose_sdc_transform()</code> when SDC is active) into a single continuous coordinate pullback:
   $$v_{\text{vol}}(t) = A_{\text{EPI}}^{-1}\, M_{\text{ref}\to\text{vol}}(t)\, A_{\text{EPI}} \left( v_{\text{undist}} + \mathbf{u}_{\text{SDC}}(v_{\text{undist}}) \right), \quad v_{\text{undist}} = A_{\text{EPI}}^{-1} (A_{\text{T1w}\to\text{MNI}} R_{\text{EPI}\to\text{T1w}})^{-1} \Phi_{\text{SyN}}^{-1}(x_{\text{MNI}})$$
   Executed in <strong>one single spatial trilinear interpolation</strong> via <code>resample_4d_bold()</code> directly onto the CC200 standard grid, preventing compounded interpolation blurring.</li>
   <li><strong>Output:</strong> Standard-space 4D BOLD series matching CC200 shape and affine.</li>
-  <li><strong>Next Stage &rarr;:</strong> Standard-space BOLD passed to Stage 15 and Stage 18.</li>
+  <li><strong>Next Stage &rarr;:</strong> Standard-space BOLD passed to Stage 16 and Stage 19.</li>
 </ul>
 
-<h3>Stage 14: Tissue Mask Standard Grid Resampling</h3>
+<h3>Stage 15: Tissue Mask Standard Grid Resampling</h3>
 <ul>
-  <li><strong>Input:</strong> Eroded CSF and WM masks (from Stage 10) and Stage 12 SyN transformation field.</li>
+  <li><strong>Input:</strong> Eroded CSF and WM masks (from Stage 11) and Stage 13 SyN transformation field.</li>
   <li><strong>Processing:</strong> Warps subject eroded tissue masks into the exact CC200 target grid via nearest-neighbor interpolation (<code>resample_mask_to_target()</code>).</li>
-  <li><strong>Output:</strong> Standard-space WM and CSF nuisance masks matching Stage 13 BOLD grid geometry.</li>
-  <li><strong>Next Stage &rarr;:</strong> Standard masks passed to Stage 15.</li>
+  <li><strong>Output:</strong> Standard-space WM and CSF nuisance masks matching Stage 14 BOLD grid geometry.</li>
+  <li><strong>Next Stage &rarr;:</strong> Standard masks passed to Stage 16.</li>
 </ul>
 
-<h3>Stage 15: aCompCor Physiological Noise Extraction</h3>
+<h3>Stage 16: aCompCor Physiological Noise Extraction</h3>
 <ul>
-  <li><strong>Input:</strong> Standard-space 4D BOLD (Stage 13) and standard-space eroded WM/CSF masks (Stage 14).</li>
+  <li><strong>Input:</strong> Standard-space 4D BOLD (Stage 14) and standard-space eroded WM/CSF masks (Stage 15).</li>
   <li><strong>Processing:</strong> Extracts voxel timeseries inside the eroded WM/CSF masks, standardizes to unit variance, and computes PCA to isolate the top <strong>5 anatomical CompCor (aCompCor)</strong> physiological noise components.</li>
   <li><strong>Output:</strong> Array of 5 physiological noise regressors $(T \times 5)$.</li>
-  <li><strong>Next Stage &rarr;:</strong> Components passed to Stage 17.</li>
+  <li><strong>Next Stage &rarr;:</strong> Components passed to Stage 18.</li>
 </ul>
 
-<h3>Stage 16: Friston-24 Motion Regressor Expansion</h3>
+<h3>Stage 17: Friston-24 Motion Regressor Expansion</h3>
 <ul>
   <li><strong>Input:</strong> 6 rigid realignment parameters estimated on raw BOLD in Stage 2 $(R_t)$.</li>
   <li><strong>Processing:</strong> Expands into the complete Friston-24 autoregressive motion model:
   $$[R_t, \quad R_{t-1}, \quad R_t^2, \quad R_{t-1}^2]$$
   </li>
   <li><strong>Output:</strong> Matrix of 24 motion regressors $(T \times 24)$.</li>
-  <li><strong>Next Stage &rarr;:</strong> Motion regressors passed to Stage 17.</li>
+  <li><strong>Next Stage &rarr;:</strong> Motion regressors passed to Stage 18.</li>
 </ul>
 
-<h3>Stage 17: Confound Matrix Assembly &amp; Collinearity Check</h3>
+<h3>Stage 18: Confound Matrix Assembly &amp; Collinearity Check</h3>
 <ul>
   <li><strong>Input:</strong> 24 Friston regressors + 5 aCompCor components + linear trend + quadratic trend.</li>
   <li><strong>Processing:</strong> Assembles the full $T \times 31$ design matrix $X$ via <code>src/preprocessing/nuisance.py:build_confound_matrix()</code>, auditing matrix rank ($31/31$) and SVD condition number. Global Signal Regression (GSR) and mean tissue regression remain explicitly <strong>OFF</strong>.</li>
   <li><strong>Output:</strong> <code>confounds.tsv</code> and <code>confound_report.json</code>.</li>
-  <li><strong>Next Stage &rarr;:</strong> Confound matrix passed to Stage 18.</li>
+  <li><strong>Next Stage &rarr;:</strong> Confound matrix passed to Stage 19.</li>
 </ul>
 
-<h3>Stage 18: Simultaneous Nuisance Regression &amp; Butterworth Bandpass</h3>
+<h3>Stage 19: Simultaneous Nuisance Regression &amp; Butterworth Bandpass</h3>
 <ul>
-  <li><strong>Input:</strong> Standard-space 4D BOLD (Stage 13) and 31-column confound matrix $X$ (Stage 17).</li>
+  <li><strong>Input:</strong> Standard-space 4D BOLD (Stage 14) and 31-column confound matrix $X$ (Stage 18).</li>
   <li><strong>Processing:</strong> Executes simultaneous OLS nuisance projection and zero-phase Butterworth bandpass filtering via <code>nilearn.image.clean_img()</code> (order 5) retaining resting-state frequencies <strong>0.01 Hz – 0.10 Hz</strong>:
   $$Y_{\text{clean}} = \left(I - X(X^T X)^{-1}X^T\right) Y$$
   </li>
   <li><strong>Output:</strong> Fully cleaned 4D BOLD series on the standard CC200 grid.</li>
-  <li><strong>Next Stage &rarr;:</strong> Cleaned functional data passed to Stage 19.</li>
+  <li><strong>Next Stage &rarr;:</strong> Cleaned functional data passed to Stage 20.</li>
 </ul>
 
-<h3>Stage 19: CC200 ROI Time Series Extraction</h3>
+<h3>Stage 20: CC200 ROI Time Series Extraction</h3>
 <ul>
   <li><strong>Input:</strong> Cleaned 4D BOLD series, Craddock CC200 atlas (200 parcels), and optional configured censor indices.</li>
   <li><strong>Processing:</strong> Computes the spatial mean BOLD signal across all voxels in parcel $i = 1 \dots 200$ for every retained volume $t$ using <code>src/parcellation/extractor.py:extract_cc200_timeseries()</code>:
   $$s_i(t) = \frac{1}{|V_i|} \sum_{v \in V_i} \text{BOLD}(v, t)$$
   When no volume censoring is configured, $T$ input volumes produce exact shape $(200, T)$ timepoints in memory and <code>roi_CC200.csv</code> with 200 rows &times; $1 + T$ columns (column 0 is <code>node/volume</code> = parcel index, columns <code>0..T-1</code> are volumes).</li>
   <li><strong>Output:</strong> <code>roi_CC200.csv</code>.</li>
-  <li><strong>Next Stage &rarr;:</strong> ROI signals passed to Stage 20.</li>
+  <li><strong>Next Stage &rarr;:</strong> ROI signals passed to Stage 21.</li>
 </ul>
 
-<h3>Stage 20: Pairwise Fisher-$z$ Connectivity Vector Calculation</h3>
+<h3>Stage 21: Pairwise Fisher-$z$ Connectivity Vector Calculation</h3>
 <ul>
-  <li><strong>Input:</strong> 200 regional BOLD timeseries from Stage 19.</li>
+  <li><strong>Input:</strong> 200 regional BOLD timeseries from Stage 20.</li>
   <li><strong>Processing:</strong> Uses <code>src/features/connectivity.py:compute_connectivity_vector()</code> to compute pairwise Pearson correlations $r_{i,j}$ and Fisher's $z$-transformation ($z_{i,j} = \operatorname{arctanh}(r_{i,j})$), extracting the $\frac{200 \times 199}{2} = 19,900$ strictly upper-triangular features.</li>
   <li><strong>Output:</strong> <code>features_19900_fisher_z.csv</code> and <code>features_19900_fisher_z.npy</code>.</li>
-  <li><strong>Next Stage &rarr;:</strong> Features passed to Stage 21 (and optional frozen model inference).</li>
+  <li><strong>Next Stage &rarr;:</strong> Features passed to Stage 22 (and optional frozen model inference).</li>
 </ul>
 
-<h3>Stage 21: Quality Control Visual Overlays</h3>
+<h3>Stage 22: Quality Control Visual Overlays</h3>
 <ul>
-  <li><strong>Input:</strong> Intermediate and final registered volumes, tissue masks, and CC200 parcellation.</li>
-  <li><strong>Processing:</strong> Generates 4 core diagnostic PNG overlays:
+  <li><strong>Input:</strong> Defaced intermediate and final registered volumes, tissue masks, and CC200 parcellation.</li>
+  <li><strong>Processing:</strong> Generates 4 core diagnostic PNG overlays rendered strictly from defaced anatomical volumes:
     <ol>
-      <li><code>qc_registration_epi_to_t1w.png</code>: EPI contour overlaid on T1w anatomy.</li>
-      <li><code>qc_registration_t1w_to_mni.png</code>: MNI template contour overlaid on normalized T1w.</li>
+      <li><code>qc_registration_epi_to_t1w.png</code>: EPI contour overlaid on defaced T1w anatomy.</li>
+      <li><code>qc_registration_t1w_to_mni.png</code>: MNI template contour overlaid on normalized defaced T1w.</li>
       <li><code>qc_tissue_masks.png</code>: Eroded WM and CSF tissue masks.</li>
       <li><code>qc_parcellation_cc200.png</code>: CC200 parcel boundaries overlaid on mean cleaned BOLD.</li>
     </ol>
     (Plus <code>derivatives/*_desc-sdc_qc.png</code> when Stage 4 SDC is applied.)
   </li>
   <li><strong>Output:</strong> 4 diagnostic PNG files in the run directory.</li>
-  <li><strong>Next Stage &rarr;:</strong> Passed to Stage 22.</li>
+  <li><strong>Next Stage &rarr;:</strong> Passed to Stage 23.</li>
 </ul>
 
-<h3>Stage 22: Schema-Compliant Provenance JSON Generation</h3>
+<h3>Stage 23: Schema-Compliant Provenance JSON Generation</h3>
 <ul>
-  <li><strong>Input:</strong> All outputs, Stage 2–4 metadata/reports, package versions, memory stats, and validation gates.</li>
-  <li><strong>Processing:</strong> Builds <code>provenance_dict</code> recording <code>pipeline_stages_total: 22</code>, the full 22-item <code>preprocessing_order</code> list, <code>motion_estimation</code> timing-order flags (<code>estimated_on_raw_uncorrected_bold</code>, <code>estimated_before_slice_timing</code>, <code>single_step_composed_resampling_with_stc_bold</code>, <code>single_step_composed_resampling_with_sdc</code>), <code>slice_timing_correction</code> provenance, <code>susceptibility_distortion_correction</code> provenance, all 6 <code>validation_gates</code>, <code>output_artifacts</code>, and SHA-256 <code>output_checksums</code>; validates against <code>configs/provenance_schema.json</code>.</li>
+  <li><strong>Input:</strong> All outputs, Stage 2–7 metadata/reports, package versions, memory stats, and validation gates.</li>
+  <li><strong>Processing:</strong> Builds <code>provenance_dict</code> recording <code>pipeline_stages_total: 23</code>, the full 23-item <code>preprocessing_order</code> list, <code>motion_estimation</code> timing-order flags (<code>estimated_on_raw_uncorrected_bold</code>, <code>estimated_before_slice_timing</code>, <code>single_step_composed_resampling_with_stc_bold</code>, <code>single_step_composed_resampling_with_sdc</code>), <code>slice_timing_correction</code> provenance, <code>susceptibility_distortion_correction</code> provenance, <code>defacing</code> provenance, all 6 <code>validation_gates</code>, <code>output_artifacts</code>, and SHA-256 <code>output_checksums</code>; validates against <code>configs/provenance_schema.json</code>.</li>
   <li><strong>Output:</strong> <code>provenance.json</code>, <code>output_manifest.json</code>, and <code>run_manifest.json</code>.</li>
   <li><strong>Final Result:</strong> Pipeline successfully completes.</li>
 </ul>
@@ -1340,7 +1349,7 @@ Stage 4 (<code>src/preprocessing/susceptibility_distortion.py</code>) audits and
     <tr><td>PEPOLAR pair (<code>*_epi</code>) or <code>*_phasediff</code> when FSL <code>topup</code> / <code>prelude</code> / <code>fugue</code> absent</td><td>Emits <code>SKIPPED_TOOL_UNAVAILABLE</code> (records validated config &amp; missing tools; zero fabricated warps)</td><td>Fails closed (execution halts)</td></tr>
     <tr><td>Same-direction PEPOLAR pairs (e.g. <code>j</code> and <code>j</code> even with distinct readout times)</td><td>Rejects fail-closed with <code>InvalidSDCInputError</code>; TOPUP strictly requires at least one opposite-PE pair</td><td>Fails closed (<code>InvalidSDCInputError</code>)</td></tr>
     <tr><td>Post-correction alignment degrades vs. reference (<code>ncc_after &lt; ncc_before</code>)</td><td>Post-correction QC gate rejects warp, emits <code>REJECTED_QC_DEGRADED</code> (<code>corrected: false</code>), preserves pre-correction BOLD</td><td>Fails closed (<code>SDCError</code>)</td></tr>
-    <tr><td>Calibrated direct fieldmap (<code>*_fieldmap</code> with <code>Units</code> = <code>Hz</code> or <code>rad/s</code>)</td><td>Validates overlap ($\ge 50\%$) and Jacobian ($J &gt; 0$); applies unwarping via Stage 5 reference &amp; Stage 13 composed pullback (<code>APPLIED_DIRECT_FIELDMAP</code>)</td><td>Applied if valid; fails closed on invalid fieldmap, ambiguous association, or Jacobian folding ($J \le 0$)</td></tr>
+    <tr><td>Calibrated direct fieldmap (<code>*_fieldmap</code> with <code>Units</code> = <code>Hz</code> or <code>rad/s</code>)</td><td>Validates overlap ($\ge 50\%$) and Jacobian ($J &gt; 0$); applies unwarping via Stage 5 reference &amp; Stage 14 composed pullback (<code>APPLIED_DIRECT_FIELDMAP</code>)</td><td>Applied if valid; fails closed on invalid fieldmap, ambiguous association, or Jacobian folding ($J \le 0$)</td></tr>
   </tbody>
 </table>
 </div>
@@ -1361,12 +1370,33 @@ Stage 4 (<code>src/preprocessing/susceptibility_distortion.py</code>) audits and
   </ul>
 </div>
 
-<h3>6.4 Step 3: Complete 22-Stage Synthetic Pipeline Validation (validate_step3_pipeline.py)</h3>
+<h3>6.4 Anatomical Defacing &amp; Privacy Safeguards (DEC-DEF-03): Methodology &amp; Critical Limitations</h3>
+<p>
+Stage 7 (<code>src/preprocessing/defacing.py</code>) audits, de-identifies metadata, and removes identifiable facial features before downstream anatomical processing:
+</p>
+<ul>
+  <li><strong>Pure-Python Quickshear Defacing:</strong> Derives an anterior-ventral tangent cutting plane from the 2D convex hull of the midsagittal brain mask contour in millimeter space. Setting the threshold strictly greater than the brain boundary ($\mathbf{n} \cdot \mathbf{x} < \text{threshold}$) mathematically guarantees zero intracranial brain tissue overlap (<code>brain_max_diff == 0.0</code>).</li>
+  <li><strong>Idempotency &amp; Fail-Closed Quarantine:</strong> Defacing an already-defaced scan produces bitwise-identical output (<code>idempotent = True</code>, <code>max_abs_diff == 0.0</code>). Corrupted masks or tissue loss fail closed immediately, remove partial derivatives, and generate a <code>defacing_quarantine_report.json</code>.</li>
+  <li><strong>Downstream Active Routing:</strong> Defaced T1w scans replace the original anatomical input for brain extraction (Stage 8), tissue segmentation (Stage 10), coregistration (Stage 12), SyN normalization (Stage 13), and all visual QC overlays (Stage 22).</li>
+</ul>
+
+<div class="callout callout-caution">
+  <div class="callout-title"><span class="ci"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.6"/><rect x="7.2" y="3.8" width="1.6" height="6" fill="currentColor"/><circle cx="8" cy="12" r="0.95" fill="currentColor"/></svg></span>CRITICAL DEFACING LIMITATIONS &amp; REAL-DATA GOVERNANCE</div>
+  <ul style="margin: 6px 0 0 18px;">
+    <li><strong>Quickshear guarantee is relative to the estimated brain mask:</strong> Zero brain tissue loss is strictly guaranteed relative to the input brain mask; an inaccurate or clipped mask will propagate into an inaccurate cutting plane.</li>
+    <li><strong>Manual visual review is strictly required:</strong> Algorithmic defacing does not replace manual certified visual verification of 3D defaced volumes and orthogonal QC PNGs before data release.</li>
+    <li><strong>BOLD is not defaced:</strong> Only high-resolution 3D T1w scans are defaced; low-resolution 4D BOLD functional series do not expose facial topography and remain undefaced.</li>
+    <li><strong>PyDeface and external tools never ran:</strong> External tools (<code>pydeface</code>, FSL) were never installed or executed on live data; only the pure-Python Quickshear algorithm was run.</li>
+    <li><strong>Defacing must be forced strict when real-data mode is built; real mode does not exist today.</strong></li>
+  </ul>
+</div>
+
+<h3>6.5 Step 3: Complete 23-Stage Synthetic Pipeline Validation (validate_step3_pipeline.py)</h3>
 <p>
 To demonstrate end-to-end scientific correctness prior to human data execution, the pipeline underwent rigorous synthetic validation using <code>scripts/validate_step3_pipeline.py</code>. The validation harness generates a fully BIDS-compliant synthetic participant dataset (<code>sub-synthetic001</code>, <code>ses-01</code>) with realistic 3D anatomical tissue contrasts (CSF, GM, WM, skull) and 4D BOLD timeseries ($240\text{ volumes}$, $T_R = 2.0\text{ s}$).
 </p>
 
-<p><strong>Key Empirical Results from the 22-Stage Synthetic Audit:</strong></p>
+<p><strong>Key Empirical Results from the 23-Stage Synthetic Audit:</strong></p>
 <ul>
   <li>
     <strong>Ground-Truth Correlation Recovery:</strong> Known neurobiological correlation structures were injected into synthetic CC200 parcels to test whether filtering and parcellation preserve true functional connectivity:
@@ -1377,7 +1407,7 @@ To demonstrate end-to-end scientific correctness prior to human data execution, 
     </ul>
   </li>
   <li>
-    <strong>Full 19,900 Fisher-$z$ Vector Extraction:</strong> All 22 stage deliverables were generated and verified non-empty, with <code>roi_timeseries_shape = (200, 240)</code> and <code>roi_csv_shape = (200, 241)</code> (200 ROIs &times; <code>node/volume</code> + 240 volumes). The complete $19,900$-dimensional Fisher-$z$ connectivity vector was computed with $100\%$ finite numerical values ($\text{NaN} = 0, \text{Inf} = 0$).
+    <strong>Full 19,900 Fisher-$z$ Vector Extraction:</strong> All 23 stage deliverables were generated and verified non-empty, with <code>roi_timeseries_shape = (200, 240)</code> and <code>roi_csv_shape = (200, 241)</code> (200 ROIs &times; <code>node/volume</code> + 240 volumes). The complete $19,900$-dimensional Fisher-$z$ connectivity vector was computed with $100\%$ finite numerical values ($\text{NaN} = 0, \text{Inf} = 0$).
   </li>
   <li>
     <strong>Numerical Determinism &amp; Reproducibility:</strong> Two back-to-back pipeline executions (Run 1 vs. Run 2) using identical random seeds yielded bitwise-reproducible outputs. Across all 200 CC200 ROI timeseries and all 19,900 connectivity edges, the maximum absolute difference was strictly $0.0$ ($|\text{Run 1} - \text{Run 2}| = 0.0 \le 10^{-7}$).
@@ -1387,7 +1417,7 @@ To demonstrate end-to-end scientific correctness prior to human data execution, 
   </li>
 </ul>
 
-<h3>6.5 MNI152 SyN Non-Linear Registration Benchmark (validate_mni152_syn_registration.py)</h3>
+<h3>6.6 MNI152 SyN Non-Linear Registration Benchmark (validate_mni152_syn_registration.py)</h3>
 <p>
 Spatial normalization accuracy was evaluated in a standalone synthetic ground-truth registration benchmark using <code>scripts/validate_mni152_syn_registration.py</code>. The experiment applies a known, smooth nonlinear ground-truth displacement field $\Phi_{\text{GT}}$ to a standard MNI152 anatomical template ($3\text{ mm}$ isotropic, $36 \times 42 \times 36$ grid), resamples the moving anatomy, and uses DIPY's Symmetric Normalization (SyN) with cross-correlation metric (<code>CCMetric(3)</code>) and 12-DOF affine prealignment to recover the transformation.
 </p>
@@ -1481,10 +1511,10 @@ Landmark displacement evaluation uses DIPY's complete composed transformation ch
 
 <div class="five-q-box">
   <div class="five-q-title"><span class="ci"><svg viewBox="0 0 16 16" fill="none"><path d="M5.5 3.5h8M5.5 8h8M5.5 12.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2 3.5h1.4M2 8h1.4M2 12.5h1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>SUMMARY: THE 5 CORE QUESTIONS (STAGE 6)</div>
-  <div class="q-row"><div class="q-label">1. WHAT do I need to do?</div><div class="q-ans">Trigger the pipeline run via the web UI or CLI runner script (enabling <code>--strict-slice-timing</code> and <code>--strict-sdc</code> in real-data mode).</div></div>
+  <div class="q-row"><div class="q-label">1. WHAT do I need to do?</div><div class="q-ans">Trigger the pipeline run via the web UI or CLI runner script (enabling <code>--strict-slice-timing</code>, <code>--strict-sdc</code>, and <code>--strict-defacing</code> in real-data mode).</div></div>
   <div class="q-row"><div class="q-label">2. WHERE do I do it?</div><div class="q-ans">Click "Run MRI pipeline" on the dashboard or run <code>scripts/run_poc_v2.py</code>.</div></div>
-  <div class="q-row"><div class="q-label">3. WHAT happens after?</div><div class="q-ans">The 22 stages execute sequentially: raw-BOLD motion estimation, slice-timing correction (<code>DEC-STC-01</code>), B0 susceptibility distortion correction (<code>DEC-SDC-02</code>), skull stripping, SyN registration, single-step composed resampling, nuisance cleaning, and CC200 parcellation.</div></div>
-  <div class="q-row"><div class="q-label">4. WHAT OUTPUT will I get?</div><div class="q-ans"><code>roi_CC200.csv</code>, 19,900 Fisher-$z$ features, 4 QC images, motion tables, <code>derivatives/</code> STC/SDC reports, and provenance records.</div></div>
+  <div class="q-row"><div class="q-label">3. WHAT happens after?</div><div class="q-ans">The 23 stages execute sequentially: raw-BOLD motion estimation, slice-timing correction (<code>DEC-STC-01</code>), B0 susceptibility distortion correction (<code>DEC-SDC-02</code>), anatomical defacing (<code>DEC-DEF-03</code>), skull stripping, SyN registration, single-step composed resampling, nuisance cleaning, and CC200 parcellation.</div></div>
+  <div class="q-row"><div class="q-label">4. WHAT OUTPUT will I get?</div><div class="q-ans"><code>roi_CC200.csv</code>, 19,900 Fisher-$z$ features, 4 QC images, motion tables, <code>derivatives/</code> STC/SDC/defacing reports, and provenance records.</div></div>
   <div class="q-row"><div class="q-label">5. WHERE is it stored?</div><div class="q-ans">Under <code>outputs/&lt;run_directory&gt;/sub-&lt;id&gt;/run_&lt;timestamp&gt;/</code>.</div></div>
 </div>
 </section>
@@ -1749,8 +1779,8 @@ The application utilizes a RESTful JSON HTTP architecture implemented in <code>s
     <td><code>GET</code></td>
     <td><code>/api/pipeline/verification</code></td>
     <td>None</td>
-    <td>JSON: <code>{status: "VERIFIED", badge: "SYNTHETIC PIPELINE VERIFIED", stages_total: 22, stages_verified: 22, stages: [...], slice_timing, susceptibility_distortion, motion_qc, registration}</code></td>
-    <td>Returns the formal 22-stage pipeline verification status, confirming all 22 synthetic preprocessing stages (including raw-BOLD motion estimation, <code>DEC-STC-01</code>, <code>DEC-SDC-02</code>, SyN registration, and CC200 parcellation) and module tool availability passed validation.</td>
+    <td>JSON: <code>{status: "VERIFIED", badge: "SYNTHETIC PIPELINE VERIFIED", stages_total: 23, stages_verified: 23, stages: [...], slice_timing, susceptibility_distortion, defacing, motion_qc, registration}</code></td>
+    <td>Returns the formal 23-stage pipeline verification status, confirming all 23 synthetic preprocessing stages (including raw-BOLD motion estimation, <code>DEC-STC-01</code>, <code>DEC-SDC-02</code>, <code>DEC-DEF-03</code>, SyN registration, and CC200 parcellation) and module tool availability passed validation.</td>
   </tr>
   <tr>
     <td><code>POST</code></td>
@@ -1782,7 +1812,7 @@ Evaluates the authorization register (<code>configs/research_authorization_regis
 
 <h4>B. Synthetic Pipeline Verification (<code>GET /api/pipeline/verification</code>)</h4>
 <p>
-Reads the cryptographic verification results produced by <code>scripts/validate_step3_pipeline.py</code>, Step 4 STC validation, and Step 5 SDC validation (plus live software probing via <code>detect_stc_software()</code> and <code>detect_sdc_software()</code>). Confirms that all 22 pipeline stages have executed cleanly with validated ground-truth correlation recovery ($r_{\text{pos}} \approx +0.98$, $r_{\text{neg}} \approx -0.985$, varying slightly by platform), bitwise reproducibility (max absolute difference $0.0$), verified CC200 atlas geometry, and honest FSL/AFNI tool availability reporting.
+Reads the cryptographic verification results produced by <code>scripts/validate_step3_pipeline.py</code>, Step 4 STC validation, Step 5 SDC validation, and Step 6 defacing validation (plus live software probing via <code>detect_stc_software()</code>, <code>detect_sdc_software()</code>, and <code>detect_defacing_software()</code>). Confirms that all 23 pipeline stages have executed cleanly with validated ground-truth correlation recovery ($r_{\text{pos}} \approx +0.98$, $r_{\text{neg}} \approx -0.985$, varying slightly by platform), bitwise reproducibility (max absolute difference $0.0$), verified CC200 atlas geometry, and honest FSL/AFNI/PyDeface tool availability reporting.
 </p>
 </section>
 
@@ -1822,11 +1852,12 @@ NeuroADHD employs an <strong>Atomic File-Based JSON Document Store</strong> with
                     ├── confounds.tsv              # 31 nuisance regressors
                     ├── confound_report.json       # Rank & condition number audit
                     ├── qc_*.png                   # 4 Quality control figures
-                    ├── derivatives/               # Stage 3 STC & Stage 4 SDC reports/derivatives
+                    ├── derivatives/               # Stage 3 STC, Stage 4 SDC & Stage 7 Defacing reports
                     │   ├── *_desc-stc_bold.{nii.gz,json}
                     │   ├── *_desc-stc_report.json
-                    │   └── *_desc-sdc_{fieldmap.nii.gz,displacement.nii.gz,qc.png,report.json}
-                    ├── provenance.json            # 22-stage audit (incl. STC/SDC/motion_estimation)
+                    │   ├── *_desc-sdc_{fieldmap.nii.gz,displacement.nii.gz,qc.png,report.json}
+                    │   └── defaced/sub-<id>/anat/ # Defaced T1w, facemask & quarantine reports
+                    ├── provenance.json            # 23-stage audit (incl. STC/SDC/defacing/motion)
                     ├── output_manifest.json       # SHA-256 output hashes
                     └── run_manifest.json          # Subprocess completion status</code></pre>
 
@@ -1932,7 +1963,7 @@ PYTHONPATH=. .venv/bin/python scripts/serve_dashboard.py</code></pre>
   <li>She selects <strong>2 subjects</strong>, <strong>60 volumes</strong>, Seed <strong>42</strong>, and chooses <strong>Synthetic phantom atlas</strong> (noting that the pipeline will run strictly on generated synthetic phantom subjects <code>sub-synthetic001</code> and <code>sub-synthetic002</code>).</li>
   <li>She clicks the blue button: <strong>Run MRI pipeline &rarr;</strong>.</li>
   <li>The dashboard immediately displays a flashing <span class="badge badge-blue">RUNNING</span> badge.</li>
-  <li>Behind the scenes, the 22-stage computational pipeline runs on the synthetic phantom: BIDS validation &rarr; raw-BOLD motion estimation &rarr; slice-timing correction (<code>DEC-STC-01</code>, skipping cleanly with flag if timings absent) &rarr; B0 SDC discovery/estimation (<code>DEC-SDC-02</code>) &rarr; skull stripping &rarr; GMM tissue segmentation &rarr; SyN normalization &rarr; single-step composed pullback resampling &rarr; 31-confound regression &rarr; CC200 parcellation &rarr; Fisher-$z$ connectivity matrix calculation.</li>
+  <li>Behind the scenes, the 23-stage computational pipeline runs on the synthetic phantom: BIDS validation &rarr; raw-BOLD motion estimation &rarr; slice-timing correction (<code>DEC-STC-01</code>, skipping cleanly with flag if timings absent) &rarr; B0 SDC discovery/estimation (<code>DEC-SDC-02</code>) &rarr; anatomical defacing (<code>DEC-DEF-03</code>) &rarr; skull stripping &rarr; GMM tissue segmentation &rarr; SyN normalization &rarr; single-step composed pullback resampling &rarr; 31-confound regression &rarr; CC200 parcellation &rarr; Fisher-$z$ connectivity matrix calculation.</li>
   <li>In under 15 seconds, the status updates to <span class="badge badge-green">SUCCESS</span> (2 / 2 completed).</li>
 </ol>
 
@@ -2167,7 +2198,7 @@ The end-to-end processing pipeline operates in <strong>9 primary algorithmic blo
   <img src="Project_Workflow.png" alt="NeuroADHD End-to-End Project Workflow Diagram" loading="lazy">
   <div class="img-toolbar">
     <span>Figure 12.1: Full Architectural End-to-End Workflow Diagram (Vector Blueprint)</span>
-    <a href="Project_Workflow.png" target="_blank" class="img-btn">🔍 Open High-Res PNG (2400 &times; 3000)</a>
+    <span class="img-btn">🔍 High-Res Blueprint (2400 &times; 3000)</span>
   </div>
 </div>
 
@@ -2308,7 +2339,7 @@ The NeuroADHD platform is organized into <strong>four decoupled architectural ti
   <img src="System_Architecture.png" alt="NeuroADHD Full System Architecture Diagram" loading="lazy">
   <div class="img-toolbar">
     <span>Figure 12.2: Full Multi-Tier System Topology &amp; Component Decomposition</span>
-    <a href="System_Architecture.png" target="_blank" class="img-btn">🔍 Open High-Res PNG (3000 &times; 2100)</a>
+    <span class="img-btn">🔍 High-Res Diagram (3000 &times; 2100)</span>
   </div>
 </div>
 
@@ -2339,9 +2370,9 @@ Follow this 10-point checklist to confirm that your NeuroADHD installation and e
   <tbody>
   <tr><td>1</td><td>Python Environment Ready</td><td>Run <code>.venv/bin/python -V</code> in terminal</td><td><code>Python 3.11.x</code></td></tr>
   <tr><td>2</td><td>Scientific Dependencies Installed</td><td>Run <code>.venv/bin/python -c "import dipy, nilearn, nibabel"</code></td><td>Zero errors</td></tr>
-  <tr><td>3</td><td>Automated Test Suite Passes</td><td>Run <code>NEUROADHD_HMAC_KEY=check .venv/bin/pytest tests/unit -q</code> (or full <code>pytest tests --cov=src</code>)</td><td>Unit: 351 passed, 2 skipped, 1 xfailed; Full: 472 passed, 7 skipped, 1 xfailed (82% src coverage)</td></tr>
+  <tr><td>3</td><td>Automated Test Suite Passes</td><td>Run <code>NEUROADHD_HMAC_KEY=check .venv/bin/pytest tests/unit -q</code> (or full <code>pytest tests --cov=src</code>)</td><td>Unit: 364 passed, 2 skipped; Full: 486 passed, 7 skipped (83% src coverage)</td></tr>
   <tr><td>4</td><td>HMAC Security Key Configured</td><td>Run <code>echo $NEUROADHD_HMAC_KEY</code></td><td>Non-empty string</td></tr>
-  <tr><td>5</td><td>Local Web Dashboard Server Running</td><td>Run <code>curl -s http://127.0.0.1:8765/api/health</code></td><td><code>status: READY</code> (22 stages)</td></tr>
+  <tr><td>5</td><td>Local Web Dashboard Server Running</td><td>Run <code>curl -s http://127.0.0.1:8765/api/health</code></td><td><code>status: READY</code> (23 stages)</td></tr>
   <tr><td>6</td><td>Browser UI Loads Cleanly</td><td>Open <code>http://127.0.0.1:8765</code> in Chrome / Firefox</td><td>Workbench renders</td></tr>
   <tr><td>7</td><td>Synthetic Pipeline Executes</td><td>Click "Run MRI pipeline" on dashboard</td><td>Status: <code>SUCCESS</code></td></tr>
   <tr><td>8</td><td>Deliverables Generated on Disk</td><td>Check <code>outputs/dashboard_cohorts/.../runs/.../</code></td><td>12 core artifacts + manifests + <code>derivatives/</code></td></tr>
