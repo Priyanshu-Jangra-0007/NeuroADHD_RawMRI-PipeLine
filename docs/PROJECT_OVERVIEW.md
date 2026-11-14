@@ -6,33 +6,64 @@
 
 The existing NeuroADHD system operates on pre-extracted regional time-series data: it transforms Craddock 200 (CC200) resting-state functional MRI (fMRI) regions of interest (ROIs) into pairwise Pearson correlation features (Fisher $r$-to-$z$ transformed), selects 100 features via an ANOVA $F$-statistic pipeline, and executes an exploratory classification using a frozen Random Forest model.
 
-However, the existing model cannot ingest raw resting-state fMRI scans (`.nii` or `.nii.gz`). The objective of this project is to develop, validate, and document a raw resting-state fMRI preprocessing pipeline capable of:
-1. Ingesting raw 4D BOLD resting-state scans (BIDS standard format).
-2. Applying motion correction, nuisance regression, bandpass filtering, and standard-space registration compatible with the historical ADHD-200 CC200 derivative release.
+However, the existing model cannot ingest raw resting-state fMRI scans (`.nii` or `.nii.gz`). The objective of this project is to develop, validate, and document a 23-stage raw resting-state fMRI preprocessing pipeline (`scripts/run_poc_v2.py`) capable of:
+1. Ingesting raw 4D BOLD resting-state scans (BIDS standard format) and validating sidecar metadata.
+2. Estimating 6-DOF rigid motion parameters on raw uncorrected BOLD prior to temporal interpolation, then executing metadata-driven slice-timing correction (`DEC-STC-01`), B0 susceptibility distortion correction discovery/application (`DEC-SDC-02`), anatomical MRI defacing and metadata de-identification (`DEC-DEF-03`), single-step composed spatial pullback resampling (Motion + SDC + EPI-to-T1w Coregistration + T1w-to-MNI SyN), anatomical tissue masking, nuisance regression, bandpass filtering, and standard-space registration compatible with the historical ADHD-200 CC200 derivative release.
 3. Extracting 200 CC200 ROI mean BOLD time series adhering strictly to the schema expected by `roi_CC200.csv`.
 4. Supplying these extracted time series to the frozen NeuroADHD inference workflow without modifying, refitting, or retraining any existing model.
 
+### 23-Stage Preprocessing & Inference Flow (`scripts/run_poc_v2.py`)
+
 ```
-RAW 4D RESTING-STATE fMRI (BIDS)
+RAW 4D RESTING-STATE fMRI (BIDS: *_bold.nii.gz + *.json + *_T1w.nii.gz [+ fmap/])
                ↓
- RAW DATA & METADATA VALIDATION
+ [Stage 1]  BIDS Input & Sidecar Metadata Validation
                ↓
- STANDARDIZED fMRI PREPROCESSING (Motion, CompCor, 0.01-0.1Hz, MNI)
+ [Stage 2]  3D Rigid Motion Parameter Estimation (Raw Uncorrected BOLD)
                ↓
- CLEANED BOLD IMAGE IN STANDARD SPACE
+ [Stage 3]  Metadata-Driven Slice-Timing Correction (DEC-STC-01; Original Slice Geometry)
+            - Default: SKIPPED_MISSING_TIMINGS / SKIPPED_UNKNOWN_SLICE_AXIS with logged flag if missing SliceTiming/axis
+            - Strict: --strict-slice-timing fails closed on missing timing/axis (REQUIRED for real-data mode)
                ↓
- CC200 ATLAS PARCELLATION
+ [Stage 4]  B0 Susceptibility Distortion Correction (DEC-SDC-02; Fieldmap Discovery & Estimation)
+            - Default: SKIPPED_NO_ASSOCIATED_FIELDMAP / SKIPPED_INSUFFICIENT_METADATA / SKIPPED_TOOL_UNAVAILABLE / REJECTED_QC_DEGRADED
+            - Strict: --strict-sdc fails closed when SDC cannot be applied or degrades QC (REQUIRED for real-data mode)
+            - Opposite-PE: TOPUP pairs strictly require opposite phase-encoding directions (same-direction pairs rejected)
+            - Limitation: Only direct Hz (or rad/s) fieldmaps are applied; FSL topup/prelude/fugue were never run
                ↓
- 200 ROI MEAN TIME SERIES (roi_CC200.csv)
+ [Stage 5-6] Motion Transform (+ Optional SDC) Application & 3D Functional Reference Generation
                ↓
- 19,900 PAIRWISE PEARSON CORRELATIONS (Fisher z)
+ [Stage 7]  Anatomical MRI Defacing, Metadata De-Identification & Privacy Audit (DEC-DEF-03)
+            - Pure-Python Quickshear algorithm: 2D convex-hull tangent cutting plane in millimeter space
+            - Invariant: Zero brain tissue overlap (brain_max_diff == 0.0); idempotent (idempotent = True)
+            - Routing: Defaced T1w becomes active anatomy for all downstream stages (Stages 8-13, 22)
+            - Quarantine: Brain tissue loss fails closed and generates defacing_quarantine_report.json
                ↓
- EXISTING FROZEN PREPROCESSING PIPELINE (Median Imputer -> Variance -> Scaler -> SelectKBest 100)
+ [Stage 8-11] T1w Brain Extraction, Bias-Field Correction, 3-Class GMM Segmentation & Eroded WM/CSF Masks
                ↓
- EXISTING TRAINED RANDOM FOREST (50 trees, max_depth 3)
+ [Stage 12-13] EPI-to-T1w 6-DOF Coregistration & T1w-to-MNI152 SyN Nonlinear Normalization
                ↓
- EXPLORATORY RESEARCH PREDICTION & METRICS
+ [Stage 14-15] Single-Step Composed Pullback Resampling (Motion + SDC + Coreg + MNI Affine + SyN on STC BOLD) & Mask Resampling
+               ↓
+ [Stage 16-19] 5 aCompCor + Friston-24 + 31-Confounds Assembly, OLS Nuisance Regression & 0.01-0.10 Hz Bandpass (GSR OFF)
+               ↓
+ [Stage 20-21] CC200 Atlas Parcellation (roi_CC200.csv: 200 ROIs) & 19,900 Fisher-z Connectivity Features
+               ↓
+ [Stage 22-23] Orthogonal QC Overlays & Schema-Compliant Provenance JSON Generation (provenance.json, output_manifest.json with correction_status)
+               ↓
+ EXISTING FROZEN INFERENCE (Median Imputer -> Variance Filter -> Scaler -> SelectKBest 100 -> 50-Tree Random Forest)
 ```
+
+### Key Stage Behavior & Scientific Limitations
+- **Default vs. Strict Correction Modes (`DEC-STC-01`, `DEC-SDC-02`, `DEC-DEF-03`):** By default, missing `SliceTiming` or unknown slice axis causes Stage 3 STC to log a warning and enter a `SKIPPED_*` status with a provenance flag while preserving raw timings; similarly, missing associated fieldmaps, `PhaseEncodingDirection`, `TotalReadoutTime`, external FSL binaries, or degraded post-correction alignment (`ncc_after < ncc_before`) causes Stage 4 SDC to log a `SKIPPED_*` or `REJECTED_QC_DEGRADED` status with a provenance flag rather than inventing timings or applying degrading warps. Passing `--strict-slice-timing`, `--strict-sdc`, and `--strict-defacing` forces fail-closed errors instead of skipping; **real-data mode must use strict mode**.
+- **SDC Scientific Constraints & Interpretations:** TOPUP/PEPOLAR pairs require opposite phase-encoding directions (`j`/`j-`, `i`/`i-`). SDC quality evaluation uses `QC_METRIC_INTERPRETATION` documenting what metrics (`ncc`, `nmi`, `mask_dice`, `min_jacobian`) measure and what they do NOT prove (they do not prove ground-truth distortion accuracy, through-plane dropout recovery, or clinical validity). `output_manifest.json` provides an additive `correction_status` block tracking STC and SDC execution.
+- **SDC External Tool Limitation:** Only calibrated direct `Hz` (and `rad/s` converted to `Hz`) fieldmaps are applied analytically in Python/SciPy. FSL `topup`, `prelude`, and `fugue` were never run (`SKIPPED_TOOL_UNAVAILABLE` if absent), so PEPOLAR and phase-difference execution paths remain unverified against live FSL binaries.
+- **Anatomical Defacing Scientific Constraints & Limitations (`DEC-DEF-03`):**
+  1. *Quickshear guarantee is relative to the estimated brain mask:* The mathematical guarantee of zero intracranial tissue loss is conditioned on the accuracy of the input brain mask; flawed masks can clip brain or leave facial tissue.
+  2. *Manual visual review is strictly required:* Automated defacing does not replace manual certified visual inspection of defaced volumes and orthogonal QC PNGs before data release.
+  3. *BOLD is not defaced:* Only high-resolution 3D T1w scans are defaced; low-resolution 4D BOLD functional series remain undefaced.
+  4. *PyDeface and external tools never ran:* External defacing binaries (`pydeface`, FSL) were never run on live data; only the pure-Python Quickshear algorithm was executed.
+  5. *"Defacing must be forced strict when real-data mode is built; real mode does not exist today."*
 
 ---
 
