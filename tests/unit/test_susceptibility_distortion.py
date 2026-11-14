@@ -942,7 +942,7 @@ def test_run_poc_v2_22stage_with_direct_fieldmap_and_pepolar_fallback(tmp_path: 
             subject_id="sub-synthetic510",
             manifest_path=base_paths["synthetic_manifest"],
         )
-        assert res_base["provenance"]["pipeline_stages_total"] == 22
+        assert res_base["provenance"]["pipeline_stages_total"] == 23
         assert res_base["provenance"]["susceptibility_distortion_correction"]["status"] == SDC_STATUS_SKIPPED_NO_ASSOCIATED_FIELDMAP
         assert res_base["provenance"]["motion_estimation"]["single_step_composed_resampling_with_sdc"] is False
 
@@ -984,8 +984,8 @@ def test_run_poc_v2_22stage_with_direct_fieldmap_and_pepolar_fallback(tmp_path: 
             manifest_path=dir_paths["synthetic_manifest"],
         )
         prov_d = res_direct["provenance"]
-        assert prov_d["pipeline_stages_total"] == 22
-        assert len(prov_d["preprocessing_order"]) == 22
+        assert prov_d["pipeline_stages_total"] == 23
+        assert len(prov_d["preprocessing_order"]) == 23
         assert prov_d["motion_estimation"]["estimated_on_raw_uncorrected_bold"] is True
         assert prov_d["motion_estimation"]["single_step_composed_resampling_with_sdc"] is True
         sdc_d = prov_d["susceptibility_distortion_correction"]
@@ -1105,7 +1105,7 @@ def test_run_poc_v2_22stage_with_direct_fieldmap_and_pepolar_fallback(tmp_path: 
         assert detail["susceptibility_distortion_correction"]["status"] == SDC_STATUS_APPLIED_DIRECT_FIELDMAP
         app = DashboardApplication()
         ver_status = app.pipeline_verification_status()
-        assert ver_status["stages_total"] == 22
+        assert ver_status["stages_total"] == 23
         assert "susceptibility_distortion" in ver_status
         assert "susceptibility_distortion_badge" in ver_status
 

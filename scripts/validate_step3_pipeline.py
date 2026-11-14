@@ -323,7 +323,7 @@ def run_validation() -> Dict[str, Any]:
     print(f"  -> Run 1 peak memory: {run1_res['peak_rss_gb']:.2f} GB (Ceiling: 2.50 GB)")
 
     assert run1_res["status"] == "SUCCESS", f"Run 1 failed: {run1_res}"
-    assert run1_res["provenance"]["pipeline_stages_total"] == 22
+    assert run1_res["provenance"]["pipeline_stages_total"] == 23
     assert run1_res["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
     assert run1_res["runtime_seconds"] < 600.0, f"Runtime exceeded 10m budget: {run1_res['runtime_seconds']}s"
     assert run1_res["peak_rss_gb"] <= 2.50, f"Memory exceeded 2.5GB ceiling: {run1_res['peak_rss_gb']} GB"
@@ -358,7 +358,7 @@ def run_validation() -> Dict[str, Any]:
     assert np.all(np.isfinite(feat_vector)), "Fisher-z vector contains non-finite values (NaN/Inf)"
 
     # 5. Artifact Existence and Non-Empty Verification
-    print("\n[Phase 4] Verifying all 22 stage output artifacts...")
+    print("\n[Phase 4] Verifying all 23 stage output artifacts...")
     stage_artifacts_summary = {}
     for art_key, art_path in run1_res["artifacts"].items():
         p = Path(art_path)
@@ -406,8 +406,8 @@ def run_validation() -> Dict[str, Any]:
         "step": "Step 3: Neuroimaging Preprocessing Pipeline Validation",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": "VERIFIED",
-        "pipeline_stages_total": 22,
-        "pipeline_stages_verified": 22,
+        "pipeline_stages_total": 23,
+        "pipeline_stages_verified": 23,
         "motion_estimation": run1_res["provenance"].get("motion_estimation"),
         "slice_timing_correction": run1_res.get("slice_timing"),
         "susceptibility_distortion_correction": run1_res.get("susceptibility_distortion"),

@@ -976,10 +976,10 @@ def test_run_poc_v2_pipeline_stage3_stc_applied_skipped_and_double_blocked(tmp_p
             manifest_path=paths_ok["synthetic_manifest"],
         )
         assert res_ok["status"] == "SUCCESS"
-        assert res_ok["provenance"]["pipeline_stages_total"] == 22
+        assert res_ok["provenance"]["pipeline_stages_total"] == 23
         assert res_ok["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
         order_list = res_ok["provenance"]["preprocessing_order"]
-        assert len(order_list) == 22
+        assert len(order_list) == 23
         assert "Motion Parameter Estimation" in order_list[1]
         assert "Slice-Timing Correction" in order_list[2]
         assert "Susceptibility Distortion Correction" in order_list[3]
@@ -1322,7 +1322,7 @@ def test_realistic_37slice_240vol_source_to_61slice_e2e(tmp_path: Path):
             manifest_path=man_p,
         )
         assert res["status"] == "SUCCESS"
-        assert res["provenance"]["pipeline_stages_total"] == 22
+        assert res["provenance"]["pipeline_stages_total"] == 23
         assert res["provenance"]["motion_estimation"]["estimated_before_slice_timing"] is True
         stc_p = res["provenance"]["slice_timing_correction"]
         assert stc_p["status"] == "APPLIED"
