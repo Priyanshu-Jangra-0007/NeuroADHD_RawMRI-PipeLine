@@ -7,6 +7,7 @@
 > **Dataset Investigated:** ADHD-200 Consortium Resting-State fMRI Sample (plus Synthetic Phantoms & Conditional Future Prospective Pilot)  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false`  
 > **Safety Note:** Compiled strictly from repository documentation and official public repository policies without opening participant MRI volumes or individual phenotypic records.
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

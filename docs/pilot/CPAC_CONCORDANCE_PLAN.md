@@ -5,6 +5,7 @@
 > **Document ID:** `DOC-PILOT-CPAC-001`  
 > **Scope:** Future authorized $N = 6$ ADHD-200 / matched feasibility participants (`STRICTLY_SYNTHETIC_ONLY` until Step 8 passes `APPROVED_SCOPED`)  
 > **Important Notice:** No real ADHD-200 raw MRI scans or historical C-PAC real-subject outputs were accessed, compared, or reported in Step 9. All quantitative targets below (including `r >= 0.85`) are **proposed engineering targets only**, not measured claims.
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

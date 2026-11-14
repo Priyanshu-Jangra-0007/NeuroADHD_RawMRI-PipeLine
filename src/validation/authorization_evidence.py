@@ -1149,3 +1149,37 @@ class AuthorizationEvidenceValidator:
             "governance_tracker_total": tracker_summary["total"],
             "outstanding_requirements": copy.deepcopy(outstanding),
         }
+
+
+def enforce_before_data_access(
+    dataset_id: str = "sub-01",
+    requested_operation: str = "raw_mri_preprocessing",
+    access_callback: Optional[Callable[[], Any]] = None,
+    participant_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    pilot_records: Optional[Sequence[Dict[str, Any]]] = None,
+    evidence_package: Optional[Dict[str, Any]] = None,
+    protocol_version: str = DEFAULT_PROTOCOL_VERSION,
+    study_tier: str = "retrospective_secondary",
+    register_path: Optional[Union[str, Path]] = None,
+    hmac_key: Optional[Union[str, bytes]] = None,
+    current_date: Optional[Union[datetime.date, datetime.datetime]] = None,
+) -> Any:
+    """Fail-closed module-level entrypoint verifying authorization gate and evidence before any MRI data access."""
+    validator = AuthorizationEvidenceValidator()
+    cb = access_callback if access_callback is not None else (lambda: None)
+    return validator.enforce_before_data_access(
+        access_callback=cb,
+        dataset_id=dataset_id,
+        requested_operation=requested_operation,
+        participant_id=participant_id,
+        session_id=session_id,
+        pilot_records=pilot_records,
+        evidence_package=evidence_package,
+        protocol_version=protocol_version,
+        study_tier=study_tier,
+        register_path=register_path,
+        hmac_key=hmac_key,
+        current_date=current_date,
+    )
+

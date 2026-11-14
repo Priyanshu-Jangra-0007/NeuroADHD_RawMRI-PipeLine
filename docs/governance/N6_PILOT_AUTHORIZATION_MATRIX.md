@@ -6,6 +6,7 @@
 > **Scope Limit:** Strictly **$N = 6$** technical feasibility participants (`SAFE-PILOT-06`, `DOC-NA-A5-FRP-001`)  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false` | `overall_authorization_state = NOT_AUTHORIZED`  
 > **Placeholder & Anti-Fabrication Policy:** All 6 slots below use **placeholder / synthetic identifiers only** and remain strictly **`PENDING`**. No real ADHD-200 or clinical participant IDs are listed, and no approval has been granted.
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

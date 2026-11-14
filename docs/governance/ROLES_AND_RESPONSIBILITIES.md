@@ -6,6 +6,7 @@
 > **Document ID:** `DOC-GOV-ROLE-001`  
 > **Project:** NeuroADHD — ADHD Classification Using Resting-State Functional MRI Connectivity and Machine Learning  
 > **Rule:** Personnel names are intentionally left as placeholders (`[... ]`); **only competent institutional authorities may approve human-participant research or authorize real-data access.**
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

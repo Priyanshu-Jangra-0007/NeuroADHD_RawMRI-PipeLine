@@ -5,6 +5,7 @@
 > **Document ID:** `DOC-PILOT-QC-001`  
 > **Applies To:** NeuroADHD $N = 6$ Feasibility Pilot (`STRICTLY_SYNTHETIC_ONLY` rehearsal; future authorized real runs pending Step 8 approval)  
 > **Anti-Fabrication Rule:** This document separates verified **engineering integrity gates** (already enforced in code) from **proposed research QC reporting metrics**. No clinical diagnostic thresholds or unapproved medical exclusion rules are claimed or invented.
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

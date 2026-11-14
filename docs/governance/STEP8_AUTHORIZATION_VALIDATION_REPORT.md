@@ -8,6 +8,7 @@
 > **Pipeline Version:** 23-stage PoC V2 (`DOC-GOV-PROT-001`)  
 > **Runtime Authorization State:** `overall_authorization_state = NOT_AUTHORIZED` | `execution_policy = STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false` | `sub-01 = PENDING` (`cryptographic_signature = null`)  
 > **Step 8 Readiness Verdict:** **`BLOCKED — NOT AUTHORIZED`** *(Software validation & two-phase readiness engine passed; genuine institutional approvals, DUA archive, DPO rulings, operational `pydeface`/FSL setup, and HMAC signatures remain missing / `PENDING`.)*
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

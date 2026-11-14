@@ -8,6 +8,7 @@
 > **Step 8 Authorization Status:** `NOT_AUTHORIZED` (`STRICTLY_SYNTHETIC_ONLY`, `real_data_authorized = false`)  
 > **Pilot Cohort Scope Limit:** Strictly **$N = 6$** placeholder feasibility slots (`sub-pilot-01` through `sub-pilot-06`)  
 > **Related Governance Documents:** [`docs/governance/MASTER_RESEARCH_PROTOCOL.md`](../governance/MASTER_RESEARCH_PROTOCOL.md) (`DOC-GOV-PROT-001`), [`docs/governance/N6_PILOT_AUTHORIZATION_MATRIX.md`](../governance/N6_PILOT_AUTHORIZATION_MATRIX.md) (`DOC-GOV-PILOTMAT-001`), [`docs/governance/STEP8_AUTHORIZATION_VALIDATION_REPORT.md`](../governance/STEP8_AUTHORIZATION_VALIDATION_REPORT.md)
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

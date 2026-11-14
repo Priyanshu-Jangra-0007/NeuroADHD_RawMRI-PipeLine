@@ -6,7 +6,8 @@
 > **Step / Milestone:** Step 8 — Formal Real-Data Authorization Readiness  
 > **Current Authorization State:** `NOT_AUTHORIZED` | `execution_policy = STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false`  
 > **Target Register:** `configs/research_authorization_register.json` (`REG-NA-A6-001`, `23 / 23` items `PENDING`, `sub-01 = PENDING`)  
-> **Non-Fabrication Rule:** All unknown institutional details remain explicit placeholders (`[...]`). Software artifacts, passing synthetic tests, and generated PDFs never constitute approval evidence.
+> **Non-Fabrication Rule:** All unknown institutional details remain explicit placeholders (`[...]`). Software artifacts, passing synthetic tests, and generated PDFs never constitute approval evidence.  
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

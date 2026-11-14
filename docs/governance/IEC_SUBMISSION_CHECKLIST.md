@@ -7,6 +7,7 @@
 > **Target Committee:** `[IEC_NAME]` (DHR NECRBHR Reg. No.: `[IEC_REGISTRATION_NUMBER]`)  
 > **Protocol Title:** NeuroADHD — ADHD Classification Using Resting-State Functional MRI Connectivity and Machine Learning  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false`
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

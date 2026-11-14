@@ -7,6 +7,7 @@
 > **Study Title:** NeuroADHD — ADHD Classification Using Resting-State Functional MRI Connectivity and Machine Learning  
 > **Pipeline Version:** NeuroADHD RawMRI PoC V2 (**23 stages**; `STRICTLY_SYNTHETIC_ONLY`)  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false` | `overall_authorization_state = NOT_AUTHORIZED`
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 > [!IMPORTANT]
 > **Regulatory Honesty Note:** Documenting technical controls in this plan does **not** establish legal compliance under the DPDP Act 2023, DPDP Rules 2025, or ICMR Guidelines 2017. Statutory compliance and retention schedules must be independently reviewed and certified by `[DPO_NAME]`, `[INSTITUTION_LEGAL_OFFICE]`, and `[IEC_NAME]`.

@@ -7,6 +7,7 @@
 > **Project:** NeuroADHD — ADHD Classification Using Resting-State Functional MRI Connectivity and Machine Learning  
 > **Classification Basis:** Qualitative risk assessment (`Low` / `Medium` / `High` / `Critical`) used where empirical institutional rates are unavailable.  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false`
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

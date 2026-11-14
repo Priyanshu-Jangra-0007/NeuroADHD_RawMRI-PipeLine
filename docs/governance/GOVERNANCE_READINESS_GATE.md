@@ -4,7 +4,8 @@
 >
 > **Status:** `DRAFT_INCOMPLETE` *(Documentation templates complete; missing institutional metadata, supervisor signatures, DUA archive, DPO determination, and IEC decision)*  
 > **Document ID:** `DOC-GOV-GATE-001`  
-> **Tracker Separation Invariant:** This documentation readiness checklist and [`APPROVAL_TRACKER.csv`](APPROVAL_TRACKER.csv) are **strictly separate** from the runtime fail-closed gate in `configs/research_authorization_register.json` and `src/validation/authorization_gate.py`. Completing items here **never** unlocks real MRI data processing.
+> **Tracker Separation Invariant:** This documentation readiness checklist and [`APPROVAL_TRACKER.csv`](APPROVAL_TRACKER.csv) are **strictly separate** from the runtime fail-closed gate in `configs/research_authorization_register.json` and `src/validation/authorization_gate.py`. Completing items here **never** unlocks real MRI data processing.  
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

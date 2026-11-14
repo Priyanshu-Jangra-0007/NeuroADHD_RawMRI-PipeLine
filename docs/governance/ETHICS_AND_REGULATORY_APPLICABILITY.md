@@ -7,6 +7,7 @@
 > **Date of Regulatory Verification:** `2026-11-12`  
 > **Jurisdiction:** India (`[INSTITUTION_NAME]`, `[INSTITUTION_STATE_PLACEHOLDER]`) + Cross-Border Open-Science Dataset Terms  
 > **Execution Policy:** `STRICTLY_SYNTHETIC_ONLY` | `real_data_authorized = false`
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

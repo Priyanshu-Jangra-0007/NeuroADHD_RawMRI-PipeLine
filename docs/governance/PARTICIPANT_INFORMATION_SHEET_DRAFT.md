@@ -7,6 +7,7 @@
 > **Study Title:** NeuroADHD — ADHD Classification Using Resting-State Functional MRI Connectivity and Machine Learning  
 > **Institution:** `[INSTITUTION_NAME]` | **IEC Name & Reg. No.:** `[IEC_NAME]` (`[IEC_REGISTRATION_NUMBER]`)  
 > **Protocol Reference:** `[IEC_PROTOCOL_NUMBER]` (Approval Date: `[APPROVAL_DATE]`)
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 

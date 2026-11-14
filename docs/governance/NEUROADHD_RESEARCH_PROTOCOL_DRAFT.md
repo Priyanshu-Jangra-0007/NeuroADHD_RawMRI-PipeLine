@@ -11,6 +11,7 @@
 > **Academic Supervisor / Guide:** `[SUPERVISOR_NAME]` (`[SUPERVISOR_DEPARTMENT_PLACEHOLDER]`)  
 > **Ethics Committee:** `[IEC_NAME]` (DHR/NECRBHR Reg. No.: `[IEC_REGISTRATION_NUMBER]`)  
 > **Protocol Reference:** `[IEC_PROTOCOL_NUMBER]` (Approval Date: `[APPROVAL_DATE]`)
+> **DRAFT NOTICE:** These governance documents are DRAFTS that must be reviewed by the supervisor and ethics committee before use.
 
 ---
 
