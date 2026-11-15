@@ -493,21 +493,12 @@ def test_step5_1_item4_bug_same_direction_pair_with_distinct_readout_times_must_
         validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
 
 
-@pytest.mark.xfail(
-    reason="Bug in validate_sdc_metadata(): requires opposite polarities among fieldmaps alone, ignoring BOLD polarity and wrongly rejecting two reverse fieldmaps (j-, j-) with forward BOLD (j)",
-    strict=True,
-    raises=InvalidSDCInputError,
-)
 def test_step5_1_item4_bug_multi_fieldmap_pepolar_two_reverse_fieldmaps_with_forward_bold_wrongly_rejected(tmp_path: Path):
-    """Minimal test exposing bug: two reverse-direction fieldmaps (j-, j-) with forward BOLD (j) are wrongly rejected.
+    """Verify that two reverse-direction fieldmaps (j-, j-) with forward BOLD (j) are accepted.
 
-    When multiple PEPOLAR fieldmaps are supplied, validate_sdc_metadata() checks:
-        polarities = {int(e["pe"]["polarity"]) for e in validated_entries}
-        if polarities != {-1, 1}: ...
-    This inspects fieldmaps alone, ignoring the target BOLD scan's phase-encoding direction.
-    If both fieldmaps have reverse polarity (j-) and the BOLD scan has forward polarity (j),
-    they form a valid opposite-PE configuration for SDC, but validate_sdc_metadata() wrongly
-    raises InvalidSDCInputError.
+    When multiple PEPOLAR fieldmaps are supplied, validate_sdc_metadata() checks the combined
+    phase-encoding polarities across {BOLD + all fieldmaps}. Two reverse-direction fieldmaps (j-)
+    with a forward BOLD (j) form a valid opposite-PE configuration for SDC and must be accepted.
     """
     ses_dir = tmp_path / "sub-synthetic5106" / "ses-1"
     func_dir = ses_dir / "func"
@@ -539,9 +530,118 @@ def test_step5_1_item4_bug_multi_fieldmap_pepolar_two_reverse_fieldmaps_with_for
         )
 
     disc = discover_sdc_inputs(bold_p, bold_j)
-    # DESIRED: validate_sdc_metadata should accept this valid configuration (fmaps j-, BOLD j)
-    # CURRENT BUG: raises InvalidSDCInputError because polarities == {-1} != {-1, 1}
-    validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
+    val = validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
+    assert val["valid"] is True
+    assert val["status_hint"] == "VALIDATED_READY"
+    assert len(val["fieldmap_entries"]) == 2
+
+
+def test_step5_1_item4_rejected_bold_j_with_fieldmaps_j_and_j(tmp_path: Path):
+    """Reject PEPOLAR configuration where BOLD (j) and all fieldmaps (j, j) share the same polarity."""
+    ses_dir = tmp_path / "sub-synthetic5107" / "ses-1"
+    func_dir = ses_dir / "func"
+    fmap_dir = ses_dir / "fmap"
+    func_dir.mkdir(parents=True)
+    fmap_dir.mkdir(parents=True)
+    vol, _ = _make_asymmetric_brain_3d((20, 20, 15))
+    aff = np.diag([3.0, 3.0, 3.5, 1.0])
+
+    bold_p = func_dir / "sub-synthetic5107_ses-1_task-rest_bold.nii.gz"
+    bold_j = func_dir / "sub-synthetic5107_ses-1_task-rest_bold.json"
+    nib.save(nib.Nifti1Image(np.repeat(vol[..., None], 4, axis=3), aff), str(bold_p))
+    bold_j.write_text(
+        json.dumps({"RepetitionTime": 2.0, "PhaseEncodingDirection": "j", "TotalReadoutTime": 0.055}),
+        encoding="utf-8",
+    )
+
+    for tag in ("AP1", "AP2"):
+        nib.save(nib.Nifti1Image(vol, aff), str(fmap_dir / f"sub-synthetic5107_ses-1_dir-{tag}_epi.nii.gz"))
+        (fmap_dir / f"sub-synthetic5107_ses-1_dir-{tag}_epi.json").write_text(
+            json.dumps(
+                {
+                    "PhaseEncodingDirection": "j",  # Same direction as BOLD
+                    "TotalReadoutTime": 0.055,
+                    "IntendedFor": [f"ses-1/func/{bold_p.name}"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    disc = discover_sdc_inputs(bold_p, bold_j)
+    with pytest.raises(InvalidSDCInputError, match="same-direction entries"):
+        validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
+
+
+def test_step5_1_item4_rejected_bold_j_with_fieldmaps_i_minus_and_i_minus(tmp_path: Path):
+    """Reject PEPOLAR configuration where fieldmaps (i-, i-) encode along a different axis than BOLD (j)."""
+    ses_dir = tmp_path / "sub-synthetic5108" / "ses-1"
+    func_dir = ses_dir / "func"
+    fmap_dir = ses_dir / "fmap"
+    func_dir.mkdir(parents=True)
+    fmap_dir.mkdir(parents=True)
+    vol, _ = _make_asymmetric_brain_3d((20, 20, 15))
+    aff = np.diag([3.0, 3.0, 3.5, 1.0])
+
+    bold_p = func_dir / "sub-synthetic5108_ses-1_task-rest_bold.nii.gz"
+    bold_j = func_dir / "sub-synthetic5108_ses-1_task-rest_bold.json"
+    nib.save(nib.Nifti1Image(np.repeat(vol[..., None], 4, axis=3), aff), str(bold_p))
+    bold_j.write_text(
+        json.dumps({"RepetitionTime": 2.0, "PhaseEncodingDirection": "j", "TotalReadoutTime": 0.055}),
+        encoding="utf-8",
+    )
+
+    for tag in ("RL1", "RL2"):
+        nib.save(nib.Nifti1Image(vol, aff), str(fmap_dir / f"sub-synthetic5108_ses-1_dir-{tag}_epi.nii.gz"))
+        (fmap_dir / f"sub-synthetic5108_ses-1_dir-{tag}_epi.json").write_text(
+            json.dumps(
+                {
+                    "PhaseEncodingDirection": "i-",  # Orthogonal axis to BOLD j
+                    "TotalReadoutTime": 0.055,
+                    "IntendedFor": [f"ses-1/func/{bold_p.name}"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    disc = discover_sdc_inputs(bold_p, bold_j)
+    with pytest.raises(InvalidSDCInputError, match="does not match BOLD PhaseEncodingDirection axis"):
+        validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
+
+
+def test_step5_1_item4_rejected_bold_j_with_fieldmaps_j_minus_and_i(tmp_path: Path):
+    """Reject PEPOLAR configuration where fieldmaps encode along mixed axes (j- and i)."""
+    ses_dir = tmp_path / "sub-synthetic5109" / "ses-1"
+    func_dir = ses_dir / "func"
+    fmap_dir = ses_dir / "fmap"
+    func_dir.mkdir(parents=True)
+    fmap_dir.mkdir(parents=True)
+    vol, _ = _make_asymmetric_brain_3d((20, 20, 15))
+    aff = np.diag([3.0, 3.0, 3.5, 1.0])
+
+    bold_p = func_dir / "sub-synthetic5109_ses-1_task-rest_bold.nii.gz"
+    bold_j = func_dir / "sub-synthetic5109_ses-1_task-rest_bold.json"
+    nib.save(nib.Nifti1Image(np.repeat(vol[..., None], 4, axis=3), aff), str(bold_p))
+    bold_j.write_text(
+        json.dumps({"RepetitionTime": 2.0, "PhaseEncodingDirection": "j", "TotalReadoutTime": 0.055}),
+        encoding="utf-8",
+    )
+
+    for tag, pe in (("PA", "j-"), ("LR", "i")):
+        nib.save(nib.Nifti1Image(vol, aff), str(fmap_dir / f"sub-synthetic5109_ses-1_dir-{tag}_epi.nii.gz"))
+        (fmap_dir / f"sub-synthetic5109_ses-1_dir-{tag}_epi.json").write_text(
+            json.dumps(
+                {
+                    "PhaseEncodingDirection": pe,  # Mixed axes across fieldmaps
+                    "TotalReadoutTime": 0.055,
+                    "IntendedFor": [f"ses-1/func/{bold_p.name}"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    disc = discover_sdc_inputs(bold_p, bold_j)
+    with pytest.raises(InvalidSDCInputError, match="must encode along the same voxel axis"):
+        validate_sdc_metadata(nib.load(str(bold_p)), json.loads(bold_j.read_text()), disc)
 
 
 # ---------------------------------------------------------------------------
