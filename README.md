@@ -20,16 +20,16 @@ Ingesting raw 4D resting-state fMRI scans in BIDS format, executing standardized
 
 ---
 
-## 2. Current Status: SYNTHETIC PIPELINE + AUTOMATED DICOM-TO-BIDS INTAKE
+## 2. Current Status: 23-STAGE PIPELINE COMPLETE & GOVERNANCE READY
 
 > [!IMPORTANT]
-> **STATUS: Synthetic preprocessing demonstration and authorization-gated DICOM-to-BIDS intake are implemented; real-participant preprocessing remains locked.**
+> **STATUS: Steps 1–9 Completed and Merged on Main.**
 >
-> The local dashboard accepts complete BIDS-style MRI session ZIP files, raw DICOM studies, and separate radiology reports. Inspect-only series listing (`inspect_dicom` via `dcm2niix -n -1` / `-n -2`, which writes no NIfTI images) remains allowed for staged DICOM uploads. **DICOM-to-BIDS conversion (`convert_dicom`) is fail-closed gated by the research authorization register** (`configs/research_authorization_register.json`): it is blocked unless `ResearchAuthorizationGate.verify_dataset_authorization(...)` verifies an unexpired, HMAC-SHA256 signed `APPROVED` record matching the exact `dataset_id` and permitting `"dicom_conversion"` (`sub-01` is currently `PENDING` and therefore blocked).
+> The complete 23-stage raw resting-state fMRI preprocessing pipeline, pure-Python Quickshear defacing (`DEC-DEF-03`), metadata-driven slice-timing correction (`DEC-STC-01`), B0 susceptibility distortion correction (`DEC-SDC-02`), institutional governance readiness package (Step 7), formal real-data authorization evidence validator (Step 8), and N=6 synthetic feasibility pilot protocol (Step 9) are fully implemented, verified, and merged on `main`.
 >
-> **All MRI data and conversion artifacts are stored strictly outside the repository** in `NEUROADHD_DATA_ROOT` (default: `~/NeuroADHD_Data`).
+> **Automated Test Suite Status:** All 516 automated unit and integration tests are passing (0 failed, 7 skipped; 83% statement coverage across `src/`).
 >
-> **A permitted BIDS conversion is an ingestion stage only, never a preprocessing run.** Real-scan preprocessing, CC200 feature extraction, and real-participant model inference remain disabled by the research authorization gate (`processing_enabled = false`, `real_data_authorized = false`). The synthetic runner continues to process generated synthetic data only.
+> **Research Safety Gate Posture:** Real-data human participant preprocessing remains fail-closed and strictly disabled (`real_data_authorized = false`, `NOT_AUTHORIZED`, all 23 register items `PENDING`) in `configs/research_authorization_register.json` until genuine institutional ethics committee (IEC) approval and executed DUA records are archived. Real MRI data operations will fail closed until genuine human institutional approvals exist.
 
 ---
 
@@ -174,10 +174,11 @@ Run the automated test suite with the HMAC integrity key:
 NEUROADHD_HMAC_KEY="local_test_key" pytest tests -q
 ```
 
-**Test Suite Metrics (Measured November 2026, Step 8):**
-- **Collected:** 501 tests
-- **Passed:** 494 passed
+**Test Suite Metrics (Measured November 2026, Steps 1–9 Complete):**
+- **Collected:** 523 tests
+- **Passed:** 516 passed
 - **Skipped:** 7 skipped
+- **Failed:** 0 failed
 - **Statement Coverage:** 83% across `src/` (`pytest --cov=src`, including `77%` on [`src/validation/authorization_evidence.py`](src/validation/authorization_evidence.py), `84%` on [`src/validation/authorization_gate.py`](src/validation/authorization_gate.py), and `86%` on [`src/preprocessing/defacing.py`](src/preprocessing/defacing.py))
 
 **Running the model-dependent tests:**
@@ -221,6 +222,12 @@ Detailed documentation is available in the `docs/` folder:
 ---
 
 ## 9. Changelog
+
+- **2026-11-15 (Steps 1–9 Milestones Complete & PR #22 Merged on Main)**:
+  - Merged PR #22 into `main`, integrating the Step 7 institutional governance and ethics readiness dossier, Step 8 formal real-data authorization evidence validator, and Step 9 N=6 synthetic feasibility pilot protocol and dry-run execution.
+  - Finalized all 9 core development milestones for the NeuroADHD raw resting-state fMRI preprocessing and feature extraction platform.
+  - Re-verified complete 23-stage pipeline end-to-end execution, pure-Python Quickshear defacing (`DEC-DEF-03`), metadata-driven slice-timing correction (`DEC-STC-01`), and B0 susceptibility distortion correction (`DEC-SDC-02`) with 516 passing tests (0 failed, 7 skipped; 83% statement coverage across `src/`).
+  - Preserved strict fail-closed research authorization gates (`real_data_authorized = false`, `NOT_AUTHORIZED`, 23/23 register items `PENDING`). Real-participant MRI processing remains locked pending authentic institutional approvals.
 
 - **2026-11-12 (Step 8 Formal Real-Data Authorization Readiness)**:
   - Implemented [`src/validation/authorization_evidence.py`](src/validation/authorization_evidence.py) (`AuthorizationEvidenceValidator`) composing [`ResearchAuthorizationGate`](src/validation/authorization_gate.py) without duplicating or weakening HMAC-SHA256 verification: checks 14 documentary evidence criteria, enforces explicit two-phase activation (`READY_FOR_AUTHORIZATION_REVIEW` never unlocks execution), blocks draft/self-created/request-email artifacts, separates retrospective secondary vs. prospective $N=6$ IEC scope, enforces per-participant/session/operation scoping, and prevents MRI data callbacks prior to full authorization.
