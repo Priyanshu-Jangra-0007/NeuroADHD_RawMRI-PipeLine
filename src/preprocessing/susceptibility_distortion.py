@@ -1051,7 +1051,7 @@ def validate_sdc_metadata(
                         "directions even when TotalReadoutTime differs."
                     )
             else:
-                polarities = {int(e["pe"]["polarity"]) for e in validated_entries}
+                polarities = {int(bold_pe["polarity"])} | {int(e["pe"]["polarity"]) for e in validated_entries}
                 if polarities != {-1, 1}:
                     raise InvalidSDCInputError(
                         "PEPOLAR *_epi scans require at least one pair of opposite phase-encoding directions "
@@ -1892,8 +1892,8 @@ def estimate_susceptibility_field(
             imain_vols.append(vol3)
             pe_dirs.append(entry["pe"]["code"])
             trts.append(float(entry["total_readout_time_s"]))
-        if len(entries) == 1:
-            # Pair single reverse-PE SE-EPI with mean/first BOLD volume
+        if len(entries) == 1 or not any(e["pe"]["polarity"] == bold_pe["polarity"] for e in entries):
+            # Pair reverse-PE SE-EPI(s) with mean/first BOLD volume
             b0_bold = bold_data4d[..., 0] if bold_data4d.ndim == 4 else bold_data4d
             imain_vols.append(b0_bold)
             pe_dirs.append(bold_pe["code"])
