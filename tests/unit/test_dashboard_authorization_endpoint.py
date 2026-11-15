@@ -65,6 +65,24 @@ class TestDashboardAuthorizationEndpoint(unittest.TestCase):
         self.assertEqual(status["parcellation"]["rois"], 200)
         self.assertEqual(status["parcellation"]["edges"], 19900)
 
+    def test_authorization_readiness_endpoint_no_secrets(self):
+        """Step 8 readiness payload must show pending statuses and never leak secrets or signatures."""
+        status = self.app.authorization_status()
+        self.assertIn("evidence_readiness", status)
+        readiness = self.app.authorization_readiness_status()
+        self.assertEqual(readiness["overall_authorization_state"], "NOT_AUTHORIZED")
+        self.assertEqual(readiness["readiness_state"], "PENDING_EVIDENCE")
+        self.assertEqual(readiness["display_readiness_state"], "PENDING")
+        self.assertEqual(readiness["iec_evidence_status"], "PENDING")
+        self.assertEqual(readiness["dataset_dua_status"], "PENDING")
+        self.assertEqual(readiness["institutional_authorization_status"], "PENDING")
+        self.assertEqual(readiness["privacy_infosec_status"], "PENDING")
+        self.assertFalse(readiness["real_data_authorized"])
+        self.assertFalse(readiness["readiness_permits_execution"])
+        serialized = json.dumps(readiness)
+        self.assertNotIn("cryptographic_signature", serialized)
+        self.assertNotIn("NEUROADHD_HMAC_KEY", serialized)
+
 
 if __name__ == "__main__":
     unittest.main()
