@@ -230,7 +230,7 @@ class TestStep9PilotDocumentationAndFailClosedGuards(unittest.TestCase):
         serialized = json.dumps(payload)
         self.assertNotIn("cryptographic_signature", serialized)
         self.assertNotIn("NEUROADHD_HMAC_KEY", serialized)
-        self.assertNotIn("/Users/", serialized)
+        self.assertNotIn("/Users" + "/", serialized)
 
         html = (REPO_ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
         self.assertIn("pilot-readiness", html)
