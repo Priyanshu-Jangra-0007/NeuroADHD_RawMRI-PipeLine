@@ -1184,6 +1184,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/index.html": FRONTEND_ROOT / "index.html",
             "/app.js": FRONTEND_ROOT / "app.js",
             "/styles.css": FRONTEND_ROOT / "styles.css",
+            "/website_design.html": PROJECT_ROOT / "project_documentation" / "website_design.html",
         }
         path = file_map.get(route)
         if path is None or not path.is_file():
