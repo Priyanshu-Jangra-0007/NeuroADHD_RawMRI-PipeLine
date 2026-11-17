@@ -1990,6 +1990,8 @@ function renderStageList() {
 
 // Live Simulated Pipeline Runner Animation
 let runTimer = null;
+let activeSeed = 42;
+
 function simulatePipelineRun() {
   const btn = document.getElementById("btnRunPipeline");
   const stepper = document.getElementById("runnerStepper");
@@ -1998,10 +2000,15 @@ function simulatePipelineRun() {
   const fill = document.getElementById("stepProgressBar");
   const logBox = document.getElementById("stepLogBox");
 
+  const seedVal = parseInt(document.getElementById("ctrlSeed").value || "42", 10);
+  const numSubjects = parseInt(document.getElementById("ctrlSubjects").value || "2", 10);
+  const numVols = parseInt(document.getElementById("ctrlVolumes").value || "60", 10);
+  activeSeed = seedVal;
+
   btn.disabled = true;
   btn.innerHTML = `<span>⏳</span> Pipeline Running...`;
   stepper.style.display = "block";
-  logBox.textContent = `[INFO] Initializing synthetic cohort run...\n[INFO] Random Seed: ${document.getElementById("ctrlSeed").value}, Volumes: ${document.getElementById("ctrlVolumes").value}\n`;
+  logBox.textContent = `[INFO] Initializing synthetic cohort run...\n[INFO] Subjects: ${numSubjects}, Random Seed: ${seedVal}, Volumes: ${numVols}\n`;
 
   let currentStage = 0;
   clearInterval(runTimer);
@@ -2027,15 +2034,40 @@ function simulatePipelineRun() {
       btn.disabled = false;
       btn.innerHTML = `<span>▶</span> Run Synthetic Pipeline`;
 
-      // Update KPI
+      // Update KPI Run and Subject counters dynamically
       const runs = document.getElementById("kpiRuns");
-      if (runs) runs.textContent = parseInt(runs.textContent) + 1;
+      if (runs) runs.textContent = parseInt(runs.textContent, 10) + 1;
+      const subs = document.getElementById("kpiSubjects");
+      if (subs) subs.textContent = parseInt(subs.textContent, 10) + numSubjects;
+
+      // Update Downstream Model Predictions dynamically based on the Seed & Cohort
+      let adhdProb = "52.4";
+      let ctrlProb = "47.6";
+      if (seedVal !== 42) {
+        const hashSeed = Math.abs(Math.sin(seedVal * 12.9898 + 78.233) * 43758.5453) % 1;
+        adhdProb = (32.0 + hashSeed * 38.0).toFixed(1);
+        ctrlProb = (100.0 - parseFloat(adhdProb)).toFixed(1);
+      }
+      const pAdhd = document.getElementById("probAdhd");
+      const pCtrl = document.getElementById("probCtrl");
+      if (pAdhd) pAdhd.textContent = `${adhdProb}%`;
+      if (pCtrl) pCtrl.textContent = `${ctrlProb}%`;
+
+      // Redraw CC200 heatmap and BOLD waveforms with the active seed
+      renderHeatmap(activeSeed);
+      const defaultRoiA = (15 + (seedVal % 50));
+      const defaultRoiB = (60 + (seedVal % 80));
+      document.getElementById("inspectPairText").textContent = `Region #${defaultRoiA + 1} ↔ Region #${defaultRoiB + 1}`;
+      const defaultCorr = (Math.sin(defaultRoiA * 0.15 + defaultRoiB * 0.22 + (activeSeed % 7)) * 0.82).toFixed(3);
+      document.getElementById("inspectValText").textContent = `r = ${parseFloat(defaultCorr) > 0 ? '+' : ''}${defaultCorr}`;
+      drawTimeseries(defaultRoiA, defaultRoiB);
     }
-  }, 180);
+  }, 160);
 }
 
 // Interactive Heatmap Drawing on Canvas
-function renderHeatmap() {
+function renderHeatmap(seed = activeSeed) {
+  activeSeed = seed;
   const canvas = document.getElementById("heatmapCanvas");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -2043,13 +2075,15 @@ function renderHeatmap() {
   const n = 50; // Visual block approximation for rendering performance
   const blockSize = size / n;
 
-  // Deterministic seed pattern
+  ctx.clearRect(0, 0, size, size);
+
+  // Deterministic seed pattern derived from activeSeed
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (i === j) {
         ctx.fillStyle = "#ff5555"; // Self-correlation r = 1.0
       } else {
-        const val = Math.sin((i * 7) + (j * 11)) * Math.cos(i * j * 0.05);
+        const val = Math.sin((i * 7 + (activeSeed % 11)) + (j * 11)) * Math.cos(i * j * 0.05 + activeSeed * 0.03);
         if (val > 0.3) {
           ctx.fillStyle = `rgba(229, 62, 62, ${Math.min(1, val)})`;
         } else if (val < -0.3) {
@@ -2062,18 +2096,21 @@ function renderHeatmap() {
     }
   }
 
-  // Crosshair interaction
-  canvas.addEventListener("mousemove", (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / (rect.width / 200));
-    const y = Math.floor((e.clientY - rect.top) / (rect.height / 200));
+  // Attach crosshair interaction only once
+  if (!canvas._hasHoverListener) {
+    canvas._hasHoverListener = true;
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor((e.clientX - rect.left) / (rect.width / 200));
+      const y = Math.floor((e.clientY - rect.top) / (rect.height / 200));
 
-    const corr = Math.sin(x * 0.15 + y * 0.22) * 0.82;
-    document.getElementById("inspectPairText").textContent = `Region #${x + 1} ↔ Region #${y + 1}`;
-    document.getElementById("inspectValText").textContent = `r = ${corr > 0 ? '+' : ''}${corr.toFixed(3)}`;
+      const corr = Math.sin(x * 0.15 + y * 0.22 + (activeSeed % 7)) * 0.82;
+      document.getElementById("inspectPairText").textContent = `Region #${x + 1} ↔ Region #${y + 1}`;
+      document.getElementById("inspectValText").textContent = `r = ${corr > 0 ? '+' : ''}${corr.toFixed(3)}`;
 
-    drawTimeseries(x, y);
-  });
+      drawTimeseries(x, y);
+    });
+  }
 }
 
 // Time-Series Graph Simulation
@@ -2084,6 +2121,7 @@ function drawTimeseries(roiA, roiB) {
   const w = canvas.width = canvas.offsetWidth;
   const h = canvas.height = canvas.offsetHeight;
 
+  if (w <= 0 || h <= 0) return;
   ctx.clearRect(0, 0, w, h);
 
   // Grid
@@ -2096,13 +2134,16 @@ function drawTimeseries(roiA, roiB) {
   }
   ctx.stroke();
 
+  const numVols = parseInt(document.getElementById("ctrlVolumes")?.value || "60", 10);
+  const seedShift = (activeSeed % 10) * 0.15;
+
   // Signal 1 (Blue)
   ctx.strokeStyle = "#58d5e6";
   ctx.lineWidth = 1.8;
   ctx.beginPath();
-  for (let t = 0; t < 60; t++) {
-    const px = (t / 59) * w;
-    const py = (h / 2) + Math.sin(t * 0.35 + roiA) * 35 + Math.cos(t * 0.8) * 12;
+  for (let t = 0; t < numVols; t++) {
+    const px = (t / (numVols - 1)) * w;
+    const py = (h / 2) + Math.sin(t * 0.35 + roiA * 0.2 + seedShift) * 35 + Math.cos(t * 0.8) * 12;
     if (t === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
@@ -2112,9 +2153,9 @@ function drawTimeseries(roiA, roiB) {
   ctx.strokeStyle = "#b29aff";
   ctx.lineWidth = 1.8;
   ctx.beginPath();
-  for (let t = 0; t < 60; t++) {
-    const px = (t / 59) * w;
-    const py = (h / 2) + Math.sin(t * 0.35 + roiA + 0.3) * 32 + Math.cos(t * 0.75 + roiB) * 15;
+  for (let t = 0; t < numVols; t++) {
+    const px = (t / (numVols - 1)) * w;
+    const py = (h / 2) + Math.sin(t * 0.35 + roiA * 0.2 + 0.3 + seedShift) * 32 + Math.cos(t * 0.75 + roiB * 0.2) * 15;
     if (t === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
